@@ -465,6 +465,13 @@ export function GenerateCertificatePanel() {
       </head>
       <body>
         <div class="sheet">${pages}</div>
+        <script>
+          window.onload = function() {
+            setTimeout(function() {
+              window.print();
+            }, 500);
+          };
+        </script>
       </body>
       </html>
     `;
@@ -478,38 +485,6 @@ export function GenerateCertificatePanel() {
     popup.document.open();
     popup.document.write(html);
     popup.document.close();
-
-    const printWhenReady = () => {
-      const images = Array.from(popup.document.images || []);
-      if (images.length === 0) {
-        popup.focus();
-        popup.print();
-        return;
-      }
-      let remaining = images.length;
-      const done = () => {
-        remaining -= 1;
-        if (remaining <= 0) {
-          popup.focus();
-          popup.print();
-        }
-      };
-
-      images.forEach((img) => {
-        if (img.complete) {
-          done();
-        } else {
-          img.addEventListener("load", done, { once: true });
-          img.addEventListener("error", done, { once: true });
-        }
-      });
-    };
-
-    if (popup.document.readyState === "complete") {
-      printWhenReady();
-    } else {
-      popup.addEventListener("load", printWhenReady, { once: true });
-    }
 
     setError("");
     setSuccess("Print view opened for selected certificates.");

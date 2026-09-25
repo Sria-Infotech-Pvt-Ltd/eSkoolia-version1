@@ -601,3 +601,50 @@ class AuditLog(models.Model):
     def __str__(self):
         return f"{self.action} by {self.actor_id} at {self.created_at:%Y-%m-%d %H:%M}"
 
+
+class Campaign(models.Model):
+    """Admissions marketing campaign (Communication -> Campaigns tab).
+
+    Previously this whole feature was a frontend-only mockup seeded from a
+    hardcoded demo array — every create/cancel/activate/pause/delete action
+    just mutated local React state with no backend at all, so a page refresh
+    always reset to the two hardcoded rows (QA: campaigns created or
+    cancelled don't survive a refresh). This is the real persistence layer.
+    """
+
+    CHANNEL_CHOICES = [
+        ("WhatsApp", "WhatsApp"),
+        ("Email", "Email"),
+        ("WhatsApp + Email", "WhatsApp + Email"),
+        ("SMS", "SMS"),
+    ]
+    STATUS_CHOICES = [
+        ("draft", "Draft"),
+        ("scheduled", "Scheduled"),
+        ("active", "Active"),
+        ("sent", "Sent"),
+    ]
+
+    school = models.ForeignKey("tenancy.School", on_delete=models.CASCADE, related_name="admission_campaigns")
+    name = models.CharField(max_length=255)
+    channel = models.CharField(max_length=32, choices=CHANNEL_CHOICES, default="WhatsApp")
+    audience = models.CharField(max_length=120, default="All active inquiries")
+    status = models.CharField(max_length=16, choices=STATUS_CHOICES, default="draft")
+    scheduled_for = models.DateTimeField(null=True, blank=True)
+    sent_at = models.DateTimeField(null=True, blank=True)
+    sent_count = models.PositiveIntegerField(default=0)
+    delivered_pct = models.PositiveSmallIntegerField(null=True, blank=True)
+    replies = models.PositiveIntegerField(null=True, blank=True)
+    created_by = models.ForeignKey(
+        "users.User", on_delete=models.SET_NULL, null=True, blank=True, related_name="created_campaigns"
+    )
+    created_at = models.DateTimeField(auto_now_add=True)
+    updated_at = models.DateTimeField(auto_now=True)
+
+    class Meta:
+        db_table = "admission_campaigns"
+        ordering = ["-created_at"]
+
+    def __str__(self):
+        return self.name
+

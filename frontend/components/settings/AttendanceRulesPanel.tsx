@@ -615,7 +615,7 @@ function AttendanceWizard({
         <div style={{ display: "grid", gridTemplateColumns: "repeat(2, minmax(0,1fr))", gap: 18 }}>
           <label style={{ ...labelStyle, gridColumn: "1 / -1" }}>
             Policy Name (e.g. &quot;Teaching Staff&quot;, &quot;Non-Teaching Staff&quot;)
-            <input value={draft.name ?? ""} onChange={(e) => set("name", e.target.value)} style={inputStyle} autoFocus />
+            <input value={draft.name ?? ""} onChange={(e) => set("name", e.target.value.replace(/[^A-Za-z\s'.-]/g, ""))} style={inputStyle} autoFocus />
           </label>
           <label style={labelStyle}>
             <span style={{ display: "flex", alignItems: "center", gap: 6 }}><Clock size={13} /> Shift Start</span>

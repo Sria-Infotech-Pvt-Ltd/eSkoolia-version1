@@ -78,7 +78,7 @@ export function RoleManagementPanel() {
     setError("");
     try {
       const query = buildPaginationQuery(targetPage, targetPageSize, { search: search.trim() || undefined });
-      const qs = `${query}&minimal=1&show_inactive=1`;
+      const qs = `${query}&minimal=1${showInactive ? '&show_inactive=1' : ''}`;
       const data = await apiRequestWithRefresh<ListApiResponse<RoleItem>>(`/api/v1/access-control/roles/?${qs}`);
       const items = extractListData(data);
       const meta = extractPaginationMeta(data);
@@ -143,7 +143,11 @@ export function RoleManagementPanel() {
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ is_active: !role.is_active }),
       });
-      setRoles((prev) => prev.map((r) => r.id === role.id ? { ...r, is_active: !role.is_active } : r));
+      // Re-fetch (like submit()/remove() already do) instead of only patching local
+      // state — otherwise a role deactivated while "Active only" is selected keeps
+      // rendering until the page is reloaded, since the local patch never re-applies
+      // the current showInactive filter against the server's list.
+      await loadRoles(page, pageSize);
       setSuccess(role.is_active ? `"${role.name}" deactivated.` : `"${role.name}" activated.`);
     } catch {
       setError("Unable to update role status.");

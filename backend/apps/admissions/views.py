@@ -1891,3 +1891,63 @@ class AnalyticsOverviewView(APIView):
             }
         )
 
+
+# ──────────────────────────────────────────────────────────────────────────────
+# Campaign (Admissions -> Communication -> Campaigns)
+# ──────────────────────────────────────────────────────────────────────────────
+from .models import Campaign  # noqa: E402
+from .serializers import CampaignSerializer  # noqa: E402
+
+
+class CampaignViewSet(AdminSectionRBACMixin, viewsets.ModelViewSet):
+    serializer_class = CampaignSerializer
+    pagination_class = ApiPageNumberPagination
+    # module key is "admin_section" (not "admissions") to match every other
+    # permission code in this area — admin_section.complaint.*, .certificate.*,
+    # .admission_query.*, etc. — so Campaign shows up in the same Roles &
+    # Permissions module group as the rest of Admissions instead of an orphan one.
+    permission_codes = {
+        "list": "admin_section.campaign.view",
+        "retrieve": "admin_section.campaign.view",
+        "create": "admin_section.campaign.add",
+        "update": "admin_section.campaign.edit",
+        "partial_update": "admin_section.campaign.edit",
+        "destroy": "admin_section.campaign.delete",
+        # Custom status-change actions read as an edit, not a separate permission.
+        "activate": "admin_section.campaign.edit",
+        "pause": "admin_section.campaign.edit",
+        "cancel": "admin_section.campaign.edit",
+    }
+
+    def get_queryset(self):
+        user = self.request.user
+        qs = Campaign.objects.select_related("school", "created_by")
+        if not user.school_id:
+            return qs.none()
+        return qs.filter(school_id=user.school_id)
+
+    def perform_create(self, serializer):
+        user = self.request.user
+        if not user.school_id:
+            raise PermissionDenied("User must belong to a school to create campaigns.")
+        status_value = "scheduled" if serializer.validated_data.get("scheduled_for") else "draft"
+        serializer.save(school_id=user.school_id, created_by=user, status=status_value)
+
+    def _set_status(self, request, pk, new_status):
+        campaign = self.get_object()
+        campaign.status = new_status
+        campaign.save(update_fields=["status", "updated_at"])
+        return Response({"success": True, "data": CampaignSerializer(campaign).data})
+
+    @action(detail=True, methods=["post"])
+    def activate(self, request, pk=None):
+        return self._set_status(request, pk, "active")
+
+    @action(detail=True, methods=["post"])
+    def pause(self, request, pk=None):
+        return self._set_status(request, pk, "draft")
+
+    @action(detail=True, methods=["post"])
+    def cancel(self, request, pk=None):
+        return self._set_status(request, pk, "draft")
+

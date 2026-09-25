@@ -925,6 +925,8 @@ class HolidaySerializer(serializers.ModelSerializer):
             raise serializers.ValidationError("Holiday name must be at least 2 characters.")
         if len(cleaned) > 120:
             raise serializers.ValidationError("Holiday name must be 120 characters or less.")
+        if not re.fullmatch(r"[A-Za-z\s'.-]+", cleaned):
+            raise serializers.ValidationError("Holiday name can only contain letters, spaces, and '.- characters.")
         if len(set(cleaned.replace(" ", "").lower())) == 1 and len(cleaned.replace(" ", "")) >= 2:
             raise serializers.ValidationError("Please enter a real holiday name.")
         return cleaned

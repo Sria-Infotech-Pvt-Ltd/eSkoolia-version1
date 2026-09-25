@@ -3510,6 +3510,28 @@ export default function HrOnboardPage(props: any) {
   const popupDeptId = "popupDeptId" in props ? props.popupDeptId : null;
   const onClose = "onClose" in props ? props.onClose : undefined;
 
+  // The fixed footer bar (Progress + up to 8 buttons, flex-wrap) can wrap onto a
+  // second line at common laptop/narrow-desktop widths, but the page body only
+  // ever reserved a hardcoded 72px of bottom padding sized for a single-row
+  // footer — so a wrapped footer's real height exceeded the reserved space and
+  // visually overlapped whatever content sat at the bottom of the current step
+  // (QA saw this on Contact & Address, but it's not step-specific: the footer is
+  // rendered outside the step switch, so any step whose last field lands near
+  // the fold can show the same overlap). Measure the footer's actual rendered
+  // height instead of assuming a fixed number.
+  const footerRef = useRef<HTMLDivElement | null>(null);
+  const [footerHeight, setFooterHeight] = useState(72);
+  useEffect(() => {
+    const el = footerRef.current;
+    if (!el || typeof ResizeObserver === "undefined") return;
+    const observer = new ResizeObserver((entries) => {
+      const height = entries[0]?.contentRect.height;
+      if (height) setFooterHeight(Math.ceil(height));
+    });
+    observer.observe(el);
+    return () => observer.disconnect();
+  }, []);
+
   const [step,                 setStep]                 = useState(1);
   const [form,                 setForm]                 = useState<FormData>({ status: "active" });
   const [saving,               setSaving]               = useState(false);
@@ -4538,7 +4560,7 @@ export default function HrOnboardPage(props: any) {
 
   // Main layout
   return (
-    <div className="flex flex-col" style={isPopup ? { paddingBottom: "20px" } : { paddingBottom: "72px", marginLeft: "-20px", marginRight: "-20px", marginBottom: "-40px" }}>
+    <div className="flex flex-col" style={isPopup ? { paddingBottom: "20px" } : { paddingBottom: `${footerHeight}px`, marginLeft: "-20px", marginRight: "-20px", marginBottom: "-40px" }}>
       {/* Hidden photo file input */}
       <input ref={photoInputRef} type="file" accept="image/jpeg,image/jpg,image/png" className="hidden" onChange={handlePhotoChange} />
 
@@ -4921,6 +4943,7 @@ export default function HrOnboardPage(props: any) {
 
       {/* Sticky footer bar */}
       <div
+        ref={footerRef}
         className="fixed bottom-0 left-0 right-0 bg-white border-t border-[#ececf2] z-[100]"
         style={{ boxShadow: "0 -4px 12px rgba(15, 23, 42, 0.05)", padding: "18px 28px" }}
       >

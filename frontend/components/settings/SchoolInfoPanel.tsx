@@ -106,13 +106,37 @@ const REVIEW_GROUPS: Array<{ step: number; keys: Array<keyof SchoolInfo> }> = [
 const inputStyle = { border: "1px solid var(--bd-2)", borderRadius: 10, padding: "9px 11px", fontSize: 14, background: "var(--bg-1)", color: "var(--ink-1)", width: "100%" } as const;
 const labelStyle = { display: "flex", flexDirection: "column" as const, gap: 6, fontSize: 12.5, fontWeight: 600, color: "var(--ink-2)" };
 
-function Field({ form, setForm, fieldKey, label, multiline, type }: {
+// Previously every text field here used a raw onChange with no masking at all —
+// no digits-only cap on phone/PIN, no uppercase-alnum restriction on GSTIN/PAN/
+// UDISE, not even type="email"/"tel". `format` applies the same kind of
+// field-appropriate sanitizer already established elsewhere in the codebase
+// (e.g. StudentAddPanel.tsx's phone/pincode masking) so these fields can't be
+// saved as garbage in the first place.
+type FieldFormat = "phone" | "email" | "pin" | "code";
+
+function sanitizeByFormat(raw: string, format?: FieldFormat): string {
+  switch (format) {
+    case "phone":
+      return raw.replace(/\D/g, "").slice(0, 10);
+    case "pin":
+      return raw.replace(/\D/g, "").slice(0, 6);
+    case "code":
+      return raw.replace(/[^A-Za-z0-9]/g, "").toUpperCase().slice(0, 20);
+    case "email":
+      return raw.trim();
+    default:
+      return raw;
+  }
+}
+
+function Field({ form, setForm, fieldKey, label, multiline, type, format }: {
   form: Partial<SchoolInfo>;
   setForm: React.Dispatch<React.SetStateAction<Partial<SchoolInfo>>>;
   fieldKey: keyof SchoolInfo;
   label: string;
   multiline?: boolean;
   type?: string;
+  format?: FieldFormat;
 }) {
   return (
     <label style={labelStyle}>
@@ -126,9 +150,9 @@ function Field({ form, setForm, fieldKey, label, multiline, type }: {
         />
       ) : (
         <input
-          type={type ?? "text"}
+          type={type ?? (format === "email" ? "email" : format === "phone" ? "tel" : "text")}
           value={(form[fieldKey] as string | number) ?? ""}
-          onChange={(e) => setForm((f) => ({ ...f, [fieldKey]: type === "number" ? (e.target.value ? Number(e.target.value) : null) : e.target.value } as Partial<SchoolInfo>))}
+          onChange={(e) => setForm((f) => ({ ...f, [fieldKey]: type === "number" ? (e.target.value ? Number(e.target.value) : null) : sanitizeByFormat(e.target.value, format) } as Partial<SchoolInfo>))}
           style={inputStyle}
         />
       )}
@@ -515,10 +539,10 @@ export function SchoolInfoPanel() {
             {step === 1 && (
               <div style={{ display: "grid", gridTemplateColumns: "repeat(2, minmax(0,1fr))", gap: 18 }}>
                 <Field form={form} setForm={setForm} fieldKey="principal_name" label="Principal Name" />
-                <Field form={form} setForm={setForm} fieldKey="principal_email" label="Principal Email" />
-                <Field form={form} setForm={setForm} fieldKey="principal_phone" label="Principal Phone" />
-                <Field form={form} setForm={setForm} fieldKey="school_phone" label="Front-office Phone" />
-                <Field form={form} setForm={setForm} fieldKey="school_email" label="Front-office Email" />
+                <Field form={form} setForm={setForm} fieldKey="principal_email" label="Principal Email" format="email" />
+                <Field form={form} setForm={setForm} fieldKey="principal_phone" label="Principal Phone" format="phone" />
+                <Field form={form} setForm={setForm} fieldKey="school_phone" label="Front-office Phone" format="phone" />
+                <Field form={form} setForm={setForm} fieldKey="school_email" label="Front-office Email" format="email" />
                 <Field form={form} setForm={setForm} fieldKey="website" label="Website" />
               </div>
             )}
@@ -529,7 +553,7 @@ export function SchoolInfoPanel() {
                 <Field form={form} setForm={setForm} fieldKey="campus_address" label="Campus Address" multiline />
                 <div style={{ display: "grid", gridTemplateColumns: "1fr", gap: 18, alignContent: "start" }}>
                   <Field form={form} setForm={setForm} fieldKey="city" label="City" />
-                  <Field form={form} setForm={setForm} fieldKey="pin_code" label="PIN Code" />
+                  <Field form={form} setForm={setForm} fieldKey="pin_code" label="PIN Code" format="pin" />
                 </div>
                 <SelectField
                   form={form} setForm={setForm} fieldKey="state" label="State"
@@ -656,9 +680,9 @@ export function SchoolInfoPanel() {
             {step === 3 && (
               <div style={{ display: "grid", gridTemplateColumns: "repeat(2, minmax(0,1fr))", gap: 18 }}>
                 <Field form={form} setForm={setForm} fieldKey="affiliation_number" label="Board Affiliation Number" />
-                <Field form={form} setForm={setForm} fieldKey="udise_code" label="UDISE Code" />
-                <Field form={form} setForm={setForm} fieldKey="gstin" label="GSTIN" />
-                <Field form={form} setForm={setForm} fieldKey="pan" label="PAN" />
+                <Field form={form} setForm={setForm} fieldKey="udise_code" label="UDISE Code" format="code" />
+                <Field form={form} setForm={setForm} fieldKey="gstin" label="GSTIN" format="code" />
+                <Field form={form} setForm={setForm} fieldKey="pan" label="PAN" format="code" />
               </div>
             )}
 

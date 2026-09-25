@@ -2,6 +2,7 @@
 
 import { useState, useEffect } from "react";
 import { toast } from "react-toastify";
+import { apiRequestWithRefresh } from "@/lib/api-auth";
 import {
   Send,
   Plus,
@@ -288,7 +289,7 @@ With gratitude,
 
 /* ─────────────────────── campaign mock data ─────────────────────── */
 type Campaign = {
-  id: string;
+  id: number;
   name: string;
   status: "draft" | "scheduled" | "sent" | "active";
   channel: string;
@@ -300,28 +301,76 @@ type Campaign = {
   sentAt?: string;
 };
 
-const DEMO_CAMPAIGNS: Campaign[] = [
-  {
-    id: "c1",
-    name: "Grade 5 Seat Alert",
-    status: "sent",
-    channel: "WhatsApp",
-    audience: "All Grade 5 inquiries",
-    sentCount: 89,
-    deliveredPct: 94,
-    replies: 12,
-    sentAt: "3 May 2026",
-  },
-  {
-    id: "c2",
-    name: "Open House — 15 May",
-    status: "scheduled",
-    channel: "WhatsApp + Email",
-    audience: "All active inquiries (Grade 1–5)",
-    sentCount: 487,
-    scheduledFor: "12 May 2026, 9:00 AM",
-  },
-];
+// The real Campaign API (apps.admissions.views.CampaignViewSet) — this used to be
+// entirely absent: every create/cancel/activate/pause/delete action here just
+// mutated local React state seeded from a hardcoded demo array, so nothing ever
+// survived a page refresh (QA: campaigns created or cancelled don't persist).
+type ApiCampaign = {
+  id: number;
+  name: string;
+  channel: string;
+  audience: string;
+  status: "draft" | "scheduled" | "active" | "sent";
+  scheduled_for: string | null;
+  sent_at: string | null;
+  sent_count: number;
+  delivered_pct: number | null;
+  replies: number | null;
+};
+
+function formatCampaignDateTime(iso: string): string {
+  return new Date(iso).toLocaleString("en-IN", { day: "numeric", month: "short", year: "numeric", hour: "2-digit", minute: "2-digit" });
+}
+
+function mapApiCampaign(row: ApiCampaign): Campaign {
+  return {
+    id: row.id,
+    name: row.name,
+    status: row.status,
+    channel: row.channel,
+    audience: row.audience,
+    sentCount: row.sent_count,
+    deliveredPct: row.delivered_pct ?? undefined,
+    replies: row.replies ?? undefined,
+    scheduledFor: row.scheduled_for ? formatCampaignDateTime(row.scheduled_for) : undefined,
+    sentAt: row.sent_at ? formatCampaignDateTime(row.sent_at) : undefined,
+  };
+}
+
+async function fetchCampaigns(): Promise<Campaign[]> {
+  const data = await apiRequestWithRefresh<{ results?: ApiCampaign[] } | ApiCampaign[]>("/api/v1/admissions/campaigns/?page_size=200");
+  const rows = Array.isArray(data) ? data : (data.results ?? []);
+  return rows.map(mapApiCampaign);
+}
+
+async function createCampaignApi(input: { name: string; channel: string; audience: string; scheduledFor: string }): Promise<Campaign> {
+  const payload: Record<string, unknown> = { name: input.name, channel: input.channel, audience: input.audience };
+  if (input.scheduledFor) payload.scheduled_for = new Date(input.scheduledFor).toISOString();
+  const row = await apiRequestWithRefresh<ApiCampaign>("/api/v1/admissions/campaigns/", {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(payload),
+  });
+  return mapApiCampaign(row);
+}
+
+async function updateCampaignApi(id: number, payload: Record<string, unknown>): Promise<Campaign> {
+  const row = await apiRequestWithRefresh<ApiCampaign>(`/api/v1/admissions/campaigns/${id}/`, {
+    method: "PATCH",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(payload),
+  });
+  return mapApiCampaign(row);
+}
+
+async function campaignStatusAction(id: number, action: "activate" | "pause" | "cancel"): Promise<Campaign> {
+  const res = await apiRequestWithRefresh<{ data: ApiCampaign }>(`/api/v1/admissions/campaigns/${id}/${action}/`, { method: "POST" });
+  return mapApiCampaign(res.data);
+}
+
+async function deleteCampaignApi(id: number): Promise<void> {
+  await apiRequestWithRefresh<void>(`/api/v1/admissions/campaigns/${id}/`, { method: "DELETE" });
+}
 
 /* ─────────────────────── helpers ─────────────────────── */
 function ChannelBadge({ ch }: { ch: Template["channel"] }) {
@@ -413,8 +462,8 @@ function CampaignEditModal({ campaign, isOpen, onClose, onSave }: { campaign: Ca
           </div>
         </div>
         <div className="flex gap-3 mt-6">
-          <button onClick={onClose} className="flex-1 border border-gray-200 rounded-lg py-2 text-sm text-gray-600 hover:bg-gray-50">Cancel</button>
-          <button onClick={() => { onSave(name.trim() || campaign.name); onClose(); }}
+          <button type="button" onClick={onClose} className="flex-1 border border-gray-200 rounded-lg py-2 text-sm text-gray-600 hover:bg-gray-50">Cancel</button>
+          <button type="button" onClick={() => { onSave(name.trim() || campaign.name); onClose(); }}
             className="flex-1 bg-blue-600 text-white rounded-lg py-2 text-sm font-semibold hover:bg-blue-700">Save Changes</button>
         </div>
       </div>
@@ -485,7 +534,18 @@ export function AdmissionsMarketing() {
   const [templateTab, setTemplateTab] = useState<Template["channel"]>("whatsapp");
   const [searchQ, setSearchQ] = useState("");
   const [showNewCampaign, setShowNewCampaign] = useState(false);
-  const [campaigns, setCampaigns] = useState<Campaign[]>(DEMO_CAMPAIGNS);
+  const [campaigns, setCampaigns] = useState<Campaign[]>([]);
+  const [campaignsLoading, setCampaignsLoading] = useState(true);
+
+  useEffect(() => {
+    let cancelled = false;
+    setCampaignsLoading(true);
+    fetchCampaigns()
+      .then((rows) => { if (!cancelled) setCampaigns(rows); })
+      .catch(() => { if (!cancelled) toast.error("Could not load campaigns."); })
+      .finally(() => { if (!cancelled) setCampaignsLoading(false); });
+    return () => { cancelled = true; };
+  }, []);
   const [editingCampaign, setEditingCampaign] = useState<Campaign | null>(null);
   const [editModalOpen, setEditModalOpen] = useState(false);
   const [previewTemplate, setPreviewTemplate] = useState<Template | null>(null);
@@ -503,6 +563,26 @@ export function AdmissionsMarketing() {
   function handleEditCampaign(campaign: Campaign) {
     setEditingCampaign(campaign);
     setEditModalOpen(true);
+  }
+
+  async function handleCampaignStatusAction(id: number, action: "activate" | "pause" | "cancel") {
+    try {
+      const updated = await campaignStatusAction(id, action);
+      setCampaigns((prev) => prev.map((c) => (c.id === id ? updated : c)));
+    } catch {
+      toast.error("Could not update this campaign. Please try again.");
+    }
+  }
+
+  async function handleDeleteCampaign(id: number) {
+    const previous = campaigns;
+    setCampaigns((prev) => prev.filter((c) => c.id !== id));
+    try {
+      await deleteCampaignApi(id);
+    } catch {
+      setCampaigns(previous);
+      toast.error("Could not delete this campaign. Please try again.");
+    }
   }
 
   const card: React.CSSProperties = {
@@ -543,7 +623,11 @@ export function AdmissionsMarketing() {
           </div>
         </div>
 
-        {campaigns.length === 0 ? (
+        {campaignsLoading ? (
+          <div style={{ padding: "48px 20px", textAlign: "center", color: "var(--ink-2, #6b7280)", fontSize: 13.5 }}>
+            Loading campaigns…
+          </div>
+        ) : campaigns.length === 0 ? (
           <div style={{ padding: "48px 20px", textAlign: "center" }}>
             <Send size={40} color="#e5e7eb" />
             <p style={{ color: "var(--ink-2, #6b7280)", marginTop: 12, fontSize: 14 }}>No campaigns yet.</p>
@@ -595,13 +679,26 @@ export function AdmissionsMarketing() {
                       <div className="text-xs text-blue-600 mb-3">Scheduled: {campaign.scheduledFor} · {campaign.sentCount} recipients</div>
                     )}
                     <div className="flex gap-2">
-                      <button onClick={() => handleEditCampaign(campaign)} className="border border-gray-200 rounded-lg px-3 py-1.5 text-sm hover:bg-gray-50 text-gray-700">Edit</button>
-                      {campaign.status === 'sent' && (
-                        <button onClick={() => setReportCampaign(campaign)} className="bg-blue-600 text-white rounded-lg px-3 py-1.5 text-sm hover:bg-blue-700">View Report</button>
+                      <button type="button" onClick={() => handleEditCampaign(campaign)} className="border border-gray-200 rounded-lg px-3 py-1.5 text-sm hover:bg-gray-50 text-gray-700">Edit</button>
+                      
+                      {campaign.status === 'draft' && (
+                        <button type="button" onClick={() => handleCampaignStatusAction(campaign.id, 'activate')} className="bg-blue-600 text-white rounded-lg px-3 py-1.5 text-sm hover:bg-blue-700">Activate</button>
                       )}
+
+                      {campaign.status === 'active' && (
+                        <button type="button" onClick={() => handleCampaignStatusAction(campaign.id, 'pause')} className="border border-gray-200 rounded-lg px-3 py-1.5 text-sm hover:bg-gray-50 text-gray-700">Pause</button>
+                      )}
+
+                      {campaign.status === 'sent' && (
+                        <button type="button" onClick={() => setReportCampaign(campaign)} className="bg-blue-600 text-white rounded-lg px-3 py-1.5 text-sm hover:bg-blue-700">View Report</button>
+                      )}
+
                       {campaign.status === 'scheduled' && (
-                        <button onClick={() => setCampaigns(prev => prev.filter(x => x.id !== campaign.id))}
-                          className="bg-blue-600 text-white rounded-lg px-3 py-1.5 text-sm hover:bg-blue-700">Cancel</button>
+                        <button type="button" onClick={() => handleCampaignStatusAction(campaign.id, 'cancel')} className="border border-gray-200 rounded-lg px-3 py-1.5 text-sm hover:bg-gray-50 text-gray-700">Cancel</button>
+                      )}
+
+                      {(campaign.status === 'draft' || campaign.status === 'scheduled') && (
+                        <button type="button" onClick={() => handleDeleteCampaign(campaign.id)} className="border border-red-200 text-red-600 rounded-lg px-3 py-1.5 text-sm hover:bg-red-50 text-gray-700">Delete</button>
                       )}
                     </div>
                   </div>
@@ -767,9 +864,14 @@ export function AdmissionsMarketing() {
           campaign={editingCampaign}
           isOpen={editModalOpen}
           onClose={() => { setEditModalOpen(false); setEditingCampaign(null); }}
-          onSave={(name) => {
-            setCampaigns(prev => prev.map(c => c.id === editingCampaign.id ? { ...c, name } : c));
-            toast.success("Campaign updated.");
+          onSave={async (name) => {
+            try {
+              const updated = await updateCampaignApi(editingCampaign.id, { name });
+              setCampaigns(prev => prev.map(c => c.id === editingCampaign.id ? updated : c));
+              toast.success("Campaign updated.");
+            } catch {
+              toast.error("Could not update this campaign. Please try again.");
+            }
           }}
         />
       )}
@@ -835,6 +937,7 @@ export function AdmissionsMarketing() {
 /* ─── New Campaign Form ─── */
 function NewCampaignForm({ onSave, onCancel }: { onSave: (c: Campaign) => void; onCancel: () => void }) {
   const [form, setForm] = useState({ name: "", channel: "WhatsApp", audience: "All active inquiries", scheduledFor: "" });
+  const [saving, setSaving] = useState(false);
   const f = (k: string) => (e: React.ChangeEvent<HTMLInputElement | HTMLSelectElement>) =>
     setForm((prev) => ({ ...prev, [k]: e.target.value }));
 
@@ -872,23 +975,25 @@ function NewCampaignForm({ onSave, onCancel }: { onSave: (c: Campaign) => void; 
         <input type="datetime-local" value={form.scheduledFor} onChange={f("scheduledFor")} style={inputStyle} />
       </div>
       <div style={{ display: "flex", gap: 10, justifyContent: "flex-end", marginTop: 8 }}>
-        <button onClick={onCancel} style={{ padding: "8px 18px", border: "1px solid var(--line, #e5e7eb)", borderRadius: 8, background: "#fff", fontSize: 13, cursor: "pointer" }}>Cancel</button>
+        <button type="button" onClick={onCancel} style={{ padding: "8px 18px", border: "1px solid var(--line, #e5e7eb)", borderRadius: 8, background: "#fff", fontSize: 13, cursor: "pointer" }}>Cancel</button>
         <button
-          onClick={() => {
+          type="button"
+          disabled={saving}
+          onClick={async () => {
             if (!form.name) return;
-            onSave({
-              id: `c${Date.now()}`,
-              name: form.name,
-              channel: form.channel,
-              audience: form.audience,
-              status: form.scheduledFor ? "scheduled" : "draft",
-              sentCount: 0,
-              scheduledFor: form.scheduledFor ? new Date(form.scheduledFor).toLocaleString("en-IN", { day: "numeric", month: "short", year: "numeric", hour: "2-digit", minute: "2-digit" }) : undefined,
-            });
+            setSaving(true);
+            try {
+              const created = await createCampaignApi(form);
+              onSave(created);
+            } catch {
+              toast.error("Could not create this campaign. Please try again.");
+            } finally {
+              setSaving(false);
+            }
           }}
-          style={{ padding: "8px 18px", background: "#1d4ed8", color: "#fff", border: "none", borderRadius: 8, fontSize: 13, fontWeight: 600, cursor: "pointer" }}
+          style={{ padding: "8px 18px", background: "#1d4ed8", color: "#fff", border: "none", borderRadius: 8, fontSize: 13, fontWeight: 600, cursor: saving ? "default" : "pointer", opacity: saving ? 0.7 : 1 }}
         >
-          {form.scheduledFor ? "Schedule Campaign" : "Save Draft"}
+          {saving ? "Saving…" : form.scheduledFor ? "Schedule Campaign" : "Save Draft"}
         </button>
       </div>
     </div>
@@ -941,8 +1046,9 @@ function NewEventModal({ onSave, onCancel }: { onSave: (ev: MarketingEvent) => v
             <input type="number" min={1} value={form.capacity} onChange={f("capacity")} style={inputStyle} />
           </div>
           <div style={{ display: "flex", gap: 10, justifyContent: "flex-end", marginTop: 8 }}>
-            <button onClick={onCancel} style={{ padding: "8px 18px", border: "1px solid var(--line, #e5e7eb)", borderRadius: 8, background: "#fff", fontSize: 13, cursor: "pointer" }}>Cancel</button>
+            <button type="button" onClick={onCancel} style={{ padding: "8px 18px", border: "1px solid var(--line, #e5e7eb)", borderRadius: 8, background: "#fff", fontSize: 13, cursor: "pointer" }}>Cancel</button>
             <button
+              type="button"
               onClick={() => {
                 const trimmedName = form.name.trim();
                 if (!trimmedName || !form.date) return;

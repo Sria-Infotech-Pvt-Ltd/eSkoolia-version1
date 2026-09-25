@@ -32,10 +32,13 @@ type ComplaintRow = {
   complaint_by: string;
   complaint_type: number;
   complaint_source: number;
+  complaint_type_name?: string;
+  complaint_source_name?: string;
   phone?: string;
   date?: string;
   action_taken?: string;
   assigned_to?: number | null;
+  assigned_to_name?: string;
   description?: string;
   file_url?: string;
 };
@@ -715,8 +718,8 @@ export function ComplaintPanel() {
                       <span className={s.studentName}>{row.complaint_by}</span>
                     </div>
                     <span className={s.admNo}>{displayValue(row.phone)}</span>
-                    <span className={s.admNo}>{displayValue(row.complaint_type)}</span>
-                    <span className={s.admNo}>{displayValue(row.complaint_source)}</span>
+                    <span className={s.admNo}>{displayValue(row.complaint_type_name)}</span>
+                    <span className={s.admNo}>{displayValue(row.complaint_source_name)}</span>
                     <span className={s.admNo}>{row.date}</span>
                     <div className={s.tblLastCol}>
                       <button type="button" className={s.editBtn} onClick={() => editRow(row)} title="Edit"><PencilIcon /></button>

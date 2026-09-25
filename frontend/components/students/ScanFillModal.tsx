@@ -10,6 +10,18 @@ export interface FieldDef {
   type?: string;
   /** Extra OCR label synonyms to search for besides `label` (e.g. lastName → "SURNAME"). */
   aliases?: string[];
+  /**
+   * Shape the extracted value must match for a strict field — phone/pincode/aadhaar
+   * numbers and emails. findAfterLabel grabs "whatever text sits near the matched
+   * label", which on a real ID document (as opposed to a neatly labeled admission
+   * form) is often instructional boilerplate that happens to contain the word
+   * "mobile"/"phone"/etc (e.g. an Aadhaar letter's "please keep your mobile number
+   * and email ID updated" notice). Without this, that boilerplate — or a real
+   * value with boilerplate glued onto it by messy OCR line-breaks — got stored
+   * verbatim. With it, only a substring actually matching the expected shape is
+   * kept; anything else is left blank rather than filled with garbage.
+   */
+  extractAs?: "phone" | "pincode" | "aadhaar" | "email";
 }
 
 export type FieldGroup = { section: string; fields: FieldDef[] };
@@ -31,13 +43,13 @@ export const STUDENT_FIELD_GROUPS: FieldGroup[] = [
   {
     section: "Section B — Contact & Address",
     fields: [
-      { key: "phone",       label: "Mobile Phone",  required: true,  hint: "10-digit", aliases: ["MOBILE", "PHONE"] },
-      { key: "email",       label: "Email",         required: false },
+      { key: "phone",       label: "Mobile Phone",  required: true,  hint: "10-digit", aliases: ["MOBILE", "PHONE"], extractAs: "phone" },
+      { key: "email",       label: "Email",         required: false, extractAs: "email" },
       { key: "addressLine", label: "Address Line",  required: true,  aliases: ["ADDRESS"] },
       { key: "city",        label: "City",          required: true,  aliases: ["TOWN"] },
       { key: "district",    label: "District",      required: true  },
       { key: "stateName",   label: "State",         required: true  },
-      { key: "pincode",     label: "Pincode",       required: true,  hint: "6-digit", aliases: ["PIN CODE", "POSTAL CODE"] },
+      { key: "pincode",     label: "Pincode",       required: true,  hint: "6-digit", aliases: ["PIN CODE", "POSTAL CODE"], extractAs: "pincode" },
     ],
   },
   {
@@ -45,15 +57,15 @@ export const STUDENT_FIELD_GROUPS: FieldGroup[] = [
     fields: [
       { key: "guardianName",       label: "Guardian Full Name",   required: true,  aliases: ["GUARDIAN NAME", "FATHER", "MOTHER"] },
       { key: "guardianRelation",   label: "Relationship",         required: false, hint: "Father / Mother / Guardian" },
-      { key: "guardianPhone",      label: "Guardian Mobile",      required: true,  hint: "10-digit", aliases: ["GUARDIAN PHONE"] },
-      { key: "guardianEmail",      label: "Guardian Email",       required: false },
+      { key: "guardianPhone",      label: "Guardian Mobile",      required: true,  hint: "10-digit", aliases: ["GUARDIAN PHONE"], extractAs: "phone" },
+      { key: "guardianEmail",      label: "Guardian Email",       required: false, extractAs: "email" },
       { key: "guardianOccupation", label: "Guardian Occupation",  required: false },
     ],
   },
   {
     section: "Section D — Government Identity",
     fields: [
-      { key: "aadhaarNo", label: "Aadhaar Number", required: false, hint: "12 digits", aliases: ["AADHAR", "UID"] },
+      { key: "aadhaarNo", label: "Aadhaar Number", required: false, hint: "12 digits", aliases: ["AADHAR", "UID"], extractAs: "aadhaar" },
     ],
   },
 ];
@@ -135,14 +147,25 @@ function extractFieldsFromText(text: string, fieldGroups: FieldGroup[]): Record<
 
   const findAfterLabel = (label: string): string => {
     const idx = lines.findIndex(l => l.toUpperCase().includes(label.toUpperCase()));
-    if (idx >= 0 && idx + 1 < lines.length) {
-      const val = lines[idx + 1].replace(/^[-:_\s]+/, "").trim();
-      if (val && !val.toUpperCase().includes("SECTION") && !val.toUpperCase().includes("STUDENT"))
+    if (idx < 0) return "";
+
+    // Prefer an inline "Label: Value" match on the label's own line — this is
+    // unambiguous, whereas blindly grabbing the next line (below) can swallow
+    // a *different* field's "Label: Value" line whole (e.g. "First Name: Test"
+    // followed by "Last Name: Sharma" was filling First Name with "Last Name:
+    // Sharma" because the next-line fallback ran first and had no way to tell
+    // that line belonged to another field).
+    const inline = lines[idx].match(/[:=]\s*(.+)$/);
+    if (inline && inline[1].trim().length > 0) return inline[1].trim();
+
+    if (idx + 1 < lines.length) {
+      const nextLine = lines[idx + 1];
+      const val = nextLine.replace(/^[-:_\s]+/, "").trim();
+      // Guard against the next line being itself another field's "Label: value"
+      // line (short leading word(s) then a colon) rather than this field's value.
+      const looksLikeAnotherLabel = /^[A-Za-z][A-Za-z\s/]{1,30}[:=]/.test(nextLine);
+      if (val && !looksLikeAnotherLabel && !val.toUpperCase().includes("SECTION") && !val.toUpperCase().includes("STUDENT"))
         return val;
-    }
-    if (idx >= 0) {
-      const m = lines[idx].match(/[:=]\s*(.+)$/);
-      if (m && m[1].trim().length > 0) return m[1].trim();
     }
     return "";
   };
@@ -152,10 +175,40 @@ function extractFieldsFromText(text: string, fieldGroups: FieldGroup[]): Record<
     return "";
   };
 
+  // Extracts only the substring of `candidate` that actually matches the
+  // field's expected shape, discarding the rest — see FieldDef.extractAs.
+  // Returns "" (never the raw garbage) when nothing matching is found, so a
+  // strict field is left blank for the admin to fill in rather than populated
+  // with whatever boilerplate text sat near the matched label.
+  const sanitizeExtracted = (candidate: string, extractAs: FieldDef["extractAs"]): string => {
+    if (!extractAs) return candidate;
+    switch (extractAs) {
+      case "phone": {
+        const m = candidate.match(/[6-9]\d{9}/);
+        return m ? m[0] : "";
+      }
+      case "pincode": {
+        const m = candidate.match(/\d{6}/);
+        return m ? m[0] : "";
+      }
+      case "aadhaar": {
+        const m = candidate.replace(/\s+/g, "").match(/\d{12}/);
+        return m ? m[0] : "";
+      }
+      case "email": {
+        const m = candidate.match(/[A-Za-z0-9._%+-]+@[A-Za-z0-9.-]+\.[A-Za-z]{2,}/);
+        return m ? m[0] : "";
+      }
+      default:
+        return candidate;
+    }
+  };
+
   const raw: Record<string, string> = {};
   for (const group of fieldGroups) {
     for (const f of group.fields) {
-      raw[f.key] = pick(f.label.toUpperCase(), ...(f.aliases ?? []));
+      const candidate = pick(f.label.toUpperCase(), ...(f.aliases ?? []));
+      raw[f.key] = sanitizeExtracted(candidate, f.extractAs);
     }
   }
 

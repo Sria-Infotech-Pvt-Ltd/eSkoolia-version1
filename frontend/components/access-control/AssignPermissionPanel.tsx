@@ -77,9 +77,9 @@ function groupPermsBySubFeature(permissions: PermissionNode[]): SubFeatureRow[] 
     const featureKey = getFeatureKey(perm.code);
 
     let action: PermAction;
-    if (rawAction === "add") action = "add";
-    else if (rawAction === "edit") action = "edit";
-    else if (rawAction === "delete") action = "delete";
+    if (rawAction === "add" || rawAction === "create") action = "add";
+    else if (rawAction === "edit" || rawAction === "change" || rawAction === "update") action = "edit";
+    else if (rawAction === "delete" || rawAction === "remove" || rawAction === "destroy") action = "delete";
     else action = "view"; // "view", "manage", "read", etc.
 
     if (!groups.has(featureKey)) groups.set(featureKey, {});
@@ -101,7 +101,7 @@ function inferOperationLevel(permissions: PermissionNode[], ids: Set<number>): O
   const selected = permissions.filter((p) => ids.has(p.id));
   if (selected.length === 0) return "none";
   if (selected.some((p) => getActionFromCode(p.code) === "delete")) return "full";
-  if (selected.some((p) => { const a = getActionFromCode(p.code); return a === "add" || a === "edit"; })) return "create_edit";
+  if (selected.some((p) => { const a = getActionFromCode(p.code); return a === "add" || a === "create" || a === "edit" || a === "change" || a === "update"; })) return "create_edit";
   return "view";
 }
 

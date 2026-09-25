@@ -71,7 +71,9 @@ def custom_exception_handler(exc, context):
 
     # Handle database schema errors (e.g. unapplied migrations)
     if isinstance(exc, DjangoProgrammingError):
-        logger.error("Database schema error (possibly unapplied migration): %s", exc)
+        logger.error(
+            "Database schema error (possibly unapplied migration): %s", exc, exc_info=True
+        )
         return Response(
             {
                 "success": False,

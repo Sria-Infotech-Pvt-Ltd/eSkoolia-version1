@@ -8,6 +8,7 @@ from .views import (
 	AIGenerateView,
 	AnalyticsOverviewView,
 	BulkJobViewSet,
+	CampaignViewSet,
 	CertificateTemplateViewSet,
 	CertificateReadOnlyViewSet,
 	ComplaintEntryViewSet,
@@ -37,6 +38,7 @@ router.register("id-card-templates", IdCardTemplateViewSet, basename="id-card-te
 router.register("certificate-templates", CertificateTemplateViewSet, basename="certificate-template")
 router.register("id-cards", IdCardReadOnlyViewSet, basename="id-card")
 router.register("certificates", CertificateReadOnlyViewSet, basename="certificate")
+router.register("campaigns", CampaignViewSet, basename="campaign")
 # Command Center
 router.register("pipeline", PipelineViewSet, basename="pipeline")
 router.register("bulk", BulkJobViewSet, basename="bulk-job")
