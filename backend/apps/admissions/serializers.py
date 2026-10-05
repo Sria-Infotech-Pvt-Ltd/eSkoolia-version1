@@ -154,6 +154,28 @@ def _is_meaningful_text(value):
     return True
 
 
+# Labels of the "Label: value | Label: value" line that the Admissions Command
+# Center full enquiry form appends to `description` (see submitDrawer in
+# frontend AdmissionsCommandCenter.tsx). Those values come from structured
+# fields (dates, names, selects), not from the free-text message.
+_INQUIRY_DETAIL_SEGMENT = re.compile(
+    r"^(?:Child|DOB|Gender|Occupation|Prev School|Reason|Budget|Contact Time|Siblings|"
+    r"Requirements|Relationship|Alt Phone|Area|Sibling Enrolled|Referred By|Visit Date|Visit Time):",
+    re.IGNORECASE,
+)
+
+
+def _inquiry_free_text(description):
+    """Return the user-typed part of an enquiry description, without appended detail lines."""
+    kept = []
+    for line in str(description or "").splitlines():
+        segments = [segment.strip() for segment in line.split("|") if segment.strip()]
+        if segments and all(_INQUIRY_DETAIL_SEGMENT.match(segment) for segment in segments):
+            continue
+        kept.append(line)
+    return "\n".join(kept).strip()
+
+
 class AdmissionFollowUpSerializer(serializers.ModelSerializer):
     author_name = serializers.SerializerMethodField()
 
@@ -321,7 +343,10 @@ class AdmissionInquirySerializer(serializers.ModelSerializer):
 
         if address and not _is_meaningful_text(address):
             errors["address"] = "Please enter a meaningful address."
-        if description and not _is_meaningful_text(description):
+        # Only the parent's typed message is spam-checked; the appended detail
+        # line holds structured values (e.g. DOB "2000-...") that would otherwise
+        # trip the repeated-character / keyboard-pattern heuristics.
+        if description and not _is_meaningful_text(_inquiry_free_text(description)):
             errors["description"] = "Please enter a meaningful description."
         if note and not _is_meaningful_text(note):
             errors["note"] = "Please enter a meaningful note."

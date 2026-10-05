@@ -50,6 +50,10 @@ function getRoleColor(name: string): string {
 
 type PanelMode = "add" | "edit" | null;
 
+/** At most 4 columns (as before), dropping to fewer when the editor panel narrows the
+ *  card area — prevents the grid overflowing its container and painting over the panel. */
+const ROLE_GRID_COLUMNS = "repeat(auto-fill, minmax(max(200px, calc((100% - 32px) / 4)), 1fr))";
+
 export function RoleManagementPanel() {
   const router = useRouter();
   const { page, pageSize, setPage, setPageSize } = usePersistentPagination("roles.list", 1, 10);
@@ -227,7 +231,7 @@ export function RoleManagementPanel() {
     <section style={{ maxWidth: 1280, margin: "0 auto", padding: "24px 24px 40px" }}>
 
       {/* ── Page header ── */}
-      <div style={{ display: "flex", alignItems: "flex-start", justifyContent: "space-between", marginBottom: 20 }}>
+      <div style={{ display: "flex", flexWrap: "wrap", gap: 12, alignItems: "flex-start", justifyContent: "space-between", marginBottom: 20 }}>
         <div>
           <h1 style={{ margin: 0, fontSize: 22, fontWeight: 700, color: "var(--ink-1)" }}>
             Role{" "}
@@ -237,7 +241,7 @@ export function RoleManagementPanel() {
             Define roles and control which pages each role can access
           </p>
         </div>
-        <div style={{ display: "flex", gap: 8, alignItems: "center" }}>
+        <div style={{ display: "flex", flexWrap: "wrap", gap: 8, alignItems: "center" }}>
           {/* Show inactive toggle */}
           <button
             type="button"
@@ -287,7 +291,7 @@ export function RoleManagementPanel() {
       {success && <TopToast message={success} tone="success" onClose={() => setSuccess("")} />}
 
       {/* ── Split layout: cards + editor panel ── */}
-      <div style={{ display: "flex", gap: 14, alignItems: "flex-start" }}>
+      <div className="role-split" style={{ display: "flex", gap: 14, alignItems: "flex-start" }}>
 
         {/* ── Role cards ── */}
         <div style={{
@@ -300,13 +304,13 @@ export function RoleManagementPanel() {
           </div>
 
           {loading ? (
-            <div style={{ display: "grid", gridTemplateColumns: "repeat(4, 1fr)", gap: 8 }}>
+            <div style={{ display: "grid", gridTemplateColumns: ROLE_GRID_COLUMNS, gap: 8 }}>
               {Array.from({ length: 8 }).map((_, i) => (
                 <div key={i} style={{ height: 54, borderRadius: 10, background: "var(--bg-2)", animation: "pulse 1.5s ease-in-out infinite" }} />
               ))}
             </div>
           ) : (
-            <div style={{ display: "grid", gridTemplateColumns: "repeat(4, 1fr)", gap: 8 }}>
+            <div style={{ display: "grid", gridTemplateColumns: ROLE_GRID_COLUMNS, gap: 8 }}>
 
               {roles.map((role) => {
                 const isSelected = panelMode === "edit" && editingRoleId === role.id;
@@ -463,7 +467,7 @@ export function RoleManagementPanel() {
 
         {/* ── Slide-in editor panel ── */}
         {panelMode !== null && (
-          <div style={{
+          <div className="role-editor" style={{
             width: 290, flexShrink: 0,
             border: "1.5px solid var(--pu)", borderRadius: 10,
             background: "#FAFAFF", overflow: "hidden",
@@ -625,6 +629,11 @@ export function RoleManagementPanel() {
         @keyframes pulse {
           0%, 100% { opacity: 1; }
           50% { opacity: 0.4; }
+        }
+        /* Narrow screens: stack the editor above the role cards instead of side-by-side */
+        @media (max-width: 1024px) {
+          .role-split { flex-direction: column; align-items: stretch !important; }
+          .role-editor { width: 100% !important; order: -1; }
         }
       `}</style>
     </section>

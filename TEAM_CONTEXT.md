@@ -5977,3 +5977,95 @@ Login at localhost:3000
 1. `frontend/.env` — removed `NEXT_PUBLIC_API_URL=http://127.0.0.1:8765` (was added for local machine testing), reverted `NEXT_PUBLIC_BACKEND_PORT` from `8765` → `8000`, reverted `NEXT_PUBLIC_BASE_DOMAIN` from `eskoolia.local` → `eskoolia.com`.
 2. `backend/.env` — removed `192.168.1.40` and `localtesting.eskoolia.local` from `DJANGO_ALLOWED_HOSTS`; restored to `127.0.0.1,localhost` only.
 3. Both `.env` files are gitignored — these changes are local only, not pushed to repo.
+
+
+29/09/2026 (Jampala Kavya — Roles & Permissions → New Role UI)
+
+**Developer:** Jampala Kavya
+**Date:** 29/09/2026
+**Area:** Roles & Permissions → New Role UI
+
+### New Role panel overlapping the Roles & Permissions page — Fixed
+
+**Root cause:** The role-card grid used a fixed `repeat(4, 1fr)` layout. Each card has a 108px right padding for its action icons, so it has a minimum width of about 160px. Opening the 290px New/Edit Role panel narrowed the card area below what 4 columns need. The grid then overflowed its container, and because the cards are `position: relative`, they were painted on top of the panel.
+
+**File changed:** `frontend/components/access-control/RoleManagementPanel.tsx` (layout/styling only)
+
+1. Added a `ROLE_GRID_COLUMNS` constant: `repeat(auto-fill, minmax(max(200px, calc((100% - 32px) / 4)), 1fr))`. It keeps at most 4 columns at full width, as before, and drops to fewer columns when the editor panel narrows the card area. Applied to both the role grid and the loading skeleton grid.
+2. Page header row and its controls (Active-only toggle, search, + New Role) now use `flexWrap: "wrap"` so they wrap instead of being squeezed on narrow screens.
+3. Added `role-split` / `role-editor` classNames and a `@media (max-width: 1024px)` rule in the component's existing `<style jsx global>` block. On narrow screens the editor panel stacks full-width above the role cards instead of sitting beside them.
+
+**Backend/API changes: None.**
+
+Existing role-management functionality was preserved: role creation, portal selection, permission assignment (🔑 → assign-permission page), role editing, role deletion, active/inactive toggling, pagination/search, and all API requests/payloads are unchanged. No new dependencies were added.
+
+
+### Update — 30/09/2026
+
+**Developer:** Jampala Kavya
+**Area:** Admissions → Command Center → New Enquiry
+
+**Original issue:** Saving a Full (3-step) New Enquiry showed "Please enter a meaningful description.", even when Parent's Message / Notes contained valid text (e.g. "about the school").
+
+**Root cause:**
+- The error is raised by the backend, in `AdmissionInquirySerializer.validate()` (`backend/apps/admissions/serializers.py`). It is not a frontend validation.
+- The field mapping is correct. "Parent's Message / Notes" → `drawerForm.description` → `description` in the payload.
+- However, the Full form's `submitDrawer` (`frontend/components/admissions/AdmissionsCommandCenter.tsx`) appends an auto-generated line to `description`. That line holds all Step 1/2/3 detail fields: `Child: … | DOB: … | Area: … | Visit Date: … | …`. These fields have no model columns, and the edit form parses them back out with `parseLegacyInquiryDescription`.
+- The backend ran its anti-spam check `_is_meaningful_text` on the whole combined string. The check rejects 3+ repeated characters and keyboard patterns such as `abcd`/`jkl`, checked with whitespace removed. So structured values the user never typed as a message could fail it. Examples: DOB `2000-02-02` ("000"), or a previous school named "ABCD Public School".
+- Quick Add sends only the typed message as `description`, so it was not affected by the appended line.
+
+**Fix (backend, validation only):** `backend/apps/admissions/serializers.py`
+1. Added `_INQUIRY_DETAIL_SEGMENT` (regex of the known detail labels) and a `_inquiry_free_text(description)` helper. The helper drops lines made up entirely of known `Label: value | Label: value` segments.
+2. The `description` check in `AdmissionInquirySerializer.validate()` now runs `_is_meaningful_text(_inquiry_free_text(description))`. The parent's typed message is still spam-checked with the same rule and the same error message. Only the auto-generated detail line is excluded.
+
+**Not changed:** API contract, request/response shape, the stored `description` value (still saved in full, so edit/detail parsing is unchanged), model/DB, `note`/`address`/name validation, duplicate detection, and all frontend files.
+
+**Frontend changes: None.**
+**Backend/API changes:** `backend/apps/admissions/serializers.py` validation logic only (no endpoint, field or schema change).
+
+**Quick Enquiry:** behaviour unchanged. **Full Enquiry:** now saves when the message is valid, whatever values are in the Step 1/2/3 detail fields.
+
+**Testing performed:** ran payloads through `AdmissionInquirySerializer(data=...).is_valid()` in the Django shell (validation only, nothing saved):
+- Message + details containing DOB `2000-02-02`: failed before the fix, valid after.
+- Message + details containing "ABCD Public School": failed before the fix, valid after.
+- Normal message + details: valid.
+- Details only: valid.
+- Quick plain message: valid.
+- Empty description: valid.
+- Gibberish message `aaaaaa` + details: still rejected with "Please enter a meaningful description."
+- `qwerty asdf`: still rejected.
+
+An end-to-end UI test (browser save, list refresh, edit) still needs to be done manually.
+
+
+### Update — 30/09/2026
+
+**Developer:** Jampala Kavya
+**Area:** Students → Enroll Student → Student Photo Upload & Preview
+
+**Original issue:** In Student Identity, uploading a student photo reported success, but the image did not show in the Student Photo circle. "View image" opened the preview modal with a broken image (only the alt text "Student full preview" was visible).
+
+**Root cause:**
+- The upload itself works. `POST /api/v1/students/students/upload-photo/` (`backend/apps/students/views.py::upload_photo`) saves the file to `MEDIA_ROOT/student_photos/<uuid>.jpg` and returns 201 with an absolute URL, e.g. `http://127.0.0.1:8000/media/student_photos/<uuid>.jpg`. The files are present on disk.
+- The frontend (`StudentAddPanel.tsx`) put that URL directly into `<img src={photo}>` in both the photo circle and the preview modal.
+- `/media/*` is served by `apps/core/media_views.py::serve_media`, which requires a JWT. A plain `<img>` request sends no Authorization header, so it gets **403 "Authentication required."** (verified against the running backend with an existing file in `media/student_photos/`).
+- In addition, even with a token, a freshly uploaded photo is not linked to any `Student` row until enrollment is saved. So `_school_owns_path` returns 404 for it. This ownership check is correct security behaviour and was left unchanged.
+
+**Fix (frontend only):** `frontend/components/students/StudentAddPanel.tsx`
+1. Added a `toMediaApiPath()` helper that converts the stored absolute or relative media URL into an API path. It follows the same approach as `toApiPath` in `PlanningStudioWorkspace.tsx`.
+2. Added a `photoSrc` state and `uploadedPhotoPreviewRef`. `photo` is still the backend URL that is submitted with the student, so the payload is unchanged. `photoSrc` is what `<img>` renders.
+3. On successful upload, a local `blob:` preview of the uploaded (compressed) file is created and shown immediately. It does not depend on media auth or ownership.
+4. For photos loaded from a saved student, edit/view mode, or a draft, a `useEffect` on `photo` fetches the file with `apiRequestWithRefreshResponse(..., { silent401: true })` (auth header) and renders it as a `blob:` URL. Object URLs are revoked on change, on Remove, and on unmount.
+5. The photo circle and preview modal now use `photoSrc`. If the image cannot be loaded, the modal shows "Photo could not be loaded." instead of a broken image. Existing modal layout and CSS (`object-fit: contain`, `max-height: 80vh`) and the X/overlay close are unchanged.
+
+**Preserved:** upload endpoint and response, file-type/size checks (JPEG/PNG, 4MB/5MB client and 2MB server), the 400×400 hint, compression, Change, Remove (`clearStudentPhoto` also releases the preview), Take photo / camera capture (uses the same `uploadStudentPhoto`), the save payload (`photo` URL), and all other enrollment steps.
+
+**Backend/API changes: None.**
+
+**Known limitation (unchanged behaviour, not fixed here):** a photo stored in a draft that was never saved as a student is not linked to a Student row, so after a page reload `serve_media` returns 404 for it. The UI shows the "ADD PHOTO" placeholder instead of a broken image. Fixing this would need a backend change to the media ownership rules.
+
+**Testing performed:**
+- Verified that `media/student_photos/` contains uploaded files.
+- Verified that an unauthenticated GET of one of them returns 403 "Authentication required." (the root cause).
+- `npx tsc --noEmit`: no errors in `StudentAddPanel.tsx`. The existing errors in other files are unchanged.
+- Browser tests (upload, preview, Change, Remove, save/reload, invalid file) still need to be done manually.

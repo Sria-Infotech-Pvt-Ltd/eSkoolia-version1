@@ -494,6 +494,23 @@ async function apiPutJson<T>(path: string, payload: unknown, silent401 = false):
   });
 }
 
+/**
+ * /media/* is served by apps/core/media_views.py::serve_media, which requires a
+ * JWT — a plain <img src> cannot send one. Convert the stored photo URL
+ * (absolute "http://host/media/..." or "/media/...") into the API path that
+ * apiRequestWithRefreshResponse expects.
+ */
+function toMediaApiPath(urlOrPath: string): string {
+  if (/^https?:\/\//i.test(urlOrPath)) {
+    try {
+      const u = new URL(urlOrPath);
+      return u.pathname + u.search;
+    } catch { /* fall through to relative handling below */ }
+  }
+  const cleaned = urlOrPath.replace(/^\/+/, "");
+  return cleaned.startsWith("media/") ? `/${cleaned}` : `/media/${cleaned}`;
+}
+
 async function apiPostForm<T>(path: string, formData: FormData, silent401 = false): Promise<T> {
   return apiRequestWithRefresh<T>(path, {
     method: "POST",
@@ -831,6 +848,43 @@ export function StudentAddPanel() {
   const [photoUploading, setPhotoUploading] = useState(false);
   const [photoCleared, setPhotoCleared] = useState(false);
   const [photoPreviewOpen, setPhotoPreviewOpen] = useState(false);
+  // `photo` stays the backend URL that is saved with the student; `photoSrc`
+  // is what <img> renders (a blob: URL, because /media/* needs auth).
+  const [photoSrc, setPhotoSrc] = useState("");
+  // Local preview of the file just uploaded — a new, not-yet-saved photo is not
+  // linked to any Student row, so serve_media would 404 it until enrollment is saved.
+  const uploadedPhotoPreviewRef = useRef<{ remoteUrl: string; objectUrl: string } | null>(null);
+
+  useEffect(() => {
+    if (!photo) { setPhotoSrc(""); return; }
+    if (/^(blob|data):/i.test(photo)) { setPhotoSrc(photo); return; }
+    const localPreview = uploadedPhotoPreviewRef.current;
+    if (localPreview && localPreview.remoteUrl === photo) { setPhotoSrc(localPreview.objectUrl); return; }
+    // Saved photo (edit / view / draft): fetch with the auth header, render as blob.
+    let cancelled = false;
+    let fetchedUrl = "";
+    setPhotoSrc("");
+    void (async () => {
+      try {
+        const res = await apiRequestWithRefreshResponse(toMediaApiPath(photo), { silent401: true });
+        const blob = await res.blob();
+        if (cancelled) return;
+        fetchedUrl = URL.createObjectURL(blob);
+        setPhotoSrc(fetchedUrl);
+      } catch {
+        if (!cancelled) setPhotoSrc("");
+      }
+    })();
+    return () => {
+      cancelled = true;
+      if (fetchedUrl) URL.revokeObjectURL(fetchedUrl);
+    };
+  }, [photo]);
+
+  // Release the local upload preview when the component unmounts.
+  useEffect(() => () => {
+    if (uploadedPhotoPreviewRef.current) URL.revokeObjectURL(uploadedPhotoPreviewRef.current.objectUrl);
+  }, []);
   const [capturedPhotoFile, setCapturedPhotoFile] = useState<File | null>(null);
   const [capturedPhotoPreviewUrl, setCapturedPhotoPreviewUrl] = useState("");
   const [statusValue, setStatusValue] = useState<"active" | "inactive" | "transferred" | "dropped">("active");
@@ -3184,6 +3238,8 @@ export function StudentAddPanel() {
       const res = await apiPostForm<{ data?: { photo?: string } }>("/api/v1/students/students/upload-photo/", formData, true);
       const uploadedUrl = String(res?.data?.photo || "");
       if (!uploadedUrl) throw new Error("Photo upload failed");
+      if (uploadedPhotoPreviewRef.current) URL.revokeObjectURL(uploadedPhotoPreviewRef.current.objectUrl);
+      uploadedPhotoPreviewRef.current = { remoteUrl: uploadedUrl, objectUrl: URL.createObjectURL(compressed) };
       setPhoto(uploadedUrl);
       setPhotoName(file.name);
       setPhotoCleared(false);
@@ -3210,6 +3266,10 @@ export function StudentAddPanel() {
   };
 
   const clearStudentPhoto = () => {
+    if (uploadedPhotoPreviewRef.current) {
+      URL.revokeObjectURL(uploadedPhotoPreviewRef.current.objectUrl);
+      uploadedPhotoPreviewRef.current = null;
+    }
     setPhoto("");
     setPhotoName("");
     setPhotoCleared(true);
@@ -4213,7 +4273,7 @@ export function StudentAddPanel() {
 
               <div className="photo-upload-block">
                 <button type="button" className={photo ? "photo-circle has-photo" : "photo-circle"} onClick={openStudentFilePicker}>
-                  {photo ? <img src={photo} alt="Student" /> : <><span className="camera-icon">+</span><span className="photo-label">ADD PHOTO</span></>}
+                  {photo && photoSrc ? <img src={photoSrc} alt="Student" /> : <><span className="camera-icon">+</span><span className="photo-label">ADD PHOTO</span></>}
                 </button>
                 <div className="photo-meta">
                   <p className="photo-title">Student photo</p>
@@ -5476,7 +5536,9 @@ export function StudentAddPanel() {
             <button type="button" onClick={() => setPhotoPreviewOpen(false)} aria-label="Close photo preview" className="photo-preview-close">
               X
             </button>
-            <img src={photo} alt="Student full preview" className="photo-preview-image" />
+            {photoSrc
+              ? <img src={photoSrc} alt="Student full preview" className="photo-preview-image" />
+              : <p className="photo-preview-image" style={{ color: "#64748b", textAlign: "center", padding: 24, margin: 0 }}>Photo could not be loaded.</p>}
           </div>
         </div>
       ) : null}
