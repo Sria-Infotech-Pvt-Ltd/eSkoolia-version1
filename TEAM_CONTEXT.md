@@ -5977,3 +5977,436 @@ Login at localhost:3000
 1. `frontend/.env` — removed `NEXT_PUBLIC_API_URL=http://127.0.0.1:8765` (was added for local machine testing), reverted `NEXT_PUBLIC_BACKEND_PORT` from `8765` → `8000`, reverted `NEXT_PUBLIC_BASE_DOMAIN` from `eskoolia.local` → `eskoolia.com`.
 2. `backend/.env` — removed `192.168.1.40` and `localtesting.eskoolia.local` from `DJANGO_ALLOWED_HOSTS`; restored to `127.0.0.1,localhost` only.
 3. Both `.env` files are gitignored — these changes are local only, not pushed to repo.
+
+
+29/09/2026 (Jampala Kavya — Roles & Permissions → New Role UI)
+
+**Developer:** Jampala Kavya
+**Date:** 29/09/2026
+**Area:** Roles & Permissions → New Role UI
+
+### New Role panel overlapping the Roles & Permissions page — Fixed
+
+**Root cause:** The role-card grid used a fixed `repeat(4, 1fr)` layout. Each card has a 108px right padding for its action icons, so it has a minimum width of about 160px. Opening the 290px New/Edit Role panel narrowed the card area below what 4 columns need. The grid then overflowed its container, and because the cards are `position: relative`, they were painted on top of the panel.
+
+**File changed:** `frontend/components/access-control/RoleManagementPanel.tsx` (layout/styling only)
+
+1. Added a `ROLE_GRID_COLUMNS` constant: `repeat(auto-fill, minmax(max(200px, calc((100% - 32px) / 4)), 1fr))`. It keeps at most 4 columns at full width, as before, and drops to fewer columns when the editor panel narrows the card area. Applied to both the role grid and the loading skeleton grid.
+2. Page header row and its controls (Active-only toggle, search, + New Role) now use `flexWrap: "wrap"` so they wrap instead of being squeezed on narrow screens.
+3. Added `role-split` / `role-editor` classNames and a `@media (max-width: 1024px)` rule in the component's existing `<style jsx global>` block. On narrow screens the editor panel stacks full-width above the role cards instead of sitting beside them.
+
+**Backend/API changes: None.**
+
+Existing role-management functionality was preserved: role creation, portal selection, permission assignment (🔑 → assign-permission page), role editing, role deletion, active/inactive toggling, pagination/search, and all API requests/payloads are unchanged. No new dependencies were added.
+
+
+### Update — 30/09/2026
+
+**Developer:** Jampala Kavya
+**Area:** Admissions → Command Center → New Enquiry
+
+**Original issue:** Saving a Full (3-step) New Enquiry showed "Please enter a meaningful description.", even when Parent's Message / Notes contained valid text (e.g. "about the school").
+
+**Root cause:**
+- The error is raised by the backend, in `AdmissionInquirySerializer.validate()` (`backend/apps/admissions/serializers.py`). It is not a frontend validation.
+- The field mapping is correct. "Parent's Message / Notes" → `drawerForm.description` → `description` in the payload.
+- However, the Full form's `submitDrawer` (`frontend/components/admissions/AdmissionsCommandCenter.tsx`) appends an auto-generated line to `description`. That line holds all Step 1/2/3 detail fields: `Child: … | DOB: … | Area: … | Visit Date: … | …`. These fields have no model columns, and the edit form parses them back out with `parseLegacyInquiryDescription`.
+- The backend ran its anti-spam check `_is_meaningful_text` on the whole combined string. The check rejects 3+ repeated characters and keyboard patterns such as `abcd`/`jkl`, checked with whitespace removed. So structured values the user never typed as a message could fail it. Examples: DOB `2000-02-02` ("000"), or a previous school named "ABCD Public School".
+- Quick Add sends only the typed message as `description`, so it was not affected by the appended line.
+
+**Fix (backend, validation only):** `backend/apps/admissions/serializers.py`
+1. Added `_INQUIRY_DETAIL_SEGMENT` (regex of the known detail labels) and a `_inquiry_free_text(description)` helper. The helper drops lines made up entirely of known `Label: value | Label: value` segments.
+2. The `description` check in `AdmissionInquirySerializer.validate()` now runs `_is_meaningful_text(_inquiry_free_text(description))`. The parent's typed message is still spam-checked with the same rule and the same error message. Only the auto-generated detail line is excluded.
+
+**Not changed:** API contract, request/response shape, the stored `description` value (still saved in full, so edit/detail parsing is unchanged), model/DB, `note`/`address`/name validation, duplicate detection, and all frontend files.
+
+**Frontend changes: None.**
+**Backend/API changes:** `backend/apps/admissions/serializers.py` validation logic only (no endpoint, field or schema change).
+
+**Quick Enquiry:** behaviour unchanged. **Full Enquiry:** now saves when the message is valid, whatever values are in the Step 1/2/3 detail fields.
+
+**Testing performed:** ran payloads through `AdmissionInquirySerializer(data=...).is_valid()` in the Django shell (validation only, nothing saved):
+- Message + details containing DOB `2000-02-02`: failed before the fix, valid after.
+- Message + details containing "ABCD Public School": failed before the fix, valid after.
+- Normal message + details: valid.
+- Details only: valid.
+- Quick plain message: valid.
+- Empty description: valid.
+- Gibberish message `aaaaaa` + details: still rejected with "Please enter a meaningful description."
+- `qwerty asdf`: still rejected.
+
+An end-to-end UI test (browser save, list refresh, edit) still needs to be done manually.
+
+
+### Update — 30/09/2026
+
+**Developer:** Jampala Kavya
+**Area:** Students → Enroll Student → Student Photo Upload & Preview
+
+**Original issue:** In Student Identity, uploading a student photo reported success, but the image did not show in the Student Photo circle. "View image" opened the preview modal with a broken image (only the alt text "Student full preview" was visible).
+
+**Root cause:**
+- The upload itself works. `POST /api/v1/students/students/upload-photo/` (`backend/apps/students/views.py::upload_photo`) saves the file to `MEDIA_ROOT/student_photos/<uuid>.jpg` and returns 201 with an absolute URL, e.g. `http://127.0.0.1:8000/media/student_photos/<uuid>.jpg`. The files are present on disk.
+- The frontend (`StudentAddPanel.tsx`) put that URL directly into `<img src={photo}>` in both the photo circle and the preview modal.
+- `/media/*` is served by `apps/core/media_views.py::serve_media`, which requires a JWT. A plain `<img>` request sends no Authorization header, so it gets **403 "Authentication required."** (verified against the running backend with an existing file in `media/student_photos/`).
+- In addition, even with a token, a freshly uploaded photo is not linked to any `Student` row until enrollment is saved. So `_school_owns_path` returns 404 for it. This ownership check is correct security behaviour and was left unchanged.
+
+**Fix (frontend only):** `frontend/components/students/StudentAddPanel.tsx`
+1. Added a `toMediaApiPath()` helper that converts the stored absolute or relative media URL into an API path. It follows the same approach as `toApiPath` in `PlanningStudioWorkspace.tsx`.
+2. Added a `photoSrc` state and `uploadedPhotoPreviewRef`. `photo` is still the backend URL that is submitted with the student, so the payload is unchanged. `photoSrc` is what `<img>` renders.
+3. On successful upload, a local `blob:` preview of the uploaded (compressed) file is created and shown immediately. It does not depend on media auth or ownership.
+4. For photos loaded from a saved student, edit/view mode, or a draft, a `useEffect` on `photo` fetches the file with `apiRequestWithRefreshResponse(..., { silent401: true })` (auth header) and renders it as a `blob:` URL. Object URLs are revoked on change, on Remove, and on unmount.
+5. The photo circle and preview modal now use `photoSrc`. If the image cannot be loaded, the modal shows "Photo could not be loaded." instead of a broken image. Existing modal layout and CSS (`object-fit: contain`, `max-height: 80vh`) and the X/overlay close are unchanged.
+
+**Preserved:** upload endpoint and response, file-type/size checks (JPEG/PNG, 4MB/5MB client and 2MB server), the 400×400 hint, compression, Change, Remove (`clearStudentPhoto` also releases the preview), Take photo / camera capture (uses the same `uploadStudentPhoto`), the save payload (`photo` URL), and all other enrollment steps.
+
+**Backend/API changes: None.**
+
+**Known limitation (unchanged behaviour, not fixed here):** a photo stored in a draft that was never saved as a student is not linked to a Student row, so after a page reload `serve_media` returns 404 for it. The UI shows the "ADD PHOTO" placeholder instead of a broken image. Fixing this would need a backend change to the media ownership rules.
+
+**Testing performed:**
+- Verified that `media/student_photos/` contains uploaded files.
+- Verified that an unauthenticated GET of one of them returns 403 "Authentication required." (the root cause).
+- `npx tsc --noEmit`: no errors in `StudentAddPanel.tsx`. The existing errors in other files are unchanged.
+- Browser tests (upload, preview, Change, Remove, save/reload, invalid file) still need to be done manually.
+
+
+## Srinadh Yalagandula
+
+Date: 2026-09-29
+
+Module:
+Examination
+
+Issue:
+School Admin was unable to open Exam Setup page.
+
+Error:
+TypeError: useExamSetupAnalytics is not a function
+
+Root Cause:
+`frontend/app/(dashboard)/exams/setup/page.tsx` imports five members from `@/hooks/useExamsApi` that were never implemented there: `useExamSetupAnalytics`, `fetchConfiguredExams`, `deleteExamSetup`, `openExamForMarksEntry` and the type `ConfiguredExamRow`. Commit `a61d62a1` ("examination enhancements and portal flow implementation") added the page code that uses them but did not add the hook functions, on any branch. The backend endpoints already existed. An import of a missing ES module export resolves to `undefined`, so calling `useExamSetupAnalytics()` during render threw the TypeError. If only that hook had been added, `fetchConfiguredExams()`, which runs on page mount, would have crashed the page next the same way.
+
+Files Modified:
+- frontend/hooks/useExamsApi.ts (Exam Setup section only, additive)
+
+Solution:
+Added the missing members to `useExamsApi.ts`, following the file's existing `useFetch` / `postJson` / `deleteRequest` patterns and wiring each one to its existing backend endpoint:
+- `useExamSetupAnalytics()` → GET `/api/v1/exams/exam-setup/analytics/` (type `ExamSetupAnalyticsRow[]`)
+- `fetchConfiguredExams()` → GET `/api/v1/exams/exam-setup/list/` (returns `{ items: ConfiguredExamRow[] }`)
+- `deleteExamSetup(examTermId)` → DELETE `/api/v1/exams/exam-setup/delete/<exam_term_id>/`
+- `openExamForMarksEntry(examTermId)` → POST `/api/v1/exams/exam-open-marks-entry/` with `{ exam_term_id }`
+- Interfaces `ExamSetupAnalyticsRow` and `ConfiguredExamRow`, typed from the backend view responses
+No page, UI, backend or API-contract changes. No existing function was modified.
+
+Testing Performed:
+- TypeScript check (`tsc --noEmit`): `exams/setup/page.tsx` has no remaining errors
+- Verified all four backend routes exist and are auth-protected (401 without token, not 404)
+- Verified response shapes against `ExamSetupAnalyticsAPIView`, `ExamSetupListAPIView`, `ExamSetupDeleteAPIView` and `ExamOpenForMarksEntryAPIView`
+- Pending: manual browser check (log in as School Admin → Examination → Exam Setup)
+
+Known pre-existing issues (not changed by this fix):
+- `exams/schedule/page.tsx` imports `useOnlineExamIndex`, `createOnlineExam`, `updateOnlineExam`, `deleteOnlineExam`, `publishOnlineExam` and `cancelPublishOnlineExam`, none of which `useExamsApi.ts` exports. `useOnlineExamIndex()` is called during render (line 600), so this page is expected to crash in the same way.
+- `exams/marks-register-create/page.tsx` imports a missing type `ExamMarksStoreRow` (type-only, compile-time error).
+- `exams/result-publish/page.tsx` uses fields not declared on `ExamPlanStudentRecord` (type-only).
+
+
+
+Why it crashed
+
+The Exam Setup page needs a few helper functions to fetch its data from the backend: the class analytics, the list of set-up exams, and the delete and "open for marks" actions. Someone wrote the page code that uses these functions but never wrote the functions themselves.
+
+It's like a phone contact with no number saved: the page tried to call useExamSetupAnalytics, but it didn't exist, so the page crashed with "is not a function".
+
+The backend part was already built and working. Only the small frontend link between the page and the backend was missing.
+
+How I fixed it
+
+I wrote the missing functions in the file the page loads them from, hooks/useExamsApi.ts. Each one sends its request to the backend address that already existed:
+
+class analytics → gets class and section readiness
+list of set-up exams → gets the exams already set up
+delete → removes an exam's setup
+open for marks entry → opens an exam so teachers can enter marks
+I didn't change the page, the design or the backend. I only added the missing piece.
+
+Why I added four functions, not one
+
+The error message named only the first missing function. Three more were missing too, and one of them runs as soon as the page opens. Fixing only the first would have swapped one crash for another, so I added all four.
+
+
+Status:
+Resolved (Exam Setup).
+
+## Srinadh Yalagandula
+
+Date: 2026-09-29
+
+Module:
+Examination
+
+Issue:
+Save Exam Setup button was not working.
+
+Observed Behavior:
+Clicking "Save Exam Setup" did not create or save an exam configuration.
+
+Root Cause:
+The save code works end-to-end: frontend handler → `storeExamSetup` → POST `/api/v1/exams/exam-setup/store/` → DB. It returned 201 and the record appeared in Configured Exams when tested against a school with complete data. The click did run, but the save was rejected for data reasons, and the rejection message was invisible:
+1. The success/error banner (`saveError` / `saveSuccess`) renders at the TOP of the page, above the form. The Save button sits at the BOTTOM, and the dashboard scrolls in an inner container, so the message appeared off-screen and the click looked like it did nothing.
+2. The school being tested (newest school with exam types, school_id 178) has no subjects and no current academic year:
+   - With no subjects, no class can have a subject selected, so the handler's validation stops with "Can't save yet — … (missing subject(s))".
+   - Even with subjects, the backend returns 400 "No active academic year found for this school." (`ExamSetupStoreAPIView` requires `AcademicYear.is_current=True`).
+
+Files Modified:
+- frontend/app/(dashboard)/exams/setup/page.tsx
+
+Solution:
+Added a `feedbackRef` on an unstyled wrapper around the existing save/error banners, plus a `useEffect` that scrolls the banner into view (`scrollIntoView`, smooth, centered) whenever `saveError` or `saveSuccess` is set. Every click now shows its outcome: the success message, the backend error, or the validation message naming what is missing. No change to validation, payload, API, backend or visual design.
+Data setup still needed for the affected school (not a code change): create the school's subjects and mark one academic year as current.
+
+Testing Performed:
+- Traced the button → `handleSave` → `storeExamSetup` → backend view/serializer; payload fields match the serializer
+- Reproduced via Django test client, with every DB change rolled back:
+  - School with current academic year + classes/sections/subjects (temporary exam type): store → 201, record appears in Configured Exams
+  - School 178 (temporary subject): store → 400 "No active academic year found for this school."
+- TypeScript check: no errors in `exams/setup/page.tsx`
+- Pending: manual browser check as School Admin (fill fields → Save → message visible → record in Configured Exams)
+
+Status:
+Resolved (feedback now visible). Saving for school 178 needs its subjects and a current academic year to be set up first.
+
+
+## Srinadh Yalagandula
+
+Date: 2026-09-29
+
+Issue:
+Exam Setup Class Readiness Analytics displayed 0 students even though students were enrolled and visible in Student List.
+
+Root Cause:
+The two modules count students differently:
+- Students module (`SectionSerializer.student_count`): active students per section, no academic-year filter.
+- Exam Setup analytics (`ExamSetupAnalyticsAPIView`): additionally filters `academic_year = <school's current academic year>`, for both students and class teachers.
+The affected school (school_id 178) has one academic year, and its student belongs to that year, but the year is not marked `is_current=True`. `get_current_academic_year()` therefore returned `None`, and the query became `academic_year=None`. That matches only students with no year set, so every section showed "0 Students". The same filter made the class-teacher lookup show "No Teacher", although an active class teacher is assigned to Grade 1-A. Class/section mapping and the frontend hook/UI were correct.
+
+Files Modified:
+- backend/apps/exams/views.py (`ExamSetupAnalyticsAPIView.get` only)
+
+Solution:
+The academic-year filter is now applied only when the school has a current academic year (`year_filter = {"academic_year": year} if year else {}`). With no current year, analytics counts active students per section and active class-teacher assignments, the same way the Students module counts. Schools that have a current year keep exactly the previous behaviour. No API contract, response shape, frontend or other module changed.
+Recommended data fix (separate from code): mark school 178's academic year as current. Exam Setup saving still requires it ("No active academic year found for this school.").
+
+Testing Performed:
+- Verified student enrollment records: school 178 has 1 active student in Grade 1-A, linked to its only (non-current) academic year
+- Verified class and section mapping: analytics groups by `current_class_id` / `current_section_id`, matching the section the student is enrolled in
+- Verified Exam Setup analytics counts: school 178 Grade 1-A now returns 1 student + Teacher Assigned (was 0 / No Teacher)
+- Verified multiple scenarios across 8 schools with enrolled students: per-section counts match the Students module (multi-student sections e.g. 18 students/6 sections; empty sections still 0)
+- Known remaining difference (unchanged, pre-existing): school 123 Grade 10-A has a student with no academic year; since the school has a current year, analytics still excludes that student (shows 1 vs 2)
+- Verified no impact on other Examination functionality: only this view changed; all other endpoints untouched
+- Pending: manual browser check (Examination → Exam Setup → Class Readiness Analytics)
+
+Status:
+Resolved
+
+
+## Srinadh Yalagandula
+
+Date: 2026-09-29
+
+Module:
+Examination – Schedule & Logistics
+
+Issue:
+Schedule & Logistics page crashed on load.
+
+Error:
+TypeError: useOnlineExamIndex is not a function
+
+Root Cause:
+`frontend/app/(dashboard)/exams/schedule/page.tsx` imports six online-exam functions from `@/hooks/useExamsApi` (`frontend/hooks/useExamsApi.ts`): `useOnlineExamIndex`, `createOnlineExam`, `updateOnlineExam`, `deleteOnlineExam`, `publishOnlineExam`, `cancelPublishOnlineExam`. None of them was implemented in `useExamsApi.ts` or anywhere else in the frontend, on any branch.
+- Introduced by commit `a61d62a1` (rohanaarup, 2026-09-18, "examination enhancements and portal flow implementation", merged into demo2 via `origin/examination-R`). It added the Online Exam step to `schedule/page.tsx` (+892 lines) and the `OnlineExamRow` / `OnlineExamIndexResponse` types to `types/exams.ts`, but never touched `useExamsApi.ts`. This was an incomplete feature, not a merge loss, rename or wrong import path. It is the same commit and the same pattern as the earlier Exam Setup crash (`useExamSetupAnalytics`).
+- A missing named ES-module export resolves to `undefined`. `useOnlineExamIndex()` is a hook called at the top level of `ScheduleLogisticsPage` (line 600), so every render called `undefined()`, threw the TypeError, and React unmounted the whole page. The other five functions are only called from event handlers (save/edit/delete/publish), so they would have failed on click.
+- Why it reached the browser: `next dev` does not block on TypeScript errors. `tsc --noEmit` did report the six missing exports.
+- The backend endpoints already existed (`backend/apps/exams/urls.py`, `OnlineExam*APIView` in `views.py`). Only the frontend API layer was missing.
+
+Files Modified:
+- frontend/hooks/useExamsApi.ts (additive only: new functions at the end of the "Schedule & Logistics" section + `OnlineExamIndexResponse` added to the existing type import)
+
+Solution:
+Added the six missing functions using the file's existing helpers (`useFetch`, `postJson`, `apiRequestWithRefresh`), each matching the HTTP method and body of its backend view:
+- `useOnlineExamIndex()` → GET `/api/v1/exams/online-exam/` → `OnlineExamIndexResponse` { classes, sections, subjects, online_exams } (type already existed)
+- `createOnlineExam(payload)` → POST `/api/v1/exams/online-exam/store/`
+- `updateOnlineExam({ id, ...payload })` → POST `/api/v1/exams/online-exam/update/`
+- `deleteOnlineExam(id)` → POST `/api/v1/exams/online-exam/delete/` with `{ id }` (backend uses POST, not DELETE)
+- `publishOnlineExam(id)` → GET `/api/v1/exams/online-exam/publish/<id>/` (backend uses GET)
+- `cancelPublishOnlineExam(id)` → GET `/api/v1/exams/online-exam/publish-cancel/<id>/`
+- New type `OnlineExamPayload` (title, class_id, section[], subject, date, start_time, end_time, percentage?, instruction?, auto_mark), matching `OnlineExamStoreRequestSerializer` and following the existing `ExamRoutinePayload` pattern.
+Methods and payloads were confirmed against the backend views/serializers and the legacy `components/exams/OnlineExamPanel.tsx`, which calls the same endpoints. No existing function, page, UI, API contract, backend code or Exam Setup functionality was changed.
+
+Testing Performed:
+- TypeScript validation (`tsc --noEmit`): `exams/schedule/page.tsx` went from 9 errors (6 missing exports + 3 knock-on implicit-any) to 0. Remaining project errors are only the pre-existing ones listed below.
+- Verification of all imported functions used by schedule/page.tsx: all 22 imports now resolve to real exports (16 already existed; the 6 above added). Types `OnlineExamRow`, `ExamPlanStudentRecord`, `ExamRoutineRow`, `AdmitCardSetting`, `SeatPlanSetting` exist in `types/exams.ts`.
+- Verification that backend endpoints exist and are reachable: ran the full cycle as a School Admin for school 178 and school 118 with the page's exact payload shape, inside a DB transaction that was rolled back: index GET 200 (classes/sections/subjects/online_exams), store 201, update 200, publish 200, publish-cancel 200, delete 200.
+- Page load verification (partial): the running Next.js dev server (port 3000) serves `/exams/schedule` with HTTP 200, and its compiled page bundle now contains `function useOnlineExamIndex` with no compile errors. Pending: logged-in browser check (School Admin → Examination → Schedule & Logistics).
+- Verification that no other Examination pages were affected: the change is additive only (no existing export modified); `exams/setup/page.tsx` still type-checks clean and `/exams/setup` still serves HTTP 200.
+
+Known Remaining Issues:
+- Generic error messages: the page shows specific errors only for `err instanceof ExamsApiError`, but `requestWithRefreshResponse` in `frontend/lib/api-auth.ts` throws a plain `Error` for any non-OK response. Backend messages (e.g. "Duplicate name found!") therefore appear as "Failed to save online exam." / "Delete failed." / "Operation failed.". This is the same cause as the generic "Failed to save exam setup." message in Exam Setup.
+- `exams/marks-register-create/page.tsx` imports a missing type `ExamMarksStoreRow` (type-only; fails `next build`, no runtime crash).
+- `exams/result-publish/page.tsx` uses `class_id`, `section_id`, `id` not declared on `ExamPlanStudentRecord` (type-only; fails `next build`).
+
+Status:
+Resolved (pending logged-in browser confirmation)
+
+
+## Srinadh Yalagandula
+
+Date: 2026-09-30
+
+Module:
+Examination – Schedule & Logistics → Admit Cards
+
+Issue:
+Admit Card Generation API was failing with ImportError for StudentFeeDues.
+(`POST /api/v1/exams/exam-plan/admit-card/generate/` → HTTP 500: `ImportError: cannot import name 'StudentFeeDues' from 'apps.fees.models'`)
+
+Root Cause:
+Admit card generation logic referenced a non-existing fees model. `ExamPlanAdmitCardGenerateAPIView.post` (`backend/apps/exams/views.py`) imported `StudentFeeDues` for its fee-gate check. That model has never existed on any branch; it was introduced as a reference only in commit `a61d62a1` (2026-09-18, "examination enhancements and portal flow implementation"). The import runs before the `if fee_gate_enabled:` check, so every generate request failed, whether or not the school uses the fee gate. The Fees module tracks dues through `FeeAssignment` / `Payment` / `LedgerEntry`, with `FeeService.student_balance()` documented as "the ONLY source of truth for a student's balance".
+
+Files Modified:
+- backend/apps/exams/views.py (`ExamPlanAdmitCardGenerateAPIView.post` only, 2 lines)
+
+Resolution:
+Fixed the model reference/import while preserving existing fee validation behavior.
+- `from apps.fees.models import StudentFeeDues` → `from apps.fees.services import FeeService`
+- `StudentFeeDues.objects.filter(student_id=..., amount_due__gt=0).exists()` → `FeeService.student_balance(student=Student(pk=student_id)) > 0` (ledger: positive = amount owed)
+The rest of the fee-gate flow is unchanged: `ExamFeeGate` enabled check, `ExamAdmitCardFeeOverride` lookup, 403 + `blocked_students` response, admit card creation. No schema, API, Fees module or other Examination changes.
+
+Testing Performed (Django test client as School Admin, school 118, all DB changes rolled back):
+- Fee gate OFF, student with dues → 200, admit card created
+- Fee gate ON, student with dues, no override → 403 "Fee gate is active…" (block preserved)
+- Fee gate ON, student with dues + Principal override → 200
+- Fee gate ON, student with no dues → 200
+- Verified ledger coverage: all 479 `FeeAssignment` rows have a ledger charge, so the balance reflects every fee
+- Scanned all in-function `from apps.* import` statements (336 names): no unresolved imports remain in the Examination module
+
+Impact:
+Schedule & Logistics → Admit Cards now generates successfully without affecting other examination features.
+
+Known Remaining Issues (not changed):
+- `backend/apps/students/views.py` `StudentViewSet._linked_record_exists` (line ~2207) imports `FeesAssignment` and `FeesPayment` from `apps.fees.models`, which do not exist (actual models: `FeeAssignment`, `Payment`). This would raise ImportError wherever that check runs. It is the likely cause of the earlier QA finding "DELETE /api/v1/students/students/{id}/ → 500".
+- Pending: browser check (Schedule & Logistics → Admit Cards → Generate Admit Cards).
+
+Status:
+Resolved
+
+
+## Srinadh Yalagandula
+
+Date: 2026-09-30
+
+Module:
+Examination – Conduct & Marks → Step 2 (Marks Entry)
+
+Bug Title:
+Marks Entry shows "Failed to load marks entry roster." for Unit Test / Social / Grade 1-A
+
+Root Cause:
+Two parts: a data-configuration mismatch that the backend correctly rejects, hidden by a frontend error-handling defect.
+1. Data (school 178, exam "unit test", exam_type_id 14, Grade 1-A): the Examination records are split across different subjects.
+   | Subject     | Exam schedule | Exam Setup (mark components) | Exam attendance taken |
+   |-------------|---------------|------------------------------|-----------------------|
+   | Social      | yes           | NO                           | NO                    |
+   | Telugu      | yes           | no                           | yes                   |
+   | Mathematics | no            | yes (Written 60 / Practical 20) | no                 |
+   `ExamMarksRegisterCreateSearchAPIView` (backend/apps/exams/views.py) intentionally requires, for the same exam/class/section/subject, (a) an `ExamAttendance` record and then (b) `ExamSetup` rows. For Social it returns 400 "Exam attendance has not been taken yet for this subject. Attendance must be recorded before entering marks.", and would next return 400 "No result found or exam setup is not done!". The progress widget ("0/1") is driven by the exam schedule, which is why it lists Social even though Social has no setup. The school also has two separate subjects named "Social" (id 139) and "social" (id 141).
+2. Code: the page's roster `catch` only showed the backend message for `e instanceof ExamsApiError`. `requestWithRefreshResponse` in frontend/lib/api-auth.ts throws a plain `Error` (carrying the backend `message`) for every non-OK response, so the check never matched and the user only saw the generic "Failed to load marks entry roster.". The page's own comment states these backend gates are meant to "surface as plain messages".
+
+Files Modified:
+- frontend/app/(dashboard)/exams/marks-register-create/page.tsx (roster-load `catch` only, 1 line + comment)
+
+Fix Implemented:
+`e instanceof ExamsApiError ? e.message : ...` → `e instanceof Error ? e.message : ...` in the roster-load catch. `ExamsApiError` extends `Error`, so existing behaviour is kept, and the backend's actual reason is now shown. No backend, API, business rule, attendance, exam setup, result or UI-layout change. The attendance and setup gates are unchanged.
+Data action required (not a code change): for Grade 1-A Social, create the Exam Setup (Examination → Exam Setup) and take exam-day attendance for Social (Conduct & Marks → Step 1). The roster will then load.
+
+API Affected:
+- POST /api/v1/exams/exam-marks/create-search/ (read-only investigation; not modified)
+- Related, verified: POST /api/v1/exams/exam-attendance/store/, POST /api/v1/exams/exam-marks/store/, GET /api/v1/exams/exam-marks/progress-summary/
+
+Validation Steps Performed (Django test client as the school's School Admin; all DB changes rolled back):
+- Replayed the page's roster request for Social and Mathematics → both 400 "Exam attendance has not been taken yet…" (the exact reason previously hidden)
+- Confirmed the only exam attendance record for this exam is Grade 1-A Telugu; the only Exam Setup is Grade 1-A Mathematics
+- Full flow with consistent data (Mathematics): attendance store 200 → marks roster 200 (1 student, 2 components) → marks store 200 with the page's `markStore` payload → roster reload returns the saved marks (total 40.00). The marks code path works once attendance + setup exist for the same subject.
+- TypeScript: marks-register-create/page.tsx has the same 7 pre-existing errors (missing `ExamMarksStoreRow` type and knock-on `unknown` types); no new errors
+- Pending: browser check after the Social setup + attendance are created
+
+Assumptions:
+- "Exam-day attendance is already working" refers to the attendance taken for Telugu; no attendance exists for Social.
+- The intended subject is Social id 139 (the one on the exam schedule), not the duplicate "social" id 141.
+- Progress will not reach 1/1 from Mathematics marks, because progress counts only scheduled subjects (Social, Telugu). Observed: after saving Mathematics marks, the Social progress row stayed at 0/1.
+
+Known Remaining Issues (not changed):
+- Other catches on this page (attendance save, marks save) and other Examination pages still use `instanceof ExamsApiError` and show generic messages for backend rejections (same cause as Exam Setup "Failed to save exam setup." and the Online Exam messages).
+- Exam Setup, exam schedule and attendance can be configured for different subjects without any warning, which is what produced this mismatch.
+- Pre-existing type error: `ExamMarksStoreRow` is imported but not exported from hooks/useExamsApi.ts (type-only; fails `next build`).
+
+Status:
+Resolved (code: error now visible). Data setup for Grade 1-A Social still required for the roster to load.
+
+
+## Srinadh Yalagandula
+
+Date: 2026-09-30
+
+Module:
+Examination – Conduct & Marks → Step 2 (Marks Entry)
+
+Change Type:
+UI-only enhancement
+
+Enhancement:
+Per-student Present/Absent toggle in the Marks Entry table now shows its state with the same colours as the page's status badges.
+- Present → green (`T.ok` text + border, `T.okSoft` background), same palette as the "Complete" badge (`Badge tone="ok"`)
+- Absent → red (`T.danger` text + border, `T.dangerSoft` background), same palette as the "Not started" badge (`Badge tone="danger"`). Unchanged; it already used these colours.
+Previously Present was a neutral white/grey pill (`#fff` background, `T.ink3` text, `T.borderStrong` border), so it didn't read as a status.
+
+Files Modified:
+- frontend/app/(dashboard)/exams/marks-register-create/page.tsx (inline `style` of the Present/Absent `<button>` in the Marks Entry student row, 1 line)
+
+Screens Affected:
+- Examination → Conduct & Marks → Step 2 Marks Entry (student rows only). Step 1 attendance buttons, the progress table, and all other screens are unchanged.
+
+Functionality Impact:
+None. `onClick` (toggles `marksAbsent`), labels, state, `absent_students` save payload, API calls, validation and save-marks behaviour are unchanged. Only the three colour values for the Present state changed, using existing theme tokens from lib/examTheme.ts (no new styles or components).
+
+Status:
+Done. 
+
+## Srinadh Yalagandula
+
+## Examination - Results & Reports Template Issue
+ 
+Date: 2026-09-30
+
+# Problem
+- In Examination → Results & Reports, saving the report card template as "SSC Style" failed with 400 Bad Request: `"ssc" is not a valid choice`. "Other Style" failed the same way.
+
+### Root Cause
+- The frontend offers 6 templates (`cbse`, `icse`, `cambridge`, `ib`, `ssc`, `other`, in `frontend/types/exams.ts` and `exams/result-publish/page.tsx`), but the backend model `ReportCardSetting.TEMPLATE_CHOICES` (`backend/apps/exams/models.py`) only allowed 4: `cbse`, `icse`, `cambridge`, `ib`.
+- `ReportCardSettingSerializer` is a ModelSerializer, so it validates `template` against the model choices and rejected `ssc` and `other`. The two options were added to the frontend in commit `a61d62a1` without the matching backend choices.
+
+### Fix Implemented
+- Added `TEMPLATE_SSC = "ssc"` ("SSC style") and `TEMPLATE_OTHER = "other"` ("Other style") to `ReportCardSetting.TEMPLATE_CHOICES` in `backend/apps/exams/models.py`.
+- Added migration `backend/apps/exams/migrations/0014_alter_reportcardsetting_template.py` (choices only). `sqlmigrate` shows it is a no-op: no database/schema change. Run `python manage.py migrate` to record it.
+- No frontend, API, report generation or publishing changes.
+
+### Validation
+- Saved each template via `POST /api/v1/exams/exam-result-publish/report-card-setting/` as School Admin (DB changes rolled back): CBSE, ICSE, Cambridge, IB, SSC, Other → all 200, and each value read back correctly.
+- Invalid value (`xyz`) is still rejected with 400, so validation still works.
+- `makemigrations --check` detected only this one field change; no other pending model changes.
+- Pending: browser check (Results & Reports → select SSC Style → Save).
+
+### Impact
+- All 6 report card templates shown in the UI can now be saved.
+- Only the allowed template values were extended. No other Examination feature, module, API contract or database column was modified.
