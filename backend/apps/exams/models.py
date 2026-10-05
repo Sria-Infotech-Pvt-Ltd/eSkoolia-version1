@@ -768,11 +768,15 @@ class ReportCardSetting(models.Model):
     TEMPLATE_ICSE = "icse"
     TEMPLATE_CAMBRIDGE = "cambridge"
     TEMPLATE_IB = "ib"
+    TEMPLATE_SSC = "ssc"
+    TEMPLATE_OTHER = "other"
     TEMPLATE_CHOICES = [
         (TEMPLATE_CBSE, "CBSE style"),
         (TEMPLATE_ICSE, "ICSE style"),
         (TEMPLATE_CAMBRIDGE, "Cambridge style"),
         (TEMPLATE_IB, "IB style"),
+        (TEMPLATE_SSC, "SSC style"),
+        (TEMPLATE_OTHER, "Other style"),
     ]
 
     WORKFLOW_AS_YOU_GO = "as_you_go"

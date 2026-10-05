@@ -1,5 +1,5 @@
 "use client";
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import Link from "next/link";
 import { ArrowLeft, RotateCcw, CalendarClock, Plus, X, LayoutGrid, Check, Trash2, ChevronDown, ChevronUp } from "lucide-react";
 import { examTheme as T } from "@/lib/examTheme";
@@ -65,6 +65,12 @@ export default function ExamSetupPage() {
   const [saving, setSaving] = useState(false);
   const [saveError, setSaveError] = useState<string | null>(null);
   const [saveSuccess, setSaveSuccess] = useState(false);
+  // The save/error banner renders above the form while the Save button sits at
+  // the bottom — bring it into view so the result of a click is never off-screen.
+  const feedbackRef = useRef<HTMLDivElement>(null);
+  useEffect(() => {
+    if (saveError || saveSuccess) feedbackRef.current?.scrollIntoView({ behavior: "smooth", block: "center" });
+  }, [saveError, saveSuccess]);
   const [cloned, setCloned] = useState(false);
   const [cloning, setCloning] = useState(false);
 
@@ -413,8 +419,10 @@ export default function ExamSetupPage() {
           </div>
         )}
 
+        <div ref={feedbackRef}>
         {saveError && <div style={{ background: T.dangerSoft, color: T.danger, borderRadius: 10, padding: "10px 14px", fontSize: 12.5, fontWeight: 600, marginBottom: 14 }}>{saveError}</div>}
         {saveSuccess && <div style={{ background: T.okSoft, color: T.ok, borderRadius: 10, padding: "10px 14px", fontSize: 12.5, fontWeight: 600, marginBottom: 14 }}>Exam setup saved.</div>}
+        </div>
 
         {cloneCandidate && (
           <div style={{ display: "flex", alignItems: "center", gap: 14, background: T.purpleSoft, border: `1px solid ${T.purple}33`, borderRadius: 14, padding: "16px 18px", marginBottom: 16 }}>
