@@ -26,6 +26,7 @@ import type {
   HolidayItem,
   MeritListRow,
   ModerationFlag,
+  OnlineExamIndexResponse,
   PaginatedExams,
   ReportCardSetting,
   RoomOption,
@@ -202,6 +203,39 @@ export function useExamSetupSubjectsByClass(classId: number | null) {
   return useFetch<SubjectOption[]>(classId ? `${BASE}/exam-setup/subjects/?class_id=${classId}` : "", [classId]);
 }
 
+export interface ExamSetupAnalyticsRow {
+  class_id: number;
+  class_name: string;
+  section_id: number;
+  section_name: string;
+  student_count: number;
+  has_teacher: boolean;
+}
+
+export function useExamSetupAnalytics() {
+  return useFetch<ExamSetupAnalyticsRow[]>(`${BASE}/exam-setup/analytics/`);
+}
+
+export interface ConfiguredExamRow {
+  id: number;
+  exam_name: string;
+  classes: string;
+  status: string;
+  class_ids: number[];
+}
+
+export async function fetchConfiguredExams() {
+  return apiRequestWithRefresh<{ items: ConfiguredExamRow[] }>(`${BASE}/exam-setup/list/`, { method: "GET" });
+}
+
+export async function deleteExamSetup(examTermId: number) {
+  return deleteRequest(`/exam-setup/delete/${examTermId}/`);
+}
+
+export async function openExamForMarksEntry(examTermId: number) {
+  return postJson<{ detail?: string }>("/exam-open-marks-entry/", { exam_term_id: examTermId });
+}
+
 // ─── Schedule & Logistics ─────────────────────────────────────────────────────
 export function useExamScheduleCriteria() {
   return useFetch<ExamScheduleCriteria>(`${BASE}/exam-schedule/index/`);
@@ -298,6 +332,43 @@ export async function searchSeatPlan(payload: { exam: number; class_id: number; 
 
 export async function generateSeatPlan(exam_type_id: number, data: Record<string, unknown>) {
   return postJson<{ message: string; created_count: number }>("/exam-plan/seat-plan/generate/", { exam_type_id, data });
+}
+
+export function useOnlineExamIndex() {
+  return useFetch<OnlineExamIndexResponse>(`${BASE}/online-exam/`);
+}
+
+export interface OnlineExamPayload {
+  title: string;
+  class_id: number;
+  section: number[];
+  subject: number;
+  date: string;
+  start_time: string;
+  end_time: string;
+  percentage?: string;
+  instruction?: string;
+  auto_mark: boolean;
+}
+
+export async function createOnlineExam(payload: OnlineExamPayload) {
+  return postJson<{ message: string }>("/online-exam/store/", payload);
+}
+
+export async function updateOnlineExam(payload: OnlineExamPayload & { id: number }) {
+  return postJson<{ message: string }>("/online-exam/update/", payload);
+}
+
+export async function deleteOnlineExam(id: number) {
+  return postJson<{ message: string }>("/online-exam/delete/", { id });
+}
+
+export async function publishOnlineExam(id: number) {
+  return apiRequestWithRefresh<{ message: string }>(`${BASE}/online-exam/publish/${id}/`, { method: "GET" });
+}
+
+export async function cancelPublishOnlineExam(id: number) {
+  return apiRequestWithRefresh<{ message: string }>(`${BASE}/online-exam/publish-cancel/${id}/`, { method: "GET" });
 }
 
 // ─── Conduct & Marks ──────────────────────────────────────────────────────────
