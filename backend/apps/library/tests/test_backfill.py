@@ -13,11 +13,11 @@ from django.apps import apps as django_apps
 from django.core.management import call_command
 from django.db import connection
 
-from apps.library.models import Book, BookCategory, BookCopy, BookIssue, LibraryMember
+from apps.library.models import Book, BookCategory, BookCopy, BookIssue
 from apps.library.services.backfill import backfill_catalogue
 from apps.library.services.codes import code_from_name, copy_number_from_code
 from apps.library.services.numbering import derive_category_code, next_accession_code
-from apps.library.tests.conftest import make_book
+from apps.library.tests.conftest import make_book, make_member
 
 
 def legacy_book(school, title, quantity, available, category=None):
@@ -81,7 +81,7 @@ def test_backfill_gives_colliding_names_distinct_codes(school):
 
 
 def test_backfill_makes_a_copy_for_every_loan_even_if_quantity_is_too_low(other_school, other_category):
-    member = LibraryMember.objects.create(school=other_school, member_type="staff", card_no="C-2")
+    member = make_member(other_school, "C-2")
     book = legacy_book(other_school, "Overbooked", quantity=1, available=0, category=other_category)
     loans(other_school, book, member, "issued", "issued")
     backfill_catalogue(django_apps)

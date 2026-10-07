@@ -292,6 +292,7 @@ export const MODULES: ModuleRoute[] = [
       { label: 'Catalogue', path: '/library/catalogue', icon: BookOpen },
       { label: 'Library Members', path: '/library/members', icon: Users },
       { label: 'Book Issues', path: '/library/issues', icon: BookmarkCheck },
+      { label: 'Settings', path: '/library/settings', icon: Settings, permission: 'library.settings.view' },
     ],
   },
   // HIDDEN - no backend yet

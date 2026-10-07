@@ -118,3 +118,48 @@ def find_reconcile_mismatches(Book, BookCopy):
                 }
             )
     return rows
+
+
+def find_member_integrity_problems(LibraryMember):
+    """Rows that would violate the member constraints added in migration 0008.
+
+    Returns {"duplicate_students": [...], "duplicate_staff": [...], "type_mismatch": [...]},
+    each a list of member ids (duplicates list every id of the duplicated person).
+    """
+    from django.db.models import Count, Q
+
+    def duplicated(field):
+        people = (
+            LibraryMember.objects.filter(**{f"{field}__isnull": False})
+            .values("school_id", field)
+            .annotate(n=Count("id"))
+            .filter(n__gt=1)
+        )
+        ids = []
+        for row in people:
+            ids += list(
+                LibraryMember.objects.filter(school_id=row["school_id"], **{field: row[field]}).values_list("id", flat=True)
+            )
+        return sorted(ids)
+
+    mismatch = LibraryMember.objects.exclude(
+        Q(member_type="student", student__isnull=False, staff__isnull=True)
+        | Q(member_type__in=["teacher", "staff"], staff__isnull=False, student__isnull=True)
+    )
+    return {
+        "duplicate_students": duplicated("student"),
+        "duplicate_staff": duplicated("staff"),
+        "type_mismatch": sorted(mismatch.values_list("id", flat=True)),
+    }
+
+
+def backfill_members(apps_registry):
+    """Migration 0007: zero registration fees, then refuse to continue past rows 0008 would reject."""
+    LibraryMember = apps_registry.get_model("library", "LibraryMember")
+    LibraryMember.objects.exclude(registration_fee_amount=0).update(registration_fee_amount=0)
+    problems = {name: ids for name, ids in find_member_integrity_problems(LibraryMember).items() if ids}
+    if problems:
+        raise RuntimeError(
+            "Library members need manual cleanup before the membership constraints can be added. "
+            f"Offending library_members ids: {problems}. Fix or deactivate these rows and migrate again."
+        )

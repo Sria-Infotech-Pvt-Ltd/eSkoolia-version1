@@ -57,7 +57,7 @@ plus the untracked library planning documents, staged in prompt 1.
 | 1 | Foundations | Done (2026-10-07). 111 backend tests pass. tsc and lint clean for library files. |
 | 2 | Catalogue backend | Done (2026-10-07). 186 backend tests pass, 1 Postgres-only test skipped (unverified). tsc has no library errors. |
 | 3 | Catalogue frontend and bulk tools | Done (2026-10-07). 221 backend tests pass (1 Postgres-only skipped), 18 Jest tests pass. tsc and lint show only the baseline errors from other modules. Browser behaviour not checked by me. |
-| 4 | Members, charges and settings | Not started. Note: the settings endpoints (GET and PUT `settings/`) already exist from prompt 1; prompt 4 only needs the Settings screen (its item 6) and must not rebuild the endpoints. |
+| 4 | Members, charges and settings | Done (2026-10-07). 296 backend tests pass (1 Postgres-only skipped), 29 Jest tests pass. tsc and lint show only the baseline errors from other modules. Screens not checked in a browser. |
 | 5 | Circulation backend | Not started |
 | 6 | Issue Desk and exceptions screens | Not started |
 | 7 | Console, reminders and push | Not started |
@@ -93,6 +93,14 @@ plus the untracked library planning documents, staged in prompt 1.
 - `styles/tokens.css` gained ten `--cat-<key>` colours (rose, orange, amber, lime, emerald, teal, sky, indigo, violet, slate) and `--overlay`. The status tokens (ok, warn, danger, info and their soft variants) already existed, so none were added. No raw colour values exist in the new components.
 - Jest: `__tests__/library/wizard.test.ts` covers step validation, bulk-text parsing, Code 39 and colour helpers.
 
+## What prompt 4 built (for the next prompt)
+
+- Models: `LibraryMember` (teacher type, `registration_fee_amount`, `updated_at`, partial uniques per student and per staff, `ck_library_members_type_matches_person`, student and staff FKs now PROTECT), new `Charge` (table `library_charges`, issue link only; the replacement-report link and its unique constraint are prompt 5's). `BookIssue.book` and `.member` are PROTECT now.
+- Services: `dues.py` (pure: `accrued_fine`, `loan_fine`, `replacement_cost`, `borrowing_limit`, `summarise_dues`), `members.py` (`register_member`, `infer_member_type`, `default_registration_fee`, `annotate_member_dues`, `accrued_fines_by_member`, `suspended_member_ids`, `eligibility`, `holding_member_ids`), `charges.py` (`collect_charge`, `waive_charge`). Prompt 5 should reuse `loan_fine`, `eligibility` and `member_dues` rather than rewriting them.
+- Endpoints: `members/` list, create, retrieve, PATCH, DELETE; `members/{id}/dues/`; `members/candidates/?type=&q=`; `members/eligible/?school_class=|member_type=&book=` (reasons: ok, suspended, limit_reached, already_holding, not_eligible_audience, reference_only); `charges/` list, retrieve, `charges/{id}/collect/`, `charges/{id}/waive/`.
+- `LibraryViewSet` gained `page_context(rows)`: one hook for per-page batched context (used for accrued fines).
+- Frontend: `/library/members` and `/library/settings` (components in `components/library/members/` and `components/library/settings/`, reusing `components/library/catalogue/ui.tsx`), types and hook functions for members, charges and classes, a Settings sub item gated by `library.settings.view`. `__tests__/library/members.test.ts` covers the form helpers.
+
 ## Decisions made
 
 1. **`LibraryViewSet` does not inherit the CRUD methods of `PaginatedModelViewSet`.** Those methods wrap everything in `except Exception` and answer 400 (`retrieve_error`, `create_error`, ...). That would turn a cross-school 404 into a 400 and hide 403s and the library 409 codes. The library base re-implements the five verbs with the same success envelope and lets errors reach `config/exception_handler.py`. It also skips the base `filter_queryset`, which re-applies filters with a raw `.filter(field=value)` and rejects `?is_active=true` (the library pages send exactly that).
@@ -124,6 +132,16 @@ plus the untracked library planning documents, staged in prompt 1.
 27. **Catalogue filters.** "Reader" is one dropdown (students, teachers or staff), mapped to `for_students=true` and so on. Search is debounced 300 ms; stale list responses are discarded; a page past the end after filtering resets to page 1.
 28. **Edit title** reuses the wizard (loads `GET books/{id}/`); its copies step becomes "Add more copies" (0 adds none) and calls `add-copies`. Copies are never removed by editing a number.
 29. **Gating.** Buttons use `can()`: New accession `books.create`, Bulk import `books.import`, Manage categories `book_categories.view` (add, edit, delete need `.create`, `.update`, `.delete`), Edit `books.update`, Copies and Labels `book_copies.view`, withdraw `book_copies.withdraw`, condition edit `book_copies.update`, add copies `books.update`. The page itself needs `books.view`. Category, scanner and wizard lookups use `silent401`; saves do not.
+30. **(Prompt 4) Accrued fine is computed, not stored**, per open loan: days past due minus grace days, times the daily rate, then the lower of the school cap and (when the cap-at-replacement setting is on) the copy's replacement cost (copy cost plus handling fee, or the default cost when the copy cost is 0). Due today is not overdue. Open-loan fines are computed for a whole page in one query (`accrued_fines_by_member`); the `standing` filter computes them school-wide in one query.
+31. **Suspension** means accrued or pending overdue fines, or pending replacement fees, above 0. An unpaid registration fee is part of `total_dues` and `registration_due` but never suspends. `total_dues` therefore includes it; `standing` does not.
+32. **Registration status** is read from the member's registration charge (pending is unpaid, paid is paid, anything else is waived). A member with no registration charge (a legacy row) shows as waived. A fee of 0 creates a charge already waived, with the note "No registration fee".
+33. **Registration** takes either a student or a staff member. Staff type is inferred (teacher when the staff user holds an active role with portal type teacher, else staff) unless the request gives `teacher` or `staff`. Person ids are looked up inside the caller's school and among active people only, so another school's id gives the same "invalid choice" error as an id that does not exist. `collect_fee_now` needs `library.charges.collect` in addition to `library_members.create`. Card numbers are `LM-00001` style, generated under a lock on the school's settings row, or typed.
+34. **PATCH members** accepts `is_active`, `card_no` and `member_type` (only between teacher and staff). Registration fee and the person link cannot be edited; no PUT.
+35. **Delete member** is refused with `library_has_history` when any loan or charge exists. Since every new member gets a registration charge, deletion only works for legacy members with no charge. Deactivate instead.
+36. **Receipt numbers** are `LIBR-<charge id, 7 digits>`; there is no counter in the settings for them.
+37. **Waiving** a charge needs `charges.waive` and a reason. The waive-and-return path with `book_issues.waive_fine` belongs to prompt 5.
+38. **Member migrations are split in three** like the catalogue ones: `0006_members_charges` (schema and the `Charge` table), `0007_members_data` (zero registration fees, and a check that stops with the offending member ids if any existing row would break the new constraints), `0008_members_constraints` (the two partial uniques and the type-matches-person check). Duplicate memberships or a mismatched type in existing data must be fixed by hand before `0007` passes.
+39. **Settings page** sends every editable field on save (the server accepts a subset, the page sends all). Classes come from `GET /api/v1/core/classes/?page_size=200`. A school with more than 200 classes would not see the rest.
 
 ## Migrations to apply
 
@@ -135,6 +153,9 @@ Not applied by the build. Apply in this order on each environment.
 | `library.0003_catalogue` | Schema: category `code`, `color_key`, `next_sequence`, `updated_at`; title fields from blueprint table 3; table `library_book_copies`; `library_activity_logs.copy`; `Book.category` becomes PROTECT; `uq_lib_book_title_author` replaced by `uq_library_books_identity`; new checks and indexes. |
 | `library.0004_catalogue_backfill` | Data: category codes, `Uncategorised`/`UNC`, accession codes, copies (decision 13). Idempotent. Writes no files. Take a database snapshot first (blueprint section 5 step 1). |
 | `library.0005_catalogue_constraints` | `uq_library_books_school_accession`, `uq_library_book_categories_school_code`. |
+| `library.0006_members_charges` | Schema: member type `teacher`, `registration_fee_amount`, `updated_at`, PROTECT on member student and staff and on loan book and member; table `library_charges`; member fee check and index. |
+| `library.0007_members_data` | Data: registration fees to 0 and an integrity check. **Stops with an error listing library member ids** when a student or staff member has more than one membership, or a member's type does not match its person. Fix those rows by hand and run it again. |
+| `library.0008_members_constraints` | `uq_library_members_school_student`, `uq_library_members_school_staff`, `ck_library_members_type_matches_person`. |
 
 **Right after `0004`:** run `python manage.py library_reconcile` (read-only). It lists legacy titles whose old `available_quantity` differs from the derived available copies; the derived copy state is what the system uses, the list is for a librarian to check. Run it before circulation resumes, because the old counter stops moving afterwards. `--school <id>` narrows it.
 
@@ -146,8 +167,9 @@ After migrating, in this order: `seed_permissions`, `seed_module_tiers`, `seed_r
 - **Roles that held library `.view` codes could previously write.** After the split they can only read. Run `library_role_report` on each environment and grant the new codes where the write access was intended.
 - **Shared tier-seeding defect.** `seed_module_tiers.classify()` misclassifies dot-style codes for other modules too. Only the library has an explicit map now. Report to the owner of the other modules.
 - **`TENANT_FEATURE_GATES` does not exist** in any settings module (the middleware reads it with `getattr(..., {})` and defaults to empty), so the three v1 patterns from blueprint fact 8 were not added. Adding the setting would live in `config/settings/base.py`, which prompt 1 may not edit. The frontend gate `hasFeature('library_enabled')` is not wired yet.
-- **FKs still CASCADE** on `LibraryMember.student/staff` and `BookIssue.book/member` (blueprint: PROTECT plus `library_has_history`). Deleting a *member* with loans still deletes the loans (prompt 4); a *book* with loans is now refused by the API, but `BookIssue.book` is still CASCADE at database level (prompt 5).
-- **`updated_at` is missing** on `library_members` (prompt 4 adds it). Categories have it since prompt 2.
+- **Loans are still legacy.** `BookIssue` has no copy link and no renewal, return-by or fine fields yet, and legacy `POST /issues/` does not check suspension, limits, audience or reference-only (prompt 5 replaces it with `eligibility`).
+- **Library fines never become charges yet.** Charge rows of type overdue fine and replacement are only created by prompt 5; until then the Dues drawer shows accrued open-loan fines (computed) and registration fees only.
+- **No Jest component tests** for the members and settings screens, only helper tests. Nothing was checked in a browser.
 - **Category tighten is not done.** `Book.category` is still nullable and legacy loans are not bound to copies; blueprint section 5 migrations C and D (tighten, drop `quantity` columns) are later releases.
 - **Legacy Books and Categories panels** (`LibraryPanels.tsx`) are no longer routed to; they stay in the file until prompt 13 removes it. The Members and Issues pages still use that file.
 - **Not checked in a browser.** The catalogue screens, print view and scanner panel were type-checked, linted and unit-tested only; the user does the visual check.

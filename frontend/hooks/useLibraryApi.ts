@@ -23,11 +23,21 @@ import type {
   BulkImportPreview,
   BulkImportResult,
   CopyListParams,
+  ChargeListParams,
+  LibraryCharge,
   LibraryEnvelope,
   LibraryErrorBody,
   LibraryPage,
+  Member,
+  MemberCandidate,
+  MemberDetail,
+  MemberDuesDetail,
+  MemberInput,
+  MemberListParams,
+  MemberType,
   LibrarySettings,
   LibrarySettingsInput,
+  SchoolClassOption,
 } from "@/types/library";
 
 export interface LibraryApiErrorInit {
@@ -121,7 +131,7 @@ function query(params?: object): string {
   return text ? `?${text}` : "";
 }
 
-function json(method: "POST" | "PATCH", body: unknown): RequestOptions {
+function json(method: "POST" | "PATCH" | "PUT", body: unknown): RequestOptions {
   return { method, body: JSON.stringify(body) };
 }
 
@@ -269,4 +279,88 @@ export async function getBookLabels(id: number, options?: { copyId?: number; inc
     { method: "GET" },
   );
   return res.data;
+}
+
+// ─── Members ─────────────────────────────────────────────────────────────────
+
+export function listMembers(params?: MemberListParams, options?: ReadOptions): Promise<LibraryPage<Member>> {
+  return libraryRequest(`${BASE}/members/${query(params)}`, { method: "GET", silent401: options?.silent401 });
+}
+
+export async function getMember(id: number, options?: ReadOptions): Promise<MemberDetail> {
+  const res = await libraryRequest<LibraryEnvelope<MemberDetail>>(`${BASE}/members/${id}/`, {
+    method: "GET",
+    silent401: options?.silent401,
+  });
+  return res.data;
+}
+
+/** Registers a member and creates the registration charge (paid now, pending, or waived at 0). */
+export async function createMember(body: MemberInput): Promise<MemberDetail> {
+  const res = await libraryRequest<LibraryEnvelope<MemberDetail>>(`${BASE}/members/`, json("POST", body));
+  return res.data;
+}
+
+export async function updateMember(
+  id: number,
+  body: { is_active?: boolean; card_no?: string; member_type?: MemberType },
+): Promise<MemberDetail> {
+  const res = await libraryRequest<LibraryEnvelope<MemberDetail>>(`${BASE}/members/${id}/`, json("PATCH", body));
+  return res.data;
+}
+
+/** Refused with code `library_has_history` when the member has loans or charges. */
+export async function deleteMember(id: number): Promise<void> {
+  await libraryRequest<void>(`${BASE}/members/${id}/`, { method: "DELETE" });
+}
+
+export async function getMemberDues(id: number, options?: ReadOptions): Promise<MemberDuesDetail> {
+  const res = await libraryRequest<LibraryEnvelope<MemberDuesDetail>>(`${BASE}/members/${id}/dues/`, {
+    method: "GET",
+    silent401: options?.silent401,
+  });
+  return res.data;
+}
+
+/** Students or staff who are not members yet. `type` is student, teacher or staff. At most 20 rows. */
+export async function listMemberCandidates(
+  type: MemberType,
+  q = "",
+  options?: ReadOptions,
+): Promise<MemberCandidate[]> {
+  const res = await libraryRequest<LibraryPage<MemberCandidate>>(`${BASE}/members/candidates/${query({ type, q })}`, {
+    method: "GET",
+    silent401: options?.silent401,
+  });
+  return res.results;
+}
+
+// ─── Charges ─────────────────────────────────────────────────────────────────
+
+export function listCharges(params?: ChargeListParams, options?: ReadOptions): Promise<LibraryPage<LibraryCharge>> {
+  return libraryRequest(`${BASE}/charges/${query(params)}`, { method: "GET", silent401: options?.silent401 });
+}
+
+/** Pending to paid. A second call is refused with `library_invalid_state_transition`. */
+export async function collectCharge(id: number): Promise<LibraryCharge> {
+  const res = await libraryRequest<LibraryEnvelope<LibraryCharge>>(`${BASE}/charges/${id}/collect/`, { method: "POST" });
+  return res.data;
+}
+
+/** Pending to waived. The reason is required and kept on the charge. */
+export async function waiveCharge(id: number, reason: string): Promise<LibraryCharge> {
+  const res = await libraryRequest<LibraryEnvelope<LibraryCharge>>(`${BASE}/charges/${id}/waive/`, json("POST", { reason }));
+  return res.data;
+}
+
+// ─── Classes (for the junior-class picker on the settings page) ──────────────
+
+/** The existing classes API used by other modules. Returns every class of the school (up to 200). */
+export async function listSchoolClasses(options?: ReadOptions): Promise<SchoolClassOption[]> {
+  const data = await apiRequestWithRefresh<SchoolClassOption[] | { results?: SchoolClassOption[] }>(
+    "/api/v1/core/classes/?page_size=200",
+    { method: "GET", silent401: options?.silent401 },
+  );
+  const rows = Array.isArray(data) ? data : (data.results ?? []);
+  return rows.map((row) => ({ id: row.id, name: row.name }));
 }

@@ -1,5 +1,5 @@
-import { LibraryMembersPanel } from "@/components/library/LibraryPanels";
+import { MembersPage } from "@/components/library/members/MembersPage";
 
 export default function LibraryMembersPage() {
-  return <LibraryMembersPanel />;
+  return <MembersPage />;
 }

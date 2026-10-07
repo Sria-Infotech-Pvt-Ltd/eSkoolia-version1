@@ -304,3 +304,128 @@ export interface BookLabels {
   rack: string;
   copies: CopyBrief[];
 }
+
+// ─── Members and charges ─────────────────────────────────────────────────────
+
+export type MemberType = "student" | "teacher" | "staff";
+export type RegistrationStatus = "paid" | "unpaid" | "waived";
+export type Standing = "active" | "suspended";
+
+/** /members/ row. Money is a string with two decimals. */
+export interface Member {
+  id: number;
+  display_name: string;
+  member_type: MemberType;
+  student: number | null;
+  staff: number | null;
+  school_class: string;
+  section: string;
+  card_no: string;
+  active_loans: number;
+  borrowing_limit: number;
+  registration_fee_amount: string;
+  registration_status: RegistrationStatus;
+  total_dues: string;
+  standing: Standing;
+  is_active: boolean;
+  created_at: string;
+}
+
+export interface OpenLoan {
+  id: number;
+  book: number;
+  title: string;
+  issue_date: string;
+  due_date: string;
+  days_overdue: number;
+  accrued_fine: string;
+}
+
+export interface MemberDues {
+  overdue_fines: string;
+  replacement_fees: string;
+  registration_due: string;
+  total: string;
+  suspended: boolean;
+  accrued_open_loan_fines: string;
+}
+
+/** /members/{id}/dues/ also lists the charges still pending, so a fee can be collected from the drawer. */
+export interface MemberDuesDetail extends MemberDues {
+  pending_charges: { id: number; charge_type: ChargeType; amount: string }[];
+}
+
+export interface MemberDetail extends Member {
+  open_loans: OpenLoan[];
+  dues: MemberDues;
+  updated_at: string;
+}
+
+export interface MemberListParams {
+  page?: number;
+  page_size?: number;
+  search?: string;
+  ordering?: string;
+  member_type?: MemberType;
+  is_active?: boolean;
+  school_class?: number;
+  section?: number;
+  standing?: Standing;
+  registration?: RegistrationStatus;
+}
+
+/** POST /members/. Give `student` or `staff`, not both. Omit the fee to use the school default. */
+export interface MemberInput {
+  student?: number;
+  staff?: number;
+  member_type?: MemberType;
+  card_no?: string;
+  registration_fee_amount?: string;
+  collect_fee_now?: boolean;
+}
+
+export interface MemberCandidate {
+  id: number;
+  member_type: MemberType;
+  name: string;
+  identifier: string;
+  school_class: string;
+  section: string;
+  suggested_fee: string;
+}
+
+export type ChargeType = "registration" | "overdue_fine" | "replacement";
+export type ChargeStatus = "pending" | "paid" | "waived" | "written_off";
+
+export interface LibraryCharge {
+  id: number;
+  member: number;
+  member_name: string;
+  card_no: string;
+  charge_type: ChargeType;
+  amount: string;
+  status: ChargeStatus;
+  issue: number | null;
+  assessed_on: string;
+  resolved_at: string | null;
+  resolved_by: number | null;
+  resolved_by_name: string | null;
+  resolution_note: string;
+  receipt_no: string;
+  created_at: string;
+}
+
+export interface ChargeListParams {
+  page?: number;
+  page_size?: number;
+  search?: string;
+  member?: number;
+  charge_type?: ChargeType;
+  status?: ChargeStatus;
+}
+
+/** A class as returned by /api/v1/core/classes/. */
+export interface SchoolClassOption {
+  id: number;
+  name: string;
+}

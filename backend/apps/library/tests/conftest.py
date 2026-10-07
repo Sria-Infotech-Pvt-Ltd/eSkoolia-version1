@@ -103,11 +103,30 @@ def book(school, category):
     return make_book(school, category)
 
 
-@pytest.fixture
-def member(school):
+def make_staff(school, staff_no=None, first_name="Asha", **extra):
+    from uuid import uuid4
+
+    from apps.hr.models import Staff
+
+    return Staff.objects.create(
+        school=school, staff_no=staff_no or f"S{uuid4().hex[:6]}", first_name=first_name, join_date="2020-01-01", **extra
+    )
+
+
+def make_member(school, card_no, member_type="staff", **extra):
+    """A library member with the person its type requires (the database enforces it)."""
     from apps.library.models import LibraryMember
 
-    return LibraryMember.objects.create(school=school, member_type="staff", card_no="CARD-001")
+    if member_type == "student":
+        extra.setdefault("student", _student(school, f"ADM-{card_no}"))
+    else:
+        extra.setdefault("staff", make_staff(school))
+    return LibraryMember.objects.create(school=school, member_type=member_type, card_no=card_no, **extra)
+
+
+@pytest.fixture
+def member(school):
+    return make_member(school, "CARD-001")
 
 
 @pytest.fixture
@@ -124,9 +143,7 @@ def other_book(other_school, other_category):
 
 @pytest.fixture
 def other_member(other_school):
-    from apps.library.models import LibraryMember
-
-    return LibraryMember.objects.create(school=other_school, member_type="staff", card_no="CARD-OTHER")
+    return make_member(other_school, "CARD-OTHER")
 
 
 @pytest.fixture

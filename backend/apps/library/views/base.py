@@ -69,6 +69,11 @@ class LibraryViewSet(PaginatedModelViewSet):
 
     # -- queryset ---------------------------------------------------------
 
+    def page_context(self, rows):
+        """Hook: extra serializer context computed once for the rows about to be serialized
+        (for example one batched query for the whole page), so row serializers never query per row."""
+        return {}
+
     def annotate_queryset(self, queryset):
         """Hook for subclasses: add annotations before ordering and filter backends run."""
         return queryset
@@ -123,6 +128,7 @@ class LibraryViewSet(PaginatedModelViewSet):
         serializer_class = serializer_class or self.get_serializer_class()
         context = self.get_serializer_context()
         page = self.paginate_queryset(queryset)
+        context.update(self.page_context(page if page is not None else list(queryset)))
         if page is not None:
             payload = dict(self.get_paginated_response(serializer_class(page, many=True, context=context).data).data)
             rows = payload["results"]

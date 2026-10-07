@@ -38,7 +38,8 @@ def test_cross_school_update_and_delete_are_404(admin_user, other_category, othe
     client = client_for(admin_user)
     pk = other_school_pk(resource, other_category, other_book, other_member, other_issue)
     assert client.patch(url(resource, pk), {"is_active": False}, format="json").status_code == 404
-    assert client.put(url(resource, pk), {}, format="json").status_code == 404
+    if resource != "members":  # members offer PATCH only
+        assert client.put(url(resource, pk), {}, format="json").status_code == 404
     assert client.delete(url(resource, pk)).status_code == 404
 
 
