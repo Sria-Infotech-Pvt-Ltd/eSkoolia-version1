@@ -1,0 +1,102 @@
+%%{init: {"flowchart": {"nodeSpacing": 24, "rankSpacing": 22, "padding": 6, "curve": "basis", "wrappingWidth": 340}, "themeVariables": {"fontSize": "13px"}}}%%
+flowchart TD
+  classDef fe fill:#FFE8CC,stroke:#E8590C,color:#3B1F00,stroke-width:1.5px
+  classDef be fill:#D0EBFF,stroke:#1971C2,color:#0B2540,stroke-width:1.5px
+  classDef sec fill:#FFC9C9,stroke:#C92A2A,color:#4A0000,stroke-width:2px
+  classDef db fill:#D3F9D8,stroke:#2F9E44,color:#0B3D1A,stroke-width:1.5px
+  classDef async fill:#E5DBFF,stroke:#6741D9,color:#24104F,stroke-width:1.5px
+  classDef err fill:#FFF3BF,stroke:#F08C00,color:#4A3500,stroke-width:1.5px
+
+  START(("[Parent] opens the Library page<br/>for [Child] in the parent portal"))
+
+  subgraph L1["1. User and portal layer"]
+    P1["Portal detection<br/>me.portal_type is parent<br/>route group (parent-portal) with ParentChildContext"]
+    P2["Nav from lib/parent-routes.ts<br/>always shown, no permission filter<br/>Library item points to /parent/library"]
+    P3["useParentChild gives selectedChild.id<br/>child switch shown when there is more than one child"]
+  end
+
+  subgraph L2["2. Frontend state and API client layer"]
+    F1["fetchChildLibraryCurrent child_id<br/>function in lib/api/parent.ts"]
+    F2["apiRequestWithRefresh<br/>attaches Bearer token, refreshes once on 401"]
+    F3["Page state: skeleton while loading"]
+    FERR["Error state with a retry card<br/>401 after a failed refresh goes to /login"]
+  end
+
+  subgraph L3["3. Network and security middleware"]
+    N1["GET /api/v1/parent/library/current/?child_id=ID"]
+    N2["Middleware stack<br/>Security, CORS, CSRF, Auth, TenantContext"]
+    N3["JWTAuthentication<br/>declared on the portal view"]
+    N4{"JWT valid and not expired?"}
+    N4e["401 unauthorized"]
+  end
+
+  subgraph L4["4. Routing and authorization"]
+    R1["config/urls.py to api/v1/parent/<br/>apps/parent_portal/urls.py<br/>ParentLibraryCurrentView"]
+    R2{"IsParentPortalUser<br/>authenticated, not a superuser,<br/>active role with portal_type parent,<br/>guardian_profile present"}
+    R2e["403 portal access refused"]
+    R3{"child_id supplied?"}
+    R3e["400 child_id is required"]
+    R4{"_resolve_child<br/>Student.guardian is this guardian<br/>status active"}
+    R4e["404 not found<br/>same answer for another family's child"]
+  end
+
+  subgraph L5["5. Business logic, read only"]
+    B1["Find the child's library member record<br/>filtered by school"]
+    B2{"Child is a library member?"}
+    B2n["registered false<br/>page explains how to register"]
+    B3["Open loans with select_related book and copy<br/>accrued fine from services/dues.py<br/>next library slot for the child's class"]
+    B4["Pending replacement fees<br/>registration fee status, borrowing limit"]
+    B5["Plain JSON response<br/>no admin envelope, like sibling portal views"]
+  end
+
+  subgraph L6["6. Persistence"]
+    D1["SELECT only, school filtered<br/>library_members, library_book_issues,<br/>library_charges, library_period_slots"]
+    D2["No writes in this flow<br/>nothing to commit or invalidate"]
+  end
+
+  subgraph L7["7. Live update trigger, runs separately"]
+    K1["[Librarian] returns the overdue book<br/>return transaction commits"]
+    K2["transaction.on_commit<br/>deliver_library_event with ids only"]
+    K3["Redis broker, Celery worker<br/>re-reads the rows"]
+    K4{"Primary guardian user exists<br/>for the borrowing student?"}
+    K4e["Skip and write a reminder log row"]
+    K5["INSERT CommunicationNotification<br/>for the guardian user"]
+    K6["push_portal_event<br/>group_send to user_ID, kind library<br/>best effort, failure swallowed"]
+    K7["ChatConsumer.portal_notification<br/>forwards the payload over /ws/chat/"]
+    K8["usePortalNotifications handler<br/>refetches the current page with silent401"]
+  end
+
+  subgraph L8["8. Return trip"]
+    X1["Page renders<br/>one card per open loan, overdue state with the fine,<br/>x of y allowed, pending fees"]
+  end
+
+  START --> P1 --> P2 --> P3 --> F1 --> F2 --> N1
+  N1 --> N2 --> N3 --> N4
+  N4 -->|"no"| N4e --> FERR
+  N4 -->|"yes"| R1 --> R2
+  R2 -->|"no"| R2e --> FERR
+  R2 -->|"yes"| R3
+  R3 -->|"no"| R3e --> FERR
+  R3 -->|"yes"| R4
+  R4 -->|"no"| R4e --> FERR
+  R4 -->|"yes: student loaded"| B1 --> B2
+  B2 -->|"no"| B2n --> B5
+  B2 -->|"yes"| B3 --> B4 --> B5
+  B1 -.-> D1
+  B3 -.-> D1
+  B5 -.-> D2
+  B5 --> X1
+  F2 -.->|"waiting for response"| F3
+  X1 --> F3
+
+  K1 --> K2 --> K3 --> K4
+  K4 -->|"no"| K4e
+  K4 -->|"yes"| K5 --> K6 --> K7 --> K8
+  K8 -->|"refetch"| F1
+
+  class START,P1,P2,P3,F1,F2,F3,X1,K8 fe
+  class N1,N2,R1,B1,B2,B3,B4,B5 be
+  class N3,N4,R2,R3,R4 sec
+  class D1,D2,K5 db
+  class K2,K3,K4,K6,K7,K1 async
+  class FERR,N4e,R2e,R3e,R4e,B2n,K4e err

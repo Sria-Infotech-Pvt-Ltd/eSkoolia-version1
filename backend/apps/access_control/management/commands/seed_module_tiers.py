@@ -40,6 +40,63 @@ def classify(code: str) -> str:
     return AccessTier.FULL
 
 
+# The library module uses dot-style codes (library.books.create) that none of the
+# patterns above match, so classify() would put every one of them in FULL. The
+# library gets this explicit map instead (blueprint 3.7); other modules are
+# unchanged. Every ".view" code is VIEW; a code in neither set below is FULL
+# (settings.manage and anything added later).
+LIBRARY_OPERATE_CODES = frozenset(
+    f"library.{suffix}"
+    for suffix in (
+        "books.create", "books.update",
+        "book_categories.create", "book_categories.update",
+        "book_copies.update",
+        "library_members.create", "library_members.update",
+        "book_issues.issue", "book_issues.return", "book_issues.renew", "book_issues.remind",
+        "holds.create", "holds.cancel",
+        "lost_damaged.create", "lost_damaged.update",
+        "charges.collect",
+        "donations.create", "donations.update",
+        "purchase_orders.create", "purchase_orders.update",
+        "visits.check_in",
+        "stock_audits.run",
+    )
+)
+LIBRARY_MANAGE_CODES = frozenset(
+    f"library.{suffix}"
+    for suffix in (
+        "books.delete", "books.import",
+        "book_categories.delete",
+        "book_copies.withdraw",
+        "library_members.delete",
+        "book_issues.waive_fine",
+        "lost_damaged.resolve",
+        "charges.waive",
+        "purchase_orders.delete",
+        "book_requests.review",
+        "periods.manage",
+        "budgets.manage",
+        "activity_logs.export",
+    )
+)
+
+
+def classify_library(code: str) -> str:
+    if code in LIBRARY_MANAGE_CODES:
+        return AccessTier.MANAGE
+    if code in LIBRARY_OPERATE_CODES:
+        return AccessTier.OPERATE
+    if code.endswith(".view"):
+        return AccessTier.VIEW
+    return AccessTier.FULL
+
+
+def classify_for_module(module: str, code: str) -> str:
+    if module == "library":
+        return classify_library(code)
+    return classify(code)
+
+
 TIER_ORDER = [AccessTier.VIEW, AccessTier.OPERATE, AccessTier.MANAGE, AccessTier.FULL]
 
 
@@ -64,7 +121,7 @@ class Command(BaseCommand):
         for module, module_perms in sorted(by_module.items()):
             classified: dict[str, list] = {t: [] for t in TIER_ORDER}
             for p in module_perms:
-                tier = classify(p.code)
+                tier = classify_for_module(module, p.code)
                 classified[tier].append(p)
 
             # Build cumulative sets

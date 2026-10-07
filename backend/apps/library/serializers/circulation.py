@@ -1,57 +1,18 @@
 from rest_framework import serializers
 
-from .models import Book, BookCategory, BookIssue, LibraryMember
+from apps.library.models import BookIssue, LibraryMember
+
+from .base import AUDIT_FIELDS, AUDIT_READ_ONLY, LibraryModelSerializer
 
 
-class BookCategorySerializer(serializers.ModelSerializer):
-    class Meta:
-        model = BookCategory
-        fields = ["id", "school", "name", "description", "is_active", "created_at"]
-        read_only_fields = ["id", "school", "created_at"]
-
-
-class BookSerializer(serializers.ModelSerializer):
-    class Meta:
-        model = Book
-        fields = [
-            "id",
-            "school",
-            "category",
-            "title",
-            "author",
-            "isbn",
-            "publisher",
-            "quantity",
-            "available_quantity",
-            "rack",
-            "created_at",
-            "updated_at",
-        ]
-        read_only_fields = ["id", "school", "created_at", "updated_at"]
-
-    def validate(self, attrs):
-        category = attrs.get("category") or getattr(self.instance, "category", None)
-        quantity = attrs.get("quantity")
-        available = attrs.get("available_quantity")
-        request = self.context.get("request")
-        school_id = request.user.school_id if request else None
-
-        if school_id and category and category.school_id != school_id:
-            raise serializers.ValidationError({"category": "Selected category does not belong to your school."})
-        if quantity is not None and available is not None and available > quantity:
-            raise serializers.ValidationError({"available_quantity": "Available quantity cannot exceed total quantity."})
-        return attrs
-
-
-class LibraryMemberSerializer(serializers.ModelSerializer):
+class LibraryMemberSerializer(LibraryModelSerializer):
     class Meta:
         model = LibraryMember
-        fields = ["id", "school", "member_type", "student", "staff", "card_no", "is_active", "created_at"]
-        read_only_fields = ["id", "school", "created_at"]
+        fields = ["id", "school", "member_type", "student", "staff", "card_no", "is_active", "created_at", *AUDIT_FIELDS]
+        read_only_fields = AUDIT_READ_ONLY
 
     def validate(self, attrs):
-        request = self.context.get("request")
-        school_id = request.user.school_id if request else None
+        school_id = self.request_school_id()
         member_type = attrs.get("member_type") or getattr(self.instance, "member_type", None)
         student = attrs.get("student") or getattr(self.instance, "student", None)
         staff = attrs.get("staff") or getattr(self.instance, "staff", None)
@@ -73,7 +34,13 @@ class LibraryMemberSerializer(serializers.ModelSerializer):
         return attrs
 
 
-class BookIssueSerializer(serializers.ModelSerializer):
+class BookIssueSerializer(LibraryModelSerializer):
+    """LEGACY loan serializer, replaced by the issue-desk serializers in prompt 5.
+
+    Money, dates of return and status are written by the server only: a loan is
+    always created as ``issued`` and closed through the return action.
+    """
+
     class Meta:
         model = BookIssue
         fields = [
@@ -89,17 +56,16 @@ class BookIssueSerializer(serializers.ModelSerializer):
             "issued_by",
             "created_at",
             "updated_at",
+            *AUDIT_FIELDS,
         ]
-        read_only_fields = ["id", "school", "issued_by", "created_at", "updated_at"]
+        read_only_fields = [*AUDIT_READ_ONLY, "issued_by", "return_date", "fine_amount", "status"]
 
     def validate(self, attrs):
-        request = self.context.get("request")
-        school_id = request.user.school_id if request else None
+        school_id = self.request_school_id()
         issue_date = attrs.get("issue_date") or getattr(self.instance, "issue_date", None)
         due_date = attrs.get("due_date") or getattr(self.instance, "due_date", None)
         book = attrs.get("book") or getattr(self.instance, "book", None)
         member = attrs.get("member") or getattr(self.instance, "member", None)
-        status = attrs.get("status", getattr(self.instance, "status", BookIssue.STATUS_ISSUED))
 
         if issue_date and due_date and due_date < issue_date:
             raise serializers.ValidationError({"due_date": "Due date cannot be earlier than issue date."})
@@ -109,11 +75,7 @@ class BookIssueSerializer(serializers.ModelSerializer):
         if school_id and member and member.school_id != school_id:
             raise serializers.ValidationError({"member": "Selected member does not belong to your school."})
 
-        if book and status == BookIssue.STATUS_ISSUED:
-            current_available = book.available_quantity
-            if self.instance and self.instance.book_id == book.id and self.instance.status == BookIssue.STATUS_ISSUED:
-                current_available += 1
-            if current_available <= 0:
-                raise serializers.ValidationError({"book": "No available copies for this book."})
+        if book and book.available_quantity <= 0:
+            raise serializers.ValidationError({"book": "No available copies for this book."})
 
         return attrs

@@ -280,8 +280,7 @@ export const MODULES: ModuleRoute[] = [
       { label: 'Year-End',          path: '/fees/year-end',       icon: Calendar,      permission: 'fees' },
     ],
   },
-  // HIDDEN - no backend yet
-  /* {
+  {
     id: 'library',
     name: 'Library',
     path: '/library/books',
@@ -295,7 +294,7 @@ export const MODULES: ModuleRoute[] = [
       { label: 'Library Members', path: '/library/members', icon: Users },
       { label: 'Book Issues', path: '/library/issues', icon: BookmarkCheck },
     ],
-  }, */
+  },
   // HIDDEN - no backend yet
   /* {
     id: 'transport',
