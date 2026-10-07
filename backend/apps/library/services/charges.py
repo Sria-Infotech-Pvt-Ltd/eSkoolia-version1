@@ -21,14 +21,14 @@ def _event_for(charge):
 
 
 @transaction.atomic
-def collect_charge(school, actor, charge_id):
-    """Pending to paid, with a receipt number."""
+def collect_charge(school, actor, charge_id, receipt_no=""):
+    """Pending to paid. The receipt number is the one given or a generated LIBR- number."""
     charge = _lock_pending(school, charge_id)
     charge.status = Charge.STATUS_PAID
     charge.resolved_at = timezone.now()
     charge.resolved_by = actor
     charge.updated_by = actor
-    charge.receipt_no = receipt_number(charge)
+    charge.receipt_no = (receipt_no or "").strip()[:40] or receipt_number(charge)
     charge.save()
     log_event(
         school, actor, _event_for(charge),

@@ -270,7 +270,9 @@ class ChargeViewSet(LibraryViewSet):
     @action(detail=True, methods=["post"], url_path="collect")
     def collect(self, request, pk=None):
         charge = self.get_object()
-        charges_service.collect_charge(self.get_school_or_deny(), request.user, charge.pk)
+        charges_service.collect_charge(
+            self.get_school_or_deny(), request.user, charge.pk, str(request.data.get("receipt_no", ""))[:40]
+        )
         return self._row(charge.pk, "Charge collected")
 
     @action(detail=True, methods=["post"], url_path="waive")

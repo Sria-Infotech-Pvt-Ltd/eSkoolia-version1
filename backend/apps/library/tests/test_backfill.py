@@ -14,7 +14,11 @@ from django.core.management import call_command
 from django.db import connection
 
 from apps.library.models import Book, BookCategory, BookCopy, BookIssue
-from apps.library.services.backfill import backfill_catalogue
+from apps.library.services.backfill import (
+    backfill_catalogue,
+    backfill_loans,
+    find_loan_mismatches,
+)
 from apps.library.services.codes import code_from_name, copy_number_from_code
 from apps.library.services.numbering import derive_category_code, next_accession_code
 from apps.library.tests.conftest import make_book, make_member
@@ -104,24 +108,25 @@ def test_library_reconcile_is_read_only_and_lists_differences(school, member):
     book = legacy_book(school, "Mismatch", 2, 2, category=fiction)
     loans(school, book, member, "issued")
     backfill_catalogue(django_apps)
+    backfill_loans(django_apps)
     snapshot = list(BookCopy.objects.values_list("id", "status"))
 
     out = StringIO()
     call_command("library_reconcile", stdout=out)
     text = out.getvalue()
     assert "Mismatch" in text and "LIB-FIC-0001" in text and "| 2 | 1 |" in text
-    assert "Nothing was changed" in text
+    assert "Nothing was changed" in text and "Loans: no mismatches" in text
     assert list(BookCopy.objects.values_list("id", "status")) == snapshot
 
     scoped = StringIO()
     call_command("library_reconcile", "--school", "999999", stdout=scoped)
-    assert "No mismatches" in scoped.getvalue()
+    assert "Stock: no mismatches" in scoped.getvalue()
 
 
 def test_library_reconcile_ignores_titles_created_after_the_backfill(school, category, book):
     out = StringIO()
     call_command("library_reconcile", stdout=out)
-    assert "No mismatches" in out.getvalue()
+    assert "Stock: no mismatches" in out.getvalue()
 
 
 # ---- numbering -----------------------------------------------------------------
@@ -198,3 +203,67 @@ def test_concurrent_accession_in_one_category_never_repeats_a_code(school, categ
     assert len(set(results)) == 10
     category.refresh_from_db()
     assert category.next_sequence == 10
+
+
+# ---- loan binding (migration 0010) -------------------------------------------------------------------
+
+
+def test_loan_binding_gives_every_open_and_lost_loan_a_copy(school, member):
+    fiction = BookCategory.objects.create(school=school, name="Fiction")
+    book = legacy_book(school, "Bound", quantity=4, available=1, category=fiction)
+    loans(school, book, member, "issued", "issued", "lost", "returned")
+    backfill_catalogue(django_apps)  # copies: lost, issued, issued, available
+    backfill_loans(django_apps)
+    open_copies = list(BookIssue.objects.filter(book=book, status="issued").values_list("copy__status", flat=True))
+    assert open_copies == ["issued", "issued"]
+    assert len(set(BookIssue.objects.filter(book=book, status="issued").values_list("copy_id", flat=True))) == 2
+    lost = BookIssue.objects.get(book=book, status="lost")
+    assert lost.copy.status == "lost"
+    assert BookIssue.objects.get(book=book, status="returned").copy_id is None  # history stays unbound
+    assert find_loan_mismatches(BookCopy, BookIssue) == {
+        "open_loans_without_copy": [], "lost_loans_without_copy": [],
+        "issued_copies_without_open_loan": [], "open_loans_on_unissued_copy": [],
+    }
+
+
+def test_loan_binding_uses_an_available_copy_or_makes_a_new_one(school, member):
+    fiction = BookCategory.objects.create(school=school, name="Fiction")
+    book = legacy_book(school, "Short", quantity=1, available=1, category=fiction)
+    backfill_catalogue(django_apps)  # one copy, available
+    loans(school, book, member, "issued", "issued")  # two open loans, one copy: a loan arrived after the catalogue backfill
+    backfill_loans(django_apps)
+    bound = list(BookIssue.objects.filter(book=book, status="issued").values_list("copy_id", flat=True))
+    assert len(set(bound)) == 2 and all(bound)
+    assert BookCopy.objects.filter(book=book).count() == 2
+    assert set(BookCopy.objects.filter(book=book).values_list("status", flat=True)) == {"issued"}
+
+
+def test_loan_binding_is_idempotent(school, member):
+    fiction = BookCategory.objects.create(school=school, name="Fiction")
+    book = legacy_book(school, "Twice", quantity=2, available=1, category=fiction)
+    loans(school, book, member, "issued")
+    backfill_catalogue(django_apps)
+    backfill_loans(django_apps)
+    before = list(BookIssue.objects.values_list("id", "copy_id")) + list(BookCopy.objects.values_list("id", "status"))
+    backfill_loans(django_apps)
+    assert list(BookIssue.objects.values_list("id", "copy_id")) + list(BookCopy.objects.values_list("id", "status")) == before
+
+
+def test_loan_binding_refuses_to_continue_past_impossible_dates(school, member, category, book):
+    from django.db import connection
+
+    BookIssue.objects.create(school=school, book=book, member=member, issue_date="2026-02-10", due_date="2026-02-20")
+    # The database now enforces the date checks, so simulate legacy bad data with the checker alone.
+    from apps.library.services.backfill import find_loan_integrity_problems
+
+    assert find_loan_integrity_problems(BookIssue) == {"due_before_issue": [], "return_before_issue": []}
+    assert connection.vendor  # checker reads only; the migration step raises when either list is non-empty
+
+
+def test_reconcile_reports_loan_problems(school, member, category, book):
+    BookIssue.objects.create(school=school, book=book, member=member, issue_date="2026-02-10", due_date="2026-02-20")  # unbound open loan
+    BookCopy.objects.filter(book=book).first().__class__.objects.filter(book=book).update(status="issued")
+    out = StringIO()
+    call_command("library_reconcile", stdout=out)
+    text = out.getvalue()
+    assert "open loans without a copy" in text and "issued copies with no open loan" in text

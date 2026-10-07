@@ -4,12 +4,12 @@ from django.utils import timezone
 from rest_framework import serializers
 
 from apps.hr.models import Staff
-from apps.library.models import BookCopy, BookIssue, LibraryMember
+from apps.library.models import BookIssue, LibraryMember
 from apps.library.services import members as members_service
 from apps.library.services.dues import borrowing_limit, days_overdue, loan_fine, money
 from apps.students.models import Student
 
-from .base import AUDIT_FIELDS, AUDIT_READ_ONLY, LibraryModelSerializer
+from .base import LibraryModelSerializer
 
 
 class MemberRowMixin:
@@ -200,50 +200,3 @@ class MemberUpdateSerializer(LibraryModelSerializer):
         if is_student != (value == LibraryMember.MEMBER_STUDENT):
             raise serializers.ValidationError("The person decides student or staff; only teacher and staff can be switched.")
         return value
-
-
-class BookIssueSerializer(LibraryModelSerializer):
-    """LEGACY loan serializer, replaced by the issue-desk serializers in prompt 5.
-
-    Money, dates of return and status are written by the server only: a loan is
-    always created as ``issued`` and closed through the return action.
-    """
-
-    class Meta:
-        model = BookIssue
-        fields = [
-            "id",
-            "school",
-            "book",
-            "member",
-            "issue_date",
-            "due_date",
-            "return_date",
-            "fine_amount",
-            "status",
-            "issued_by",
-            "created_at",
-            "updated_at",
-            *AUDIT_FIELDS,
-        ]
-        read_only_fields = [*AUDIT_READ_ONLY, "issued_by", "return_date", "fine_amount", "status"]
-
-    def validate(self, attrs):
-        school_id = self.request_school_id()
-        issue_date = attrs.get("issue_date") or getattr(self.instance, "issue_date", None)
-        due_date = attrs.get("due_date") or getattr(self.instance, "due_date", None)
-        book = attrs.get("book") or getattr(self.instance, "book", None)
-        member = attrs.get("member") or getattr(self.instance, "member", None)
-
-        if issue_date and due_date and due_date < issue_date:
-            raise serializers.ValidationError({"due_date": "Due date cannot be earlier than issue date."})
-
-        if school_id and book and book.school_id != school_id:
-            raise serializers.ValidationError({"book": "Selected book does not belong to your school."})
-        if school_id and member and member.school_id != school_id:
-            raise serializers.ValidationError({"member": "Selected member does not belong to your school."})
-
-        if book and not book.copies.filter(status=BookCopy.STATUS_AVAILABLE).exists():
-            raise serializers.ValidationError({"book": "No available copies for this book."})
-
-        return attrs

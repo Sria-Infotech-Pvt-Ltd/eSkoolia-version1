@@ -249,3 +249,19 @@ def holding_member_ids(book, member_ids):
     return set(
         BookIssue.objects.filter(book=book, member_id__in=list(member_ids), status=BookIssue.STATUS_ISSUED).values_list("member_id", flat=True)
     )
+
+
+def dues_for_member(school, member, settings, today=None):
+    """DuesSummary for one member in two queries: pending charges by type, and accrued open-loan fines."""
+    pending = {
+        row["charge_type"]: row["total"]
+        for row in Charge.objects.filter(member=member, status=Charge.STATUS_PENDING)
+        .values("charge_type")
+        .annotate(total=Sum("amount"))
+    }
+    accrued = accrued_fines_by_member(school, settings, [member.pk], today).get(member.pk, ZERO)
+    return summarise_dues(
+        accrued + pending.get(Charge.TYPE_OVERDUE_FINE, ZERO),
+        pending.get(Charge.TYPE_REPLACEMENT, ZERO),
+        pending.get(Charge.TYPE_REGISTRATION, ZERO),
+    )

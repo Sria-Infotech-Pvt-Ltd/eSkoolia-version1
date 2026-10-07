@@ -163,3 +163,94 @@ def backfill_members(apps_registry):
             "Library members need manual cleanup before the membership constraints can be added. "
             f"Offending library_members ids: {problems}. Fix or deactivate these rows and migrate again."
         )
+
+
+# ---- loans (migration 0010) ---------------------------------------------------------------
+
+
+def find_loan_integrity_problems(BookIssue):
+    """Loans that would break the date checks added in migration 0011: ids of each kind."""
+    from django.db.models import F
+
+    return {
+        "due_before_issue": sorted(BookIssue.objects.filter(due_date__lt=F("issue_date")).values_list("id", flat=True)),
+        "return_before_issue": sorted(
+            BookIssue.objects.filter(return_date__isnull=False, return_date__lt=F("issue_date")).values_list("id", flat=True)
+        ),
+    }
+
+
+def backfill_loans(apps_registry):
+    """Bind every unbound open and lost loan to one copy of its title, then check the dates.
+
+    Open loan: a copy already issued and not yet bound, else an available copy (set to issued),
+    else a new copy. Lost loan: a lost copy not yet bound to a lost loan, else an available one
+    (set to lost), else a new copy. A copy is never bound to two open loans. Returned loans keep
+    no copy (history). Safe to run twice.
+    """
+    from .codes import copy_number_from_code, format_copy_code
+
+    Book = apps_registry.get_model("library", "Book")
+    BookCopy = apps_registry.get_model("library", "BookCopy")
+    BookIssue = apps_registry.get_model("library", "BookIssue")
+
+    pending = BookIssue.objects.filter(copy__isnull=True, status__in=["issued", "lost"]).order_by("book_id", "id")
+    by_book = {}
+    for loan in pending:
+        by_book.setdefault(loan.book_id, []).append(loan)
+
+    for book_id, loans in by_book.items():
+        book = Book.objects.get(pk=book_id)
+        copies = list(BookCopy.objects.filter(book_id=book_id).order_by("id"))
+        taken = {
+            "issued": set(BookIssue.objects.filter(book_id=book_id, status="issued", copy__isnull=False).values_list("copy_id", flat=True)),
+            "lost": set(BookIssue.objects.filter(book_id=book_id, status="lost", copy__isnull=False).values_list("copy_id", flat=True)),
+        }
+        for loan in loans:
+            want = loan.status  # "issued" or "lost": also the copy status it needs
+            pick = next((c for c in copies if c.status == want and c.pk not in taken[want]), None)
+            if pick is None:
+                pick = next((c for c in copies if c.status == "available" and c.pk not in taken[want]), None)
+                if pick is not None:
+                    pick.status = want
+                    pick.save(update_fields=["status"])
+            if pick is None:
+                last = max((copy_number_from_code(c.code) for c in copies), default=0)
+                pick = BookCopy.objects.create(
+                    school_id=loan.school_id,
+                    book_id=book_id,
+                    code=format_copy_code(book.accession_code or f"BOOK{book_id}", last + 1),
+                    status=want,
+                )
+                copies.append(pick)
+            taken[want].add(pick.pk)
+            loan.copy_id = pick.pk
+            loan.save(update_fields=["copy"])
+
+    problems = {name: ids for name, ids in find_loan_integrity_problems(BookIssue).items() if ids}
+    if problems:
+        raise RuntimeError(
+            "Library loans need manual cleanup before the loan constraints can be added. "
+            f"Offending library_book_issues ids: {problems}. Fix those dates and migrate again."
+        )
+
+
+def find_loan_mismatches(BookCopy, BookIssue):
+    """Loan and copy state that disagree (used by library_reconcile).
+
+    open_loans_without_copy and lost_loans_without_copy list loan ids; issued_copies_without_open_loan
+    lists copy ids; open_loans_on_unissued_copy lists loan ids whose copy is not marked issued.
+    """
+    open_loans = BookIssue.objects.filter(status="issued")
+    return {
+        "open_loans_without_copy": sorted(open_loans.filter(copy__isnull=True).values_list("id", flat=True)),
+        "lost_loans_without_copy": sorted(BookIssue.objects.filter(status="lost", copy__isnull=True).values_list("id", flat=True)),
+        "issued_copies_without_open_loan": sorted(
+            BookCopy.objects.filter(status="issued")
+            .exclude(pk__in=open_loans.filter(copy__isnull=False).values("copy_id"))
+            .values_list("id", flat=True)
+        ),
+        "open_loans_on_unissued_copy": sorted(
+            open_loans.filter(copy__isnull=False).exclude(copy__status="issued").values_list("id", flat=True)
+        ),
+    }

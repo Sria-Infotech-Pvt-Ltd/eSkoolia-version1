@@ -7,8 +7,10 @@ from .views import (
     BookIssueViewSet,
     BookViewSet,
     ChargeViewSet,
+    HoldViewSet,
     LibraryMemberViewSet,
     LibrarySettingsView,
+    LostDamagedViewSet,
 )
 
 router = DefaultRouter()
@@ -18,6 +20,8 @@ router.register("copies", BookCopyViewSet, basename="library-copy")
 router.register("members", LibraryMemberViewSet, basename="library-member")
 router.register("charges", ChargeViewSet, basename="library-charge")
 router.register("issues", BookIssueViewSet, basename="library-issue")
+router.register("holds", HoldViewSet, basename="library-hold")
+router.register("lost-damaged", LostDamagedViewSet, basename="library-lost-damaged")
 
 urlpatterns = [
     path("settings/", LibrarySettingsView.as_view(), name="library-settings"),

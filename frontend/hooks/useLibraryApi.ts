@@ -10,6 +10,24 @@ import { apiRequestWithRefresh, type RequestOptions } from "@/lib/api-auth";
 import type {
   AddCopiesInput,
   AddCopiesResult,
+  BulkIssueInput,
+  BulkIssueResult,
+  EligibleMember,
+  EligibleMemberParams,
+  Hold,
+  HoldListParams,
+  IssueInput,
+  IssueResult,
+  Loan,
+  LoanDetail,
+  LoanListParams,
+  LostDamagedRow,
+  RenewResult,
+  ReportBill,
+  ReportInput,
+  ReportListParams,
+  ReturnInput,
+  ReturnResult,
   Book,
   BookCategory,
   BookCategoryInput,
@@ -342,8 +360,11 @@ export function listCharges(params?: ChargeListParams, options?: ReadOptions): P
 }
 
 /** Pending to paid. A second call is refused with `library_invalid_state_transition`. */
-export async function collectCharge(id: number): Promise<LibraryCharge> {
-  const res = await libraryRequest<LibraryEnvelope<LibraryCharge>>(`${BASE}/charges/${id}/collect/`, { method: "POST" });
+export async function collectCharge(id: number, receiptNo?: string): Promise<LibraryCharge> {
+  const res = await libraryRequest<LibraryEnvelope<LibraryCharge>>(`${BASE}/charges/${id}/collect/`, {
+    method: "POST",
+    body: JSON.stringify(receiptNo ? { receipt_no: receiptNo } : {}),
+  });
   return res.data;
 }
 
@@ -363,4 +384,135 @@ export async function listSchoolClasses(options?: ReadOptions): Promise<SchoolCl
   );
   const rows = Array.isArray(data) ? data : (data.results ?? []);
   return rows.map((row) => ({ id: row.id, name: row.name }));
+}
+
+// ─── Loans (issue desk) ──────────────────────────────────────────────────────
+// There is no create, edit or delete for loans: every change is one of the actions below.
+
+export function listLoans(params?: LoanListParams, options?: ReadOptions): Promise<LibraryPage<Loan>> {
+  return libraryRequest(`${BASE}/issues/${query(params)}`, { method: "GET", silent401: options?.silent401 });
+}
+
+export async function getLoan(id: number, options?: ReadOptions): Promise<LoanDetail> {
+  const res = await libraryRequest<LibraryEnvelope<LoanDetail>>(`${BASE}/issues/${id}/`, {
+    method: "GET",
+    silent401: options?.silent401,
+  });
+  return res.data;
+}
+
+export function listDueToday(
+  params?: Pick<LoanListParams, "page" | "page_size" | "search">,
+  options?: ReadOptions,
+): Promise<LibraryPage<Loan>> {
+  return libraryRequest(`${BASE}/issues/due-today/${query(params)}`, { method: "GET", silent401: options?.silent401 });
+}
+
+export function listOverdue(
+  params?: Pick<LoanListParams, "page" | "page_size" | "search">,
+  options?: ReadOptions,
+): Promise<LibraryPage<Loan>> {
+  return libraryRequest(`${BASE}/issues/overdue/${query(params)}`, { method: "GET", silent401: options?.silent401 });
+}
+
+/** Return and renew tabs: open loans by copy code (exact match first), title, borrower or card. At most 10 rows. */
+export async function lookupOpenLoans(q: string, options?: ReadOptions): Promise<Loan[]> {
+  const res = await libraryRequest<LibraryPage<Loan>>(`${BASE}/issues/open/lookup/${query({ q })}`, {
+    method: "GET",
+    silent401: options?.silent401,
+  });
+  return res.results;
+}
+
+/**
+ * Issues one copy. Errors carry a code worth showing: library_member_suspended (payload.amount_due),
+ * library_limit_reached, library_copy_unavailable, library_reference_only, library_not_eligible_audience.
+ */
+export async function issueBook(body: IssueInput): Promise<IssueResult> {
+  const res = await libraryRequest<LibraryEnvelope<IssueResult>>(`${BASE}/issues/issue/`, json("POST", body));
+  return res.data;
+}
+
+export async function bulkIssue(body: BulkIssueInput): Promise<BulkIssueResult> {
+  const res = await libraryRequest<LibraryEnvelope<BulkIssueResult>>(`${BASE}/issues/bulk-issue/`, json("POST", body));
+  return res.data;
+}
+
+/** A second call is refused with `library_already_returned`; its payload has the loan's current status. */
+export async function returnLoan(id: number, body: ReturnInput = {}): Promise<ReturnResult> {
+  const res = await libraryRequest<LibraryEnvelope<ReturnResult>>(`${BASE}/issues/${id}/return/`, json("POST", body));
+  return res.data;
+}
+
+/** Only the user who returned it, inside the undo window, while the copy is still on the shelf. */
+export async function undoReturn(id: number): Promise<Loan> {
+  const res = await libraryRequest<LibraryEnvelope<{ loan: Loan }>>(`${BASE}/issues/${id}/undo-return/`, { method: "POST" });
+  return res.data.loan;
+}
+
+/** Refused when overdue (`library_loan_overdue`), at the cap (`library_renewal_cap`) or on hold (`library_hold_exists`). */
+export async function renewLoan(id: number): Promise<RenewResult> {
+  const res = await libraryRequest<LibraryEnvelope<RenewResult>>(`${BASE}/issues/${id}/renew/`, { method: "POST" });
+  return res.data;
+}
+
+/** The issue-desk roster of a class (or member type): each member with `eligible` and a reason code. */
+export function listEligibleMembers(params: EligibleMemberParams, options?: ReadOptions): Promise<LibraryPage<EligibleMember>> {
+  return libraryRequest(`${BASE}/members/eligible/${query(params)}`, { method: "GET", silent401: options?.silent401 });
+}
+
+// ─── Holds ───────────────────────────────────────────────────────────────────
+
+export function listHolds(params?: HoldListParams, options?: ReadOptions): Promise<LibraryPage<Hold>> {
+  return libraryRequest(`${BASE}/holds/${query(params)}`, { method: "GET", silent401: options?.silent401 });
+}
+
+export async function placeHold(body: { book: number; member: number }): Promise<Hold> {
+  const res = await libraryRequest<LibraryEnvelope<Hold>>(`${BASE}/holds/`, json("POST", body));
+  return res.data;
+}
+
+export async function cancelHold(id: number): Promise<Hold> {
+  const res = await libraryRequest<LibraryEnvelope<Hold>>(`${BASE}/holds/${id}/cancel/`, { method: "POST" });
+  return res.data;
+}
+
+// ─── Lost and damaged ────────────────────────────────────────────────────────
+
+export function listReports(params?: ReportListParams, options?: ReadOptions): Promise<LibraryPage<LostDamagedRow>> {
+  return libraryRequest(`${BASE}/lost-damaged/${query(params)}`, { method: "GET", silent401: options?.silent401 });
+}
+
+/** Repeating it for a copy that already has an open report returns that report. */
+export async function createReport(body: ReportInput): Promise<LostDamagedRow> {
+  const res = await libraryRequest<LibraryEnvelope<LostDamagedRow>>(`${BASE}/lost-damaged/`, json("POST", body));
+  return res.data;
+}
+
+/** Notes only. */
+export async function updateReportNotes(id: number, notes: string): Promise<LostDamagedRow> {
+  const res = await libraryRequest<LibraryEnvelope<LostDamagedRow>>(`${BASE}/lost-damaged/${id}/`, json("PATCH", { notes }));
+  return res.data;
+}
+
+export async function markReportFeePaid(id: number, receiptNo?: string): Promise<LostDamagedRow> {
+  const res = await libraryRequest<LibraryEnvelope<LostDamagedRow>>(
+    `${BASE}/lost-damaged/${id}/mark-fee-paid/`,
+    json("POST", receiptNo ? { receipt_no: receiptNo } : {}),
+  );
+  return res.data;
+}
+
+/** Allowed once the replacement fee is paid or waived (the screen calls it "Write off"). */
+export async function resolveReport(id: number): Promise<LostDamagedRow> {
+  const res = await libraryRequest<LibraryEnvelope<LostDamagedRow>>(`${BASE}/lost-damaged/${id}/resolve/`, { method: "POST" });
+  return res.data;
+}
+
+export async function getReportBill(id: number, options?: ReadOptions): Promise<ReportBill> {
+  const res = await libraryRequest<LibraryEnvelope<ReportBill>>(`${BASE}/lost-damaged/${id}/bill/`, {
+    method: "GET",
+    silent401: options?.silent401,
+  });
+  return res.data;
 }

@@ -1,8 +1,8 @@
 from .activity import LibraryActivityLog
 from .base import LibraryAuditModel
 from .catalogue import Book, BookCategory, BookCopy
-from .circulation import BookIssue, LibraryMember
-from .money import Charge
+from .circulation import BookIssue, Hold, LibraryMember
+from .money import Charge, LostDamagedReport
 from .settings import LibrarySettings
 
 __all__ = [
@@ -11,8 +11,10 @@ __all__ = [
     "BookCopy",
     "BookIssue",
     "Charge",
+    "Hold",
     "LibraryActivityLog",
     "LibraryAuditModel",
     "LibraryMember",
     "LibrarySettings",
+    "LostDamagedReport",
 ]

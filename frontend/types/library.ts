@@ -429,3 +429,235 @@ export interface SchoolClassOption {
   id: number;
   name: string;
 }
+
+// ─── Circulation ─────────────────────────────────────────────────────────────
+
+/** Derived by the server from the dates and status (never stored): R10. */
+export type LoanState = "open" | "due_today" | "overdue" | "returned" | "lost";
+export type LoanStatus = "issued" | "returned" | "lost";
+
+/** /issues/ row. Money is a string with two decimals. */
+export interface Loan {
+  id: number;
+  book: number;
+  book_title: string;
+  copy: number | null;
+  copy_code: string;
+  member: number;
+  member_name: string;
+  member_card_no: string;
+  member_type: MemberType;
+  school_class: string;
+  section: string;
+  issue_date: string;
+  due_date: string;
+  return_date: string | null;
+  returned_at: string | null;
+  days_overdue: number;
+  /** Fine accruing on an open overdue loan, computed on read. "0.00" once closed. */
+  accrued_fine: string;
+  /** Fine assessed at return. */
+  fine_amount: string;
+  renew_count: number;
+  renewed: boolean;
+  status: LoanStatus;
+  state: LoanState;
+}
+
+export interface LoanDetail extends Loan {
+  issued_by: number | null;
+  issued_by_name: string | null;
+  last_renewed_on: string | null;
+  charges: { id: number; charge_type: ChargeType; amount: string; status: ChargeStatus; receipt_no: string }[];
+  created_at: string;
+}
+
+export interface LoanListParams {
+  page?: number;
+  page_size?: number;
+  search?: string;
+  ordering?: string;
+  state?: LoanState;
+  member?: number;
+  book?: number;
+  copy?: number;
+  school_class?: number;
+  issued_from?: string;
+  issued_to?: string;
+}
+
+/** Why the due date is what it is: snapped to the class library period, or the flat period. */
+export interface DueNote {
+  due_date: string;
+  snapped: boolean;
+  note: string;
+}
+
+/** Give either `copy` or `book` (the first available copy is used). */
+export interface IssueInput {
+  member: number;
+  copy?: number;
+  book?: number;
+}
+
+export interface IssueResult {
+  loan: Loan;
+  due: DueNote;
+}
+
+export interface BulkIssueInput {
+  book: number;
+  school_class: number;
+  section?: number | null;
+  member_ids?: number[];
+}
+
+export type BulkSkipReason =
+  | "suspended"
+  | "limit_reached"
+  | "already_holding"
+  | "not_eligible_audience"
+  | "reference_only"
+  | "no_copy_left"
+  | "inactive";
+
+export interface BulkIssueResult {
+  issued: Loan[];
+  skipped: { member: number; reason: BulkSkipReason }[];
+}
+
+export type ReportType = "lost" | "damaged";
+
+/**
+ * What the librarian decides at the return desk. The server computes the fine and the date: never send them.
+ * `fine_action` is required when a fine is due; `waive_reason` is required to waive and needs the waive permission.
+ */
+export interface ReturnInput {
+  fine_action?: "collect" | "waive";
+  waive_reason?: string;
+  condition?: CopyCondition;
+  report?: { type: ReportType; notes?: string };
+}
+
+export interface ReturnResult {
+  loan: Loan;
+  /** The overdue-fine charge (paid or waived), or null when nothing was due. */
+  charge: LibraryCharge | null;
+  report: LostDamagedRow | null;
+  replacement_charge: LibraryCharge | null;
+  /** How many members wait for this title. Notifications are sent elsewhere. */
+  hold_queue_count: number;
+}
+
+export interface RenewResult {
+  loan: Loan;
+  due: DueNote;
+}
+
+export type HoldStatus = "waiting" | "fulfilled" | "cancelled";
+
+export interface Hold {
+  id: number;
+  book: number;
+  book_title: string;
+  member: number;
+  member_name: string;
+  card_no: string;
+  status: HoldStatus;
+  fulfilled_issue: number | null;
+  created_at: string;
+}
+
+export interface HoldListParams {
+  page?: number;
+  page_size?: number;
+  search?: string;
+  book?: number;
+  member?: number;
+  status?: HoldStatus;
+}
+
+/** Fee status is read from the replacement charge: charged is pending, none means nobody was billed. */
+export type FeeStatus = "charged" | "paid" | "waived" | "written_off" | "none";
+export type ReportResolution = "pending" | "resolved";
+
+export interface LostDamagedRow {
+  id: number;
+  book: number;
+  book_title: string;
+  copy: number;
+  copy_code: string;
+  member: number | null;
+  member_name: string;
+  card_no: string;
+  issue: number | null;
+  report_type: ReportType;
+  reported_on: string;
+  reported_by: number | null;
+  reported_by_name: string | null;
+  source: "desk_return" | "manual" | "stock_audit";
+  notes: string;
+  replacement_cost: string;
+  resolution: ReportResolution;
+  resolved_at: string | null;
+  fee_status: FeeStatus;
+  charge_id: number | null;
+  created_at: string;
+}
+
+export interface ReportInput {
+  copy: number;
+  report_type: ReportType;
+  member?: number | null;
+  issue?: number | null;
+  notes?: string;
+}
+
+export interface ReportListParams {
+  page?: number;
+  page_size?: number;
+  search?: string;
+  report_type?: ReportType;
+  resolution?: ReportResolution;
+  member?: number;
+}
+
+export interface ReportBill {
+  report_id: number;
+  report_type: ReportType;
+  reported_on: string;
+  title: string;
+  accession_code: string;
+  copy_code: string;
+  member_name: string;
+  card_no: string;
+  replacement_cost: string;
+  charge_status: ChargeStatus | "none";
+  receipt_no: string;
+  notes: string;
+}
+
+export type EligibilityReason = "ok" | BulkSkipReason;
+
+/** /members/eligible/ row: the issue-desk roster. */
+export interface EligibleMember {
+  id: number;
+  display_name: string;
+  member_type: MemberType;
+  school_class: string;
+  section: string;
+  card_no: string;
+  active_loans: number;
+  borrowing_limit: number;
+  standing: Standing;
+  eligible: boolean;
+  reason: EligibilityReason;
+}
+
+export interface EligibleMemberParams {
+  school_class?: number;
+  member_type?: MemberType;
+  book?: number;
+  page?: number;
+  page_size?: number;
+}

@@ -1,8 +1,5 @@
 """Permission codes and response shapes on the four existing resources (blueprint 3.6, D12)."""
-from datetime import date
-
 import pytest
-from django.utils import timezone
 
 from apps.library.tests.conftest import client_for, make_user
 
@@ -36,8 +33,7 @@ def test_view_only_user_cannot_write_members_or_loans(view_only_client, member, 
 
     issues = f"{BASE}/issues/"
     assert view_only_client.get(issues).status_code == 200
-    body = {"book": book.pk, "member": member.pk, "issue_date": "2026-01-01", "due_date": "2026-01-10"}
-    assert view_only_client.post(issues, body, format="json").status_code == 403
+    assert view_only_client.post(f"{issues}issue/", {"member": member.pk, "book": book.pk}, format="json").status_code == 403
 
 
 @pytest.mark.parametrize(
@@ -139,100 +135,6 @@ def test_book_category_filter_and_search(librarian_client, category, book):
     resp = librarian_client.get(f"{BASE}/books/?category={category.pk}&search=treasure")
     assert [row["title"] for row in resp.json()["results"]] == ["Treasure Island"]
     assert librarian_client.get(f"{BASE}/books/?search=nothing-like-this").json()["count"] == 0
-
-
-# ---- legacy loan endpoints ---------------------------------------------
-
-
-def available_copies(book):
-    return book.copies.filter(status="available").count()
-
-
-def issue_body(book, member):
-    return {"book": book.pk, "member": member.pk, "issue_date": "2026-01-01", "due_date": "2026-01-15", "status": "issued"}
-
-
-def test_legacy_issue_takes_a_copy_and_records_the_actor(librarian_client, librarian, book, member):
-    resp = librarian_client.post(f"{BASE}/issues/", issue_body(book, member), format="json")
-    assert resp.status_code == 201
-    data = resp.json()["data"]
-    assert data["status"] == "issued" and data["issued_by"] == librarian.pk and data["created_by"] == librarian.pk
-    assert available_copies(book) == 1
-
-
-def test_legacy_issue_refuses_when_no_copy_is_left(librarian_client, book, member):
-    book.copies.update(status="issued")
-    resp = librarian_client.post(f"{BASE}/issues/", issue_body(book, member), format="json")
-    assert resp.status_code == 400  # caught by serializer validation first
-
-
-def test_legacy_issue_stock_guard_holds_even_if_validation_was_stale(librarian_client, book, member, monkeypatch):
-    """The conditional UPDATE is the real guard: simulate a request that validated before another took the last copy."""
-    from apps.library.serializers import circulation
-
-    book.copies.update(status="issued")  # another desk took every copy after validation passed
-    monkeypatch.setattr(circulation.BookIssueSerializer, "validate", lambda self, attrs: attrs)
-    resp = librarian_client.post(f"{BASE}/issues/", issue_body(book, member), format="json")
-    assert resp.status_code == 409
-    assert resp.json()["error"]["code"] == "library_copy_unavailable"
-    assert available_copies(book) == 0
-
-
-def test_legacy_issue_cannot_be_created_closed_or_with_a_fine(librarian_client, book, member):
-    body = {**issue_body(book, member), "status": "returned", "fine_amount": "99.00", "return_date": "2026-01-02"}
-    data = librarian_client.post(f"{BASE}/issues/", body, format="json").json()["data"]
-    assert data["status"] == "issued" and data["fine_amount"] == "0.00" and data["return_date"] is None
-
-
-def test_legacy_return_ignores_client_fine_and_date_and_restocks(librarian_client, book, member):
-    issue_id = librarian_client.post(f"{BASE}/issues/", issue_body(book, member), format="json").json()["data"]["id"]
-    resp = librarian_client.post(
-        f"{BASE}/issues/{issue_id}/return/", {"fine_amount": "500.00", "return_date": "1999-01-01"}, format="json"
-    )
-    assert resp.status_code == 200
-    assert resp.json()["data"]["return_date"] == timezone.localdate().isoformat()
-    from apps.library.models import BookIssue
-
-    issue = BookIssue.objects.get(pk=issue_id)
-    assert issue.status == "returned" and str(issue.fine_amount) == "0.00"
-    assert issue.return_date != date(1999, 1, 1)
-    assert available_copies(book) == 2
-
-
-def test_legacy_return_twice_is_a_409_and_stock_is_not_double_counted(librarian_client, book, member):
-    issue_id = librarian_client.post(f"{BASE}/issues/", issue_body(book, member), format="json").json()["data"]["id"]
-    assert librarian_client.post(f"{BASE}/issues/{issue_id}/return/").status_code == 200
-    again = librarian_client.post(f"{BASE}/issues/{issue_id}/return/")
-    assert again.status_code == 409 and again.json()["error"]["code"] == "library_already_returned"
-    assert available_copies(book) == 2
-
-
-def test_return_needs_the_return_code_not_just_view(school, book, member):
-    from apps.library.models import BookIssue
-
-    issue = BookIssue.objects.create(school=school, book=book, member=member, issue_date="2026-01-01", due_date="2026-01-10")
-    viewer = client_for(make_user(school, ["library.book_issues.view"]))
-    returner = client_for(make_user(school, ["library.book_issues.return"]))
-    assert viewer.post(f"{BASE}/issues/{issue.pk}/return/").status_code == 403
-    assert returner.post(f"{BASE}/issues/{issue.pk}/return/").status_code == 200
-
-
-def test_generic_loan_mutations_are_not_offered(librarian_client, book, member):
-    issue_id = librarian_client.post(f"{BASE}/issues/", issue_body(book, member), format="json").json()["data"]["id"]
-    detail = f"{BASE}/issues/{issue_id}/"
-    assert librarian_client.patch(detail, {"status": "returned"}, format="json").status_code == 405
-    assert librarian_client.put(detail, issue_body(book, member), format="json").status_code == 405
-    assert librarian_client.delete(detail).status_code == 405
-
-
-def test_overdue_lists_only_open_past_due_loans(librarian_client, school, book, member):
-    from apps.library.models import BookIssue
-
-    late = BookIssue.objects.create(school=school, book=book, member=member, issue_date="2020-01-01", due_date="2020-01-10")
-    BookIssue.objects.create(school=school, book=book, member=member, issue_date="2020-01-01", due_date="2020-01-10", status="returned")
-    body = librarian_client.get(f"{BASE}/issues/overdue/").json()
-    assert [row["id"] for row in body["results"]] == [late.pk]
-    assert body["success"] is True
 
 
 def test_member_create_needs_a_student_and_stays_in_school(librarian_client, student):

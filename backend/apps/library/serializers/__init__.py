@@ -11,12 +11,22 @@ from .catalogue import (
     WithdrawCopySerializer,
 )
 from .circulation import (
-    BookIssueSerializer,
     MemberCreateSerializer,
     MemberDetailSerializer,
     MemberEligibleSerializer,
     MemberListSerializer,
     MemberUpdateSerializer,
+)
+from .loans import (
+    BulkIssueInputSerializer,
+    HoldCreateSerializer,
+    HoldSerializer,
+    IssueDetailSerializer,
+    IssueInputSerializer,
+    IssueRowSerializer,
+    ReportCreateSerializer,
+    ReportSerializer,
+    ReturnInputSerializer,
 )
 from .money import ChargeSerializer, WaiveChargeSerializer
 from .settings import LibrarySettingsSerializer
@@ -26,19 +36,27 @@ __all__ = [
     "BookCategorySerializer",
     "BookCopySerializer",
     "BookDetailSerializer",
-    "BookIssueSerializer",
     "BookListSerializer",
     "BookLookupSerializer",
     "BookWriteSerializer",
     "BulkImportCommitSerializer",
     "BulkImportSerializer",
+    "BulkIssueInputSerializer",
     "ChargeSerializer",
+    "HoldCreateSerializer",
+    "HoldSerializer",
+    "IssueDetailSerializer",
+    "IssueInputSerializer",
+    "IssueRowSerializer",
     "LibrarySettingsSerializer",
     "MemberCreateSerializer",
     "MemberDetailSerializer",
     "MemberEligibleSerializer",
     "MemberListSerializer",
     "MemberUpdateSerializer",
+    "ReportCreateSerializer",
+    "ReportSerializer",
+    "ReturnInputSerializer",
     "WaiveChargeSerializer",
     "WithdrawCopySerializer",
 ]

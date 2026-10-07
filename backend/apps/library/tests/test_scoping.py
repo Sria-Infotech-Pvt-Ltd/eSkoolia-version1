@@ -81,12 +81,10 @@ def test_cross_school_fk_is_rejected_on_create(librarian_client, other_category,
     assert "category" in resp.json()["field_errors"]
 
     resp = librarian_client.post(
-        url("issues"),
-        {"book": other_book.pk, "member": other_member.pk, "issue_date": "2026-01-01", "due_date": "2026-01-10"},
-        format="json",
+        f"{url('issues')}issue/", {"member": other_member.pk, "copy": other_book.copies.first().pk}, format="json"
     )
     assert resp.status_code == 400
-    assert {"book", "member"} & set(resp.json()["field_errors"])
+    assert {"member", "copy"} <= set(resp.json()["field_errors"])
 
 
 def test_school_is_never_taken_from_the_payload(librarian_client, librarian, other_school):
