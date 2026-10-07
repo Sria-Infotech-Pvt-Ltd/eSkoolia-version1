@@ -82,20 +82,25 @@ def other_admin(other_school):
     )
 
 
+def make_book(school, category, title="Treasure Island", author="R. L. Stevenson", copies=2, **extra):
+    """A title with `copies` available copies, created through the accession service."""
+    from apps.library.services.accession import create_book_with_copies
+
+    data = {"category": category, "title": title, "author": author, **extra}
+    book, _ = create_book_with_copies(school, None, data, copies)
+    return book
+
+
 @pytest.fixture
 def category(school):
     from apps.library.models import BookCategory
 
-    return BookCategory.objects.create(school=school, name="Fiction")
+    return BookCategory.objects.create(school=school, name="Fiction", code="FIC")
 
 
 @pytest.fixture
 def book(school, category):
-    from apps.library.models import Book
-
-    return Book.objects.create(
-        school=school, category=category, title="Treasure Island", author="R. L. Stevenson", quantity=2, available_quantity=2
-    )
+    return make_book(school, category)
 
 
 @pytest.fixture
@@ -109,16 +114,12 @@ def member(school):
 def other_category(other_school):
     from apps.library.models import BookCategory
 
-    return BookCategory.objects.create(school=other_school, name="Fiction")
+    return BookCategory.objects.create(school=other_school, name="Fiction", code="FIC")
 
 
 @pytest.fixture
 def other_book(other_school, other_category):
-    from apps.library.models import Book
-
-    return Book.objects.create(
-        school=other_school, category=other_category, title="Kidnapped", author="R. L. Stevenson", quantity=1, available_quantity=1
-    )
+    return make_book(other_school, other_category, title="Kidnapped", copies=1)
 
 
 @pytest.fixture

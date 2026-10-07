@@ -36,7 +36,7 @@ def test_unknown_reference_is_rejected(school, admin_user):
 def test_reference_from_another_school_is_rejected(school, admin_user, other_book):
     with pytest.raises(ValueError):
         log_event(school, admin_user, "issue", "x", book=other_book)
-    assert LibraryActivityLog.objects.count() == 0
+    assert LibraryActivityLog.objects.filter(school=school).count() == 0
 
 
 def test_summary_is_truncated_to_the_column_width(school, admin_user):

@@ -3,6 +3,7 @@ from rest_framework.routers import DefaultRouter
 
 from .views import (
     BookCategoryViewSet,
+    BookCopyViewSet,
     BookIssueViewSet,
     BookViewSet,
     LibraryMemberViewSet,
@@ -12,6 +13,7 @@ from .views import (
 router = DefaultRouter()
 router.register("categories", BookCategoryViewSet, basename="library-category")
 router.register("books", BookViewSet, basename="library-book")
+router.register("copies", BookCopyViewSet, basename="library-copy")
 router.register("members", LibraryMemberViewSet, basename="library-member")
 router.register("issues", BookIssueViewSet, basename="library-issue")
 

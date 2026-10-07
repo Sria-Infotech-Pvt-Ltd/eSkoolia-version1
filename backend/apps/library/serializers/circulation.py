@@ -1,6 +1,6 @@
 from rest_framework import serializers
 
-from apps.library.models import BookIssue, LibraryMember
+from apps.library.models import BookCopy, BookIssue, LibraryMember
 
 from .base import AUDIT_FIELDS, AUDIT_READ_ONLY, LibraryModelSerializer
 
@@ -75,7 +75,7 @@ class BookIssueSerializer(LibraryModelSerializer):
         if school_id and member and member.school_id != school_id:
             raise serializers.ValidationError({"member": "Selected member does not belong to your school."})
 
-        if book and book.available_quantity <= 0:
+        if book and not book.copies.filter(status=BookCopy.STATUS_AVAILABLE).exists():
             raise serializers.ValidationError({"book": "No available copies for this book."})
 
         return attrs

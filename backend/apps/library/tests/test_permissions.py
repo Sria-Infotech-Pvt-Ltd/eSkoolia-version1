@@ -144,40 +144,38 @@ def test_book_category_filter_and_search(librarian_client, category, book):
 # ---- legacy loan endpoints ---------------------------------------------
 
 
+def available_copies(book):
+    return book.copies.filter(status="available").count()
+
+
 def issue_body(book, member):
     return {"book": book.pk, "member": member.pk, "issue_date": "2026-01-01", "due_date": "2026-01-15", "status": "issued"}
 
 
-def test_legacy_issue_decrements_stock_and_records_the_actor(librarian_client, librarian, book, member):
+def test_legacy_issue_takes_a_copy_and_records_the_actor(librarian_client, librarian, book, member):
     resp = librarian_client.post(f"{BASE}/issues/", issue_body(book, member), format="json")
     assert resp.status_code == 201
     data = resp.json()["data"]
     assert data["status"] == "issued" and data["issued_by"] == librarian.pk and data["created_by"] == librarian.pk
-    book.refresh_from_db()
-    assert book.available_quantity == 1
+    assert available_copies(book) == 1
 
 
 def test_legacy_issue_refuses_when_no_copy_is_left(librarian_client, book, member):
-    book.available_quantity = 0
-    book.save(update_fields=["available_quantity"])
+    book.copies.update(status="issued")
     resp = librarian_client.post(f"{BASE}/issues/", issue_body(book, member), format="json")
     assert resp.status_code == 400  # caught by serializer validation first
 
 
 def test_legacy_issue_stock_guard_holds_even_if_validation_was_stale(librarian_client, book, member, monkeypatch):
     """The conditional UPDATE is the real guard: simulate a request that validated before another took the last copy."""
-    from apps.library.models import Book
     from apps.library.serializers import circulation
 
-    Book.objects.filter(pk=book.pk).update(available_quantity=0)
-    stale = Book.objects.get(pk=book.pk)
-    stale.available_quantity = 1  # what the stale request saw
-    monkeypatch.setattr(circulation.BookIssueSerializer, "validate", lambda self, attrs: {**attrs, "book": stale})
+    book.copies.update(status="issued")  # another desk took every copy after validation passed
+    monkeypatch.setattr(circulation.BookIssueSerializer, "validate", lambda self, attrs: attrs)
     resp = librarian_client.post(f"{BASE}/issues/", issue_body(book, member), format="json")
     assert resp.status_code == 409
     assert resp.json()["error"]["code"] == "library_copy_unavailable"
-    book.refresh_from_db()
-    assert book.available_quantity == 0
+    assert available_copies(book) == 0
 
 
 def test_legacy_issue_cannot_be_created_closed_or_with_a_fine(librarian_client, book, member):
@@ -198,8 +196,7 @@ def test_legacy_return_ignores_client_fine_and_date_and_restocks(librarian_clien
     issue = BookIssue.objects.get(pk=issue_id)
     assert issue.status == "returned" and str(issue.fine_amount) == "0.00"
     assert issue.return_date != date(1999, 1, 1)
-    book.refresh_from_db()
-    assert book.available_quantity == 2
+    assert available_copies(book) == 2
 
 
 def test_legacy_return_twice_is_a_409_and_stock_is_not_double_counted(librarian_client, book, member):
@@ -207,8 +204,7 @@ def test_legacy_return_twice_is_a_409_and_stock_is_not_double_counted(librarian_
     assert librarian_client.post(f"{BASE}/issues/{issue_id}/return/").status_code == 200
     again = librarian_client.post(f"{BASE}/issues/{issue_id}/return/")
     assert again.status_code == 409 and again.json()["error"]["code"] == "library_already_returned"
-    book.refresh_from_db()
-    assert book.available_quantity == 2
+    assert available_copies(book) == 2
 
 
 def test_return_needs_the_return_code_not_just_view(school, book, member):

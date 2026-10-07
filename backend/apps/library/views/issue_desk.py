@@ -1,11 +1,10 @@
 from django.db import transaction
-from django.db.models import F
 from django.utils import timezone
 from rest_framework.decorators import action
 from rest_framework.response import Response
 
 from apps.library.exceptions import LibraryAlreadyReturned, LibraryCopyUnavailable
-from apps.library.models import Book, BookIssue
+from apps.library.models import BookCopy, BookIssue
 from apps.library.serializers import BookIssueSerializer
 
 from .base import LibraryViewSet
@@ -17,7 +16,8 @@ class BookIssueViewSet(LibraryViewSet):
     Kept working for the existing Book Issues page: list, retrieve, create
     (guarded by ``book_issues.issue``), ``return`` (``book_issues.return``) and
     ``overdue``. Generic PUT, PATCH and DELETE are not offered: no permission
-    code exists for them and they adjusted stock without any check.
+    code exists for them and they adjusted stock without any check. Stock moves on
+    copy rows; the deprecated quantity columns are never written.
     """
 
     model = BookIssue
@@ -40,13 +40,20 @@ class BookIssueViewSet(LibraryViewSet):
     def perform_create(self, serializer):
         user = self.request.user
         school = self.get_school_or_deny()
-        # The conditional UPDATE is the stock check: two requests for the last
-        # copy cannot both pass it.
-        taken = Book.objects.filter(
-            pk=serializer.validated_data["book"].pk, school=school, available_quantity__gt=0
-        ).update(available_quantity=F("available_quantity") - 1)
-        if not taken:
+        # Locking the copy row is the stock check: two requests for the last
+        # copy cannot both take it. LEGACY: the loan is not linked to the copy
+        # (prompt 5 adds that), so a return frees any issued copy of the title.
+        copy = (
+            BookCopy.objects.select_for_update()
+            .filter(book=serializer.validated_data["book"], school=school, status=BookCopy.STATUS_AVAILABLE)
+            .order_by("id")
+            .first()
+        )
+        if copy is None:
             raise LibraryCopyUnavailable("No available copies for this book.")
+        copy.status = BookCopy.STATUS_ISSUED
+        copy.updated_by = user
+        copy.save(update_fields=["status", "updated_by", "updated_at"])
         serializer.save(
             school=school, issued_by=user, created_by=user, updated_by=user, status=BookIssue.STATUS_ISSUED
         )
@@ -65,7 +72,16 @@ class BookIssueViewSet(LibraryViewSet):
         )
         if not closed:
             raise LibraryAlreadyReturned()
-        Book.objects.filter(pk=issue.book_id).update(available_quantity=F("available_quantity") + 1)
+        copy = (
+            BookCopy.objects.select_for_update()
+            .filter(book_id=issue.book_id, school=issue.school_id, status=BookCopy.STATUS_ISSUED)
+            .order_by("id")
+            .first()
+        )
+        if copy is not None:
+            copy.status = BookCopy.STATUS_AVAILABLE
+            copy.updated_by = request.user
+            copy.save(update_fields=["status", "updated_by", "updated_at"])
         issue.refresh_from_db()
         return Response(
             {

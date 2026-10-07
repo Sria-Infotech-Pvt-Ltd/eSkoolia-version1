@@ -5,8 +5,6 @@ from .base import LibraryAuditModel
 
 class LibraryActivityLog(LibraryAuditModel):
     """Immutable feed of library events. Written only through services.activity.log_event.
-
-    The `copy` link arrives with the BookCopy model in the catalogue slice.
     """
 
     EVENT_ACCESSION = "accession"
@@ -51,6 +49,7 @@ class LibraryActivityLog(LibraryAuditModel):
     event_type = models.CharField(max_length=16, choices=EVENT_CHOICES)
     summary = models.CharField(max_length=500)
     book = models.ForeignKey("library.Book", on_delete=models.SET_NULL, null=True, blank=True, related_name="+")
+    copy = models.ForeignKey("library.BookCopy", on_delete=models.SET_NULL, null=True, blank=True, related_name="+")
     member = models.ForeignKey("library.LibraryMember", on_delete=models.SET_NULL, null=True, blank=True, related_name="+")
     issue = models.ForeignKey("library.BookIssue", on_delete=models.SET_NULL, null=True, blank=True, related_name="+")
     metadata = models.JSONField(default=dict, blank=True)

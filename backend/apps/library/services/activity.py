@@ -2,7 +2,7 @@ from apps.library.models import LibraryActivityLog
 
 VALID_EVENT_TYPES = frozenset(value for value, _label in LibraryActivityLog.EVENT_CHOICES)
 SUMMARY_MAX_LENGTH = LibraryActivityLog._meta.get_field("summary").max_length
-_REF_MODEL_FIELDS = ("book", "member", "issue")
+_REF_MODEL_FIELDS = ("book", "copy", "member", "issue")
 
 
 def log_event(school, actor, event_type, summary, **refs):
@@ -11,7 +11,7 @@ def log_event(school, actor, event_type, summary, **refs):
     Call it inside the same ``transaction.atomic()`` as the action it records so
     a log row exists if and only if the action committed (blueprint 3.1).
 
-    ``refs`` accepts ``book``, ``member`` and ``issue`` model instances (each must
+    ``refs`` accepts ``book``, ``copy``, ``member`` and ``issue`` model instances (each must
     belong to ``school``) and ``metadata``, a dict of ids and amounts only. The
     summary may name a member but must never carry a phone, email or address.
     """

@@ -1,7 +1,9 @@
 from rest_framework import status
+from rest_framework.exceptions import MethodNotAllowed
 from rest_framework.response import Response
 
 from apps.core.exceptions import PermissionDenied
+from apps.core.portal_scoping import scope_to_school
 from apps.core.viewsets import PaginatedModelViewSet
 
 
@@ -39,6 +41,8 @@ class LibraryViewSet(PaginatedModelViewSet):
 
     permission_codes = {}
     select_related_fields = ()
+    # Actions the router exposes but the resource does not offer: 405, not 403.
+    disabled_actions = ()
     action_aliases = {"partial_update": "update", "summary": "list"}
 
     # -- permissions ------------------------------------------------------
@@ -57,17 +61,29 @@ class LibraryViewSet(PaginatedModelViewSet):
         super().check_permissions(request)
         if request.method.lower() not in self.http_method_names:
             return  # dispatch() answers 405 and runs no handler, so there is nothing to guard
+        if getattr(self, "action", None) in self.disabled_actions:
+            raise MethodNotAllowed(request.method)
         code = self.get_required_permission_code()
         if not code or not request.user.has_permission_code(code):
             raise PermissionDenied("You do not have permission to perform this action.")
 
     # -- queryset ---------------------------------------------------------
 
+    def annotate_queryset(self, queryset):
+        """Hook for subclasses: add annotations before ordering and filter backends run."""
+        return queryset
+
     def get_queryset(self):
-        queryset = super().get_queryset()
+        # Not PaginatedModelViewSet.get_queryset: it orders (and searches) before
+        # annotations exist. Search and ?ordering= are done by the DRF filter
+        # backends after this runs, so they may use annotated names.
+        if not self.model:
+            raise ValueError(f"{self.__class__.__name__} must define 'model'")
+        queryset = scope_to_school(self.model.objects.all(), self.model, self.request.user)
+        queryset = self.annotate_queryset(queryset)
         if self.select_related_fields:
             queryset = queryset.select_related(*self.select_related_fields)
-        return queryset
+        return queryset.order_by(*self.default_ordering)
 
     def filter_queryset(self, queryset):
         # Skip PaginatedModelViewSet.filter_queryset (see class docstring).
@@ -102,14 +118,16 @@ class LibraryViewSet(PaginatedModelViewSet):
     def list(self, request, *args, **kwargs):
         return self.list_response(self.filter_queryset(self.get_queryset()))
 
-    def list_response(self, queryset):
+    def list_response(self, queryset, serializer_class=None):
         """Paginate ``queryset`` and wrap it in the list envelope (also used by list-style actions)."""
+        serializer_class = serializer_class or self.get_serializer_class()
+        context = self.get_serializer_context()
         page = self.paginate_queryset(queryset)
         if page is not None:
-            payload = dict(self.get_paginated_response(self.get_serializer(page, many=True).data).data)
+            payload = dict(self.get_paginated_response(serializer_class(page, many=True, context=context).data).data)
             rows = payload["results"]
         else:
-            rows = self.get_serializer(queryset, many=True).data
+            rows = serializer_class(queryset, many=True, context=context).data
             payload = {"count": len(rows), "next": None, "previous": None, "results": rows}
         payload.update({"success": True, "message": "Data retrieved successfully", "data": rows})
         return Response(payload, status=status.HTTP_200_OK)

@@ -8,8 +8,20 @@
  */
 import { apiRequestWithRefresh, type RequestOptions } from "@/lib/api-auth";
 import type {
+  AddCopiesInput,
+  AddCopiesResult,
+  Book,
+  BookCategory,
+  BookCategoryInput,
+  BookCopy,
+  BookDetail,
+  BookInput,
+  BookListParams,
+  BookLookupRow,
+  CopyListParams,
   LibraryEnvelope,
   LibraryErrorBody,
+  LibraryPage,
   LibrarySettings,
   LibrarySettingsInput,
 } from "@/types/library";
@@ -91,5 +103,134 @@ export async function updateLibrarySettings(body: LibrarySettingsInput): Promise
     method: "PUT",
     body: JSON.stringify(body),
   });
+  return res.data;
+}
+
+// ─── Shared helpers ──────────────────────────────────────────────────────────
+
+function query(params?: object): string {
+  const search = new URLSearchParams();
+  for (const [key, value] of Object.entries(params ?? {})) {
+    if (value !== undefined && value !== null && value !== "") search.set(key, String(value));
+  }
+  const text = search.toString();
+  return text ? `?${text}` : "";
+}
+
+function json(method: "POST" | "PATCH", body: unknown): RequestOptions {
+  return { method, body: JSON.stringify(body) };
+}
+
+type ReadOptions = { silent401?: boolean };
+
+// ─── Categories ──────────────────────────────────────────────────────────────
+
+export function listBookCategories(
+  params?: { page?: number; page_size?: number; search?: string; is_active?: boolean; ordering?: string },
+  options?: ReadOptions,
+): Promise<LibraryPage<BookCategory>> {
+  return libraryRequest(`${BASE}/categories/${query(params)}`, { method: "GET", silent401: options?.silent401 });
+}
+
+export async function createBookCategory(body: BookCategoryInput): Promise<BookCategory> {
+  const res = await libraryRequest<LibraryEnvelope<BookCategory>>(`${BASE}/categories/`, json("POST", body));
+  return res.data;
+}
+
+export async function updateBookCategory(id: number, body: BookCategoryInput): Promise<BookCategory> {
+  const res = await libraryRequest<LibraryEnvelope<BookCategory>>(`${BASE}/categories/${id}/`, json("PATCH", body));
+  return res.data;
+}
+
+/** Refused with code `library_has_history` while the category has titles. */
+export async function deleteBookCategory(id: number): Promise<void> {
+  await libraryRequest<void>(`${BASE}/categories/${id}/`, { method: "DELETE" });
+}
+
+// ─── Books (titles) ──────────────────────────────────────────────────────────
+
+export function listBooks(params?: BookListParams, options?: ReadOptions): Promise<LibraryPage<Book>> {
+  return libraryRequest(`${BASE}/books/${query(params)}`, { method: "GET", silent401: options?.silent401 });
+}
+
+export async function getBook(id: number, options?: ReadOptions): Promise<BookDetail> {
+  const res = await libraryRequest<LibraryEnvelope<BookDetail>>(`${BASE}/books/${id}/`, {
+    method: "GET",
+    silent401: options?.silent401,
+  });
+  return res.data;
+}
+
+/** One accession: creates the title and `copies_count` copies. Returns the title with its copy codes. */
+export async function createBook(body: BookInput): Promise<BookDetail> {
+  const res = await libraryRequest<LibraryEnvelope<BookDetail>>(`${BASE}/books/`, json("POST", body));
+  return res.data;
+}
+
+/** Any wizard field except the accession code. Never changes the number of copies; use addCopies or withdrawCopy. */
+export async function updateBook(
+  id: number,
+  body: Partial<Omit<BookInput, "copies_count" | "condition">>,
+): Promise<BookDetail> {
+  const res = await libraryRequest<LibraryEnvelope<BookDetail>>(`${BASE}/books/${id}/`, json("PATCH", body));
+  return res.data;
+}
+
+/** Refused with code `library_has_history` when the title has copies or loans. */
+export async function deleteBook(id: number): Promise<void> {
+  await libraryRequest<void>(`${BASE}/books/${id}/`, { method: "DELETE" });
+}
+
+export function addCopies(id: number, body: AddCopiesInput): Promise<AddCopiesResult> {
+  return libraryRequest(`${BASE}/books/${id}/add-copies/`, json("POST", body));
+}
+
+/** Issue-desk search over title, author, accession code and copy code. At most 10 rows. */
+export async function lookupBooks(q: string, limit = 10, options?: ReadOptions): Promise<BookLookupRow[]> {
+  const res = await libraryRequest<LibraryPage<BookLookupRow>>(`${BASE}/books/lookup/${query({ q, limit })}`, {
+    method: "GET",
+    silent401: options?.silent401,
+  });
+  return res.results;
+}
+
+// ─── Copies ──────────────────────────────────────────────────────────────────
+
+export function listBookCopies(
+  bookId: number,
+  params?: { page?: number; page_size?: number },
+  options?: ReadOptions,
+): Promise<LibraryPage<BookCopy>> {
+  return libraryRequest(`${BASE}/books/${bookId}/copies/${query(params)}`, {
+    method: "GET",
+    silent401: options?.silent401,
+  });
+}
+
+export function listCopies(params?: CopyListParams, options?: ReadOptions): Promise<LibraryPage<BookCopy>> {
+  return libraryRequest(`${BASE}/copies/${query(params)}`, { method: "GET", silent401: options?.silent401 });
+}
+
+/** Scanner lookup by exact copy code (case-insensitive). The code contains a slash and is sent as is. */
+export async function getCopyByCode(code: string, options?: ReadOptions): Promise<BookCopy> {
+  const res = await libraryRequest<LibraryEnvelope<BookCopy>>(`${BASE}/copies/by-code/${encodeURI(code)}/`, {
+    method: "GET",
+    silent401: options?.silent401,
+  });
+  return res.data;
+}
+
+/** Only the condition can be edited. */
+export async function updateCopy(id: number, body: Pick<BookCopy, "condition">): Promise<BookCopy> {
+  const res = await libraryRequest<LibraryEnvelope<BookCopy>>(`${BASE}/copies/${id}/`, json("PATCH", body));
+  return res.data;
+}
+
+/** Allowed only while the copy is available; otherwise code `library_invalid_state_transition`. */
+export async function withdrawCopy(id: number, reason: string): Promise<BookCopy> {
+  const res = await libraryRequest<LibraryEnvelope<BookCopy>>(
+    `${BASE}/copies/${id}/withdraw/`,
+    json("POST", { reason }),
+  );
   return res.data;
 }
