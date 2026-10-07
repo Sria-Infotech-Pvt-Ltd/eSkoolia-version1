@@ -12,6 +12,8 @@ import type {
   AddCopiesResult,
   BulkIssueInput,
   BulkIssueResult,
+  DeskLog,
+  DeskLogEntry,
   EligibleMember,
   EligibleMemberParams,
   Hold,
@@ -153,7 +155,7 @@ function json(method: "POST" | "PATCH" | "PUT", body: unknown): RequestOptions {
   return { method, body: JSON.stringify(body) };
 }
 
-type ReadOptions = { silent401?: boolean };
+type ReadOptions = { silent401?: boolean; signal?: AbortSignal };
 
 // ─── Categories ──────────────────────────────────────────────────────────────
 
@@ -222,6 +224,7 @@ export async function lookupBooks(q: string, limit = 10, options?: ReadOptions):
   const res = await libraryRequest<LibraryPage<BookLookupRow>>(`${BASE}/books/lookup/${query({ q, limit })}`, {
     method: "GET",
     silent401: options?.silent401,
+    signal: options?.signal,
   });
   return res.results;
 }
@@ -415,11 +418,21 @@ export function listOverdue(
   return libraryRequest(`${BASE}/issues/overdue/${query(params)}`, { method: "GET", silent401: options?.silent401 });
 }
 
+/** Today's issue, return and renewal events, newest first (at most 100), with a count per type. */
+export async function getDeskLog(options?: ReadOptions): Promise<DeskLog> {
+  const res = await libraryRequest<LibraryPage<DeskLogEntry> & { counts: DeskLog["counts"] }>(`${BASE}/issues/desk-log/`, {
+    method: "GET",
+    silent401: options?.silent401,
+  });
+  return { count: res.count, counts: res.counts, results: res.results };
+}
+
 /** Return and renew tabs: open loans by copy code (exact match first), title, borrower or card. At most 10 rows. */
 export async function lookupOpenLoans(q: string, options?: ReadOptions): Promise<Loan[]> {
   const res = await libraryRequest<LibraryPage<Loan>>(`${BASE}/issues/open/lookup/${query({ q })}`, {
     method: "GET",
     silent401: options?.silent401,
+    signal: options?.signal,
   });
   return res.results;
 }
@@ -458,7 +471,11 @@ export async function renewLoan(id: number): Promise<RenewResult> {
 
 /** The issue-desk roster of a class (or member type): each member with `eligible` and a reason code. */
 export function listEligibleMembers(params: EligibleMemberParams, options?: ReadOptions): Promise<LibraryPage<EligibleMember>> {
-  return libraryRequest(`${BASE}/members/eligible/${query(params)}`, { method: "GET", silent401: options?.silent401 });
+  return libraryRequest(`${BASE}/members/eligible/${query(params)}`, {
+    method: "GET",
+    silent401: options?.silent401,
+    signal: options?.signal,
+  });
 }
 
 // ─── Holds ───────────────────────────────────────────────────────────────────

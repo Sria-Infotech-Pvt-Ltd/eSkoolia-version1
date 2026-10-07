@@ -19,6 +19,7 @@ from .circulation import (
 )
 from .loans import (
     BulkIssueInputSerializer,
+    DeskLogSerializer,
     HoldCreateSerializer,
     HoldSerializer,
     IssueDetailSerializer,
@@ -43,6 +44,7 @@ __all__ = [
     "BulkImportSerializer",
     "BulkIssueInputSerializer",
     "ChargeSerializer",
+    "DeskLogSerializer",
     "HoldCreateSerializer",
     "HoldSerializer",
     "IssueDetailSerializer",

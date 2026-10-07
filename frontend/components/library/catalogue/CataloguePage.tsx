@@ -10,6 +10,7 @@ import { BulkImportModal } from "./BulkImportModal";
 import { CategoriesModal } from "./CategoriesModal";
 import { colorVar } from "./colors";
 import { CopiesRegisterModal } from "./CopiesRegisterModal";
+import { ReserveModal } from "../issue-desk/ReserveModal";
 import { LabelPrintView } from "./LabelPrintView";
 import { ScannerSetupPanel } from "./ScannerSetupPanel";
 import { Btn, describeError, Dot, inputStyle, Pill, SkeletonRows, StateBox, tdStyle, thStyle, useToast } from "./ui";
@@ -66,6 +67,7 @@ export function CataloguePage() {
   const [showScanner, setShowScanner] = useState(false);
   const [copiesFor, setCopiesFor] = useState<Book | null>(null);
   const [labelsFor, setLabelsFor] = useState<{ bookId: number; copyId?: number } | null>(null);
+  const [reserveFor, setReserveFor] = useState<Book | null>(null);
   const { show, node: toastNode } = useToast();
   const latest = useRef(0);
 
@@ -285,6 +287,11 @@ export function CataloguePage() {
                             Labels
                           </Btn>
                         ) : null}
+                        {can("library.holds.create") && !book.is_reference_only ? (
+                          <Btn small variant="ghost" onClick={() => setReserveFor(book)}>
+                            Reserve
+                          </Btn>
+                        ) : null}
                       </td>
                     </tr>
                   );
@@ -361,6 +368,7 @@ export function CataloguePage() {
           notify={show}
         />
       ) : null}
+      {reserveFor ? <ReserveModal book={reserveFor} can={can} notify={show} onClose={() => setReserveFor(null)} /> : null}
       {labelsFor ? <LabelPrintView bookId={labelsFor.bookId} copyId={labelsFor.copyId} onClose={() => setLabelsFor(null)} /> : null}
       {toastNode}
     </Shell>

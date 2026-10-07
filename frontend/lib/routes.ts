@@ -290,8 +290,9 @@ export const MODULES: ModuleRoute[] = [
     permission: 'library',
     sub: [
       { label: 'Catalogue', path: '/library/catalogue', icon: BookOpen },
+      { label: 'Issue Desk', path: '/library/issue-desk', icon: BookmarkCheck, permission: 'library.book_issues.view' },
+      { label: 'Lost and Damaged', path: '/library/lost-damaged', icon: AlertTriangle, permission: 'library.lost_damaged.view' },
       { label: 'Library Members', path: '/library/members', icon: Users },
-      { label: 'Book Issues', path: '/library/issues', icon: BookmarkCheck },
       { label: 'Settings', path: '/library/settings', icon: Settings, permission: 'library.settings.view' },
     ],
   },

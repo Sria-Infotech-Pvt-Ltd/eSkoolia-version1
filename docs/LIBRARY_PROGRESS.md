@@ -59,7 +59,7 @@ plus the untracked library planning documents, staged in prompt 1.
 | 3 | Catalogue frontend and bulk tools | Done (2026-10-07). 221 backend tests pass (1 Postgres-only skipped), 18 Jest tests pass. tsc and lint show only the baseline errors from other modules. Browser behaviour not checked by me. |
 | 4 | Members, charges and settings | Done (2026-10-07). 296 backend tests pass (1 Postgres-only skipped), 29 Jest tests pass. tsc and lint show only the baseline errors from other modules. Screens not checked in a browser. |
 | 5 | Circulation backend | Done (2026-10-07). 424 backend tests pass, 2 Postgres-only tests skipped and UNVERIFIED (last-copy race, concurrent accession). tsc has no library errors. The legacy Issues page no longer works until prompt 6. |
-| 6 | Issue Desk and exceptions screens | Not started |
+| 6 | Issue Desk and exceptions screens | Done (2026-10-07). 436 backend tests pass (2 Postgres-only skipped, unverified), 44 Jest tests pass. tsc and lint show only the baseline errors. Nothing was checked in a browser. |
 | 7 | Console, reminders and push | Not started |
 | 8 | Acquisitions and requests | Not started |
 | 9 | Periods, occupancy and stock check | Not started |
@@ -109,6 +109,16 @@ plus the untracked library planning documents, staged in prompt 1.
 - `library_reconcile` now also lists loan and copy state that disagree.
 - Frontend: types and hook functions for every endpoint above (`listLoans`, `issueBook`, `bulkIssue`, `returnLoan`, `undoReturn`, `renewLoan`, `lookupOpenLoans`, `listEligibleMembers`, `listHolds`, `placeHold`, `cancelHold`, `listReports`, `createReport`, `updateReportNotes`, `markReportFeePaid`, `resolveReport`, `getReportBill`, and more). No screens.
 - Test helpers added: `make_member`, `make_staff` (conftest). Test files: `test_circulation.py`, `test_holds_reports.py`, `test_issue_desk_api.py`.
+
+## What prompt 6 built (for the next prompt)
+
+- Backend: `GET issues/desk-log/` (today's issue, return, renewal, lost and damaged events, newest first, at most 100, with a count per type, school scoped, `library.book_issues.view`), and `undo_expires_at` on the return response.
+- Frontend `/library/issue-desk` (`components/library/issue-desk/`): `IssueDeskPage` (tabs shown by `can()`), `IssueTab`, `ReturnTab`, `RenewTab`, `DeskLog`, `HoldsPanel`, `UndoToast`, `OverdueNotice`, `ReserveModal`, shared `DeskSearch`, `useSuggest` (debounce 200 ms, aborts the request in flight, drops late answers), and the tested helpers in `deskHelpers.ts`.
+- Frontend `/library/lost-damaged` (`components/library/lost-damaged/`): table with inline notes, Mark fee paid, Resolve, Bill print view, and a Report a copy modal.
+- Catalogue rows have a Reserve action (`library.holds.create`) opening `ReserveModal`.
+- `/library/issues` is a redirect to `/library/issue-desk`. `lib/routes.ts` sub items are now Catalogue, Issue Desk, Lost and Damaged, Library Members, Settings. `ModuleSubNav.tsx` shows a pending count on Lost and Damaged (hook `hooks/useLostDamagedPending.ts`, no request outside the Library module).
+- `LibraryPanels.tsx` is no longer routed from anywhere. Prompt 13 deletes it.
+- Jest: `__tests__/library/desk.test.ts` (due-date notes, block reasons, refusal messages, undo countdown, return choices, scan detection, renew pre-checks).
 
 ## Decisions made
 
@@ -163,6 +173,16 @@ plus the untracked library planning documents, staged in prompt 1.
 49. **Loan list rows** compute `state`, `days_overdue` and `accrued_fine` in one pass from the dates (no per-row queries); `state` is one of open, due_today, overdue, returned, lost. `renewed` is `renew_count > 0`.
 50. **`receipt_no`** on collect and mark-fee-paid is optional: given, it is stored (max 40 characters); omitted, a `LIBR-` number is generated.
 51. **Migrations 0009 to 0011** follow the split used before: schema, a data step that binds loans, then the constraints that existing data could break (`0011`). `0010` binds each open loan to an issued copy of its title (else an available one, else a new copy) and each lost loan to a lost copy, and stops with the loan ids if any loan has a due or return date before its issue date.
+52. **(Prompt 6) The desk log includes lost and damaged events**, not only issue, return and renewal, because a return filed with a lost or damaged report logs one of those instead of a return and would otherwise vanish from Today at the Desk. An undone return shows as a return row (its summary says it was undone). "Today" is the server's local date.
+53. **`undo_expires_at` is null when a report was filed**, because the copy is then lost or damaged and the server would refuse the undo. The undo toast lives on the page, not the Return tab, so it survives switching tabs. It counts down to the server's deadline and calls `undo-return`; when the server refuses it the reason is shown.
+54. **Block reasons.** The roster shows each member's reason code; a blocked member can still be selected so the librarian can read why. The amount owed for a suspended member comes from `members/{id}/dues/` (needs `library_members.view`; without it the text omits the amount). Refusals from the server (`library_member_suspended` with `amount_due`, limit, copy taken elsewhere, and so on) are turned into specific sentences by `refusalMessage`.
+55. **No due-date preview.** The server decides the due date when the loan is created, so the confirmation card shows the computed date and its note after issuing, not before.
+56. **Return tab behaviour.** A plain return when nothing is due; "Collect X and return" when a fine is due; "Waive and return" only for users with `library.book_issues.waive_fine`, which first reveals a required reason box. A lost copy sends no fine action (the replacement fee covers it). A damaged copy still takes the fine action. Condition is only sent for a normal return.
+57. **Renew tab** shows the renewal count (and the cap when the user can read settings), disables the button for an overdue or closed loan with the reason, and shows the server's exact refusal for a cap or a waiting hold.
+58. **Holds in the desk.** When the selected title has no copy available, the Issue tab shows the waiting list and a Reserve button for the picked member. The catalogue Reserve action allows holds on titles that still have copies (a member who wants one set aside).
+59. **Report a copy** (Lost and Damaged page) bills nobody, because it has no borrower; a borrower is billed by returning their loan with a lost or damaged report on the Return tab. The Resolve button is labelled Resolve (the prototype said Write off) and shows when the fee is settled or absent; Mark fee paid shows while the fee is charged.
+60. **Print views** (overdue notice, replacement bill) use `useDocumentBranding` for the school header image only; the hook needs a document type, so `student_verification` is passed and its declaration text is ignored. They print through CSS `@media print` rules, with no new dependency.
+61. **Suggestion lookups** (`books/lookup/`, `issues/open/lookup/`, member search, the roster) pass an `AbortSignal` and `silent401`. Actions (issue, return, renew, save) use the default so a dead session redirects.
 
 ## Migrations to apply
 
@@ -193,7 +213,10 @@ After migrating, in this order: `seed_permissions`, `seed_module_tiers`, `seed_r
 - **Roles that held library `.view` codes could previously write.** After the split they can only read. Run `library_role_report` on each environment and grant the new codes where the write access was intended.
 - **Shared tier-seeding defect.** `seed_module_tiers.classify()` misclassifies dot-style codes for other modules too. Only the library has an explicit map now. Report to the owner of the other modules.
 - **`TENANT_FEATURE_GATES` does not exist** in any settings module (the middleware reads it with `getattr(..., {})` and defaults to empty), so the three v1 patterns from blueprint fact 8 were not added. Adding the setting would live in `config/settings/base.py`, which prompt 1 may not edit. The frontend gate `hasFeature('library_enabled')` is not wired yet.
-- **The legacy Issues page is broken on purpose.** `LibraryPanels.tsx` still posts to the removed generic `POST /issues/` and to the old return body, so issuing and returning from that page fail with a 405 or a validation error until prompt 6 replaces it. Reading the list still works.
+- **The old Issues page is gone.** `/library/issues` redirects to the new desk; `LibraryPanels.tsx` is dead code until prompt 13 deletes it.
+- **The desk was not exercised in a browser.** Scanner behaviour (a keyboard-wedge scanner typing a code and Enter), focus handling after an action, the undo countdown and the print layouts were type-checked, linted and covered only through their pure helpers. The user does the visual check.
+- **No component tests** for the desk and lost and damaged screens, only helper tests.
+- **Roster size.** The issue tab asks for up to 500 members of a class or group at once; a larger group would be cut off.
 - **No notifications yet.** Returns report `hold_queue_count` but nobody is told that a held title is back, and no overdue reminder exists (prompt 7).
 - **`library_period_slots` does not exist yet**, so students always get the flat period (decision 46).
 - **Postgres-only behaviour is unverified.** `test_last_copy_race_gives_one_success_and_one_conflict` and `test_concurrent_accession_in_one_category_never_repeats_a_code` are skipped on SQLite. Run them on a PostgreSQL test database before relying on the locking. The partial unique index that blocks a second open loan is tested on SQLite and does not need Postgres to be exercised.

@@ -547,6 +547,26 @@ export interface ReturnResult {
   replacement_charge: LibraryCharge | null;
   /** How many members wait for this title. Notifications are sent elsewhere. */
   hold_queue_count: number;
+  /** When the undo offer ends (ISO). Null when a lost or damaged report was filed, which cannot be undone. */
+  undo_expires_at: string | null;
+}
+
+export type DeskEventType = "issue" | "return" | "renewal" | "lost" | "damaged";
+
+/** One line of GET /issues/desk-log/ (Today at the Desk). */
+export interface DeskLogEntry {
+  id: number;
+  event_type: DeskEventType;
+  summary: string;
+  created_at: string;
+  actor_name: string;
+  issue: number | null;
+}
+
+export interface DeskLog {
+  count: number;
+  counts: Record<DeskEventType, number>;
+  results: DeskLogEntry[];
 }
 
 export interface RenewResult {

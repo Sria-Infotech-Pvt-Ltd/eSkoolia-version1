@@ -1,18 +1,19 @@
 """Loans: the issue desk. Loans are never created, edited or deleted through generic verbs;
 every change is an action that calls services.circulation (blueprint 2.4)."""
-from datetime import date
+from datetime import date, timedelta
 
-from django.db.models import Q
+from django.db.models import Count, Q
 from django.utils import timezone
 from rest_framework import status
 from rest_framework.decorators import action
 from rest_framework.exceptions import ValidationError
 from rest_framework.response import Response
 
-from apps.library.models import BookIssue
+from apps.library.models import BookIssue, LibraryActivityLog
 from apps.library.serializers import ChargeSerializer
 from apps.library.serializers.loans import (
     BulkIssueInputSerializer,
+    DeskLogSerializer,
     IssueDetailSerializer,
     IssueInputSerializer,
     IssueRowSerializer,
@@ -25,6 +26,15 @@ from apps.library.services.settings import get_settings
 from .base import LibraryViewSet
 
 OPEN_LOOKUP_MAX = 10
+DESK_LOG_MAX = 100
+# What the desk did today: issues, returns (including returns filed with a lost or damaged report) and renewals.
+DESK_EVENTS = (
+    LibraryActivityLog.EVENT_ISSUE,
+    LibraryActivityLog.EVENT_RETURN,
+    LibraryActivityLog.EVENT_RENEWAL,
+    LibraryActivityLog.EVENT_LOST,
+    LibraryActivityLog.EVENT_DAMAGED,
+)
 STATES = ("open", "overdue", "due_today", "returned", "lost")
 
 
@@ -59,6 +69,7 @@ class BookIssueViewSet(LibraryViewSet):
         "due_today": "library.book_issues.view",
         "overdue": "library.book_issues.view",
         "open_lookup": "library.book_issues.view",
+        "desk_log": "library.book_issues.view",
         "issue": "library.book_issues.issue",
         "bulk_issue": "library.book_issues.issue",
         "return_loan": "library.book_issues.return",
@@ -118,6 +129,10 @@ class BookIssueViewSet(LibraryViewSet):
         loans = list(self.get_queryset().filter(pk__in=ids).order_by("due_date", "id"))
         return IssueRowSerializer(loans, many=True, context=self.get_serializer_context()).data
 
+    @staticmethod
+    def _returned_at(pk):
+        return BookIssue.objects.filter(pk=pk).values_list("returned_at", flat=True).first()
+
     def _row(self, pk):
         return IssueRowSerializer(self.get_queryset().get(pk=pk), context=self.get_serializer_context()).data
 
@@ -136,6 +151,25 @@ class BookIssueViewSet(LibraryViewSet):
     def overdue(self, request):
         queryset = self.filter_queryset(self.get_queryset().filter(status=BookIssue.STATUS_ISSUED, due_date__lt=timezone.localdate()))
         return self.list_response(queryset.order_by("due_date", "id"))
+
+    @action(detail=False, methods=["get"], url_path="desk-log")
+    def desk_log(self, request):
+        """Today's issue, return and renewal events from the activity log, newest first (at most 100)."""
+        events = LibraryActivityLog.objects.filter(
+            school=self.get_school_or_deny(), event_type__in=DESK_EVENTS, created_at__date=timezone.localdate()
+        )
+        counts = dict(events.order_by().values("event_type").annotate(n=Count("id")).values_list("event_type", "n"))
+        rows = DeskLogSerializer(events.select_related("actor").order_by("-created_at", "-id")[:DESK_LOG_MAX], many=True).data
+        return Response(
+            {
+                "success": True,
+                "message": "Data retrieved successfully",
+                "count": sum(counts.values()),
+                "counts": {name: counts.get(name, 0) for name in DESK_EVENTS},
+                "results": rows,
+                "data": rows,
+            }
+        )
 
     @action(detail=False, methods=["get"], url_path="open/lookup")
     def open_lookup(self, request):
@@ -201,6 +235,11 @@ class BookIssueViewSet(LibraryViewSet):
             condition=data.get("condition", ""), report=data.get("report"),
         )
         report = outcome["report"]
+        # Undo is offered only when the copy is back on the shelf: a lost or damaged report rules it out.
+        returned_at = self._returned_at(loan.pk)
+        undo_expires_at = None
+        if report is None and returned_at is not None:
+            undo_expires_at = returned_at + timedelta(minutes=self.get_serializer_context()["settings"].undo_return_minutes)
         report_data = None
         if report is not None:
             report_data = ReportSerializer(report).data
@@ -214,6 +253,7 @@ class BookIssueViewSet(LibraryViewSet):
                     "report": report_data,
                     "replacement_charge": ChargeSerializer(outcome["replacement_charge"]).data if outcome["replacement_charge"] else None,
                     "hold_queue_count": outcome["hold_queue_count"],
+                    "undo_expires_at": undo_expires_at,
                 },
             }
         )

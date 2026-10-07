@@ -12,6 +12,7 @@ from apps.library.models import (
     BookCopy,
     BookIssue,
     Hold,
+    LibraryActivityLog,
     LibraryMember,
     LostDamagedReport,
 )
@@ -94,6 +95,22 @@ class IssueRowSerializer(serializers.ModelSerializer):
 
     def get_renewed(self, obj):
         return obj.renew_count > 0
+
+
+class DeskLogSerializer(serializers.ModelSerializer):
+    """One line of the Today at the Desk log. Needs select_related("actor")."""
+
+    actor_name = serializers.SerializerMethodField()
+
+    class Meta:
+        model = LibraryActivityLog
+        fields = ["id", "event_type", "summary", "created_at", "actor_name", "issue"]
+        read_only_fields = fields
+
+    def get_actor_name(self, obj):
+        if not obj.actor_id:
+            return ""
+        return obj.actor.get_full_name() or obj.actor.username
 
 
 class IssueDetailSerializer(IssueRowSerializer):
