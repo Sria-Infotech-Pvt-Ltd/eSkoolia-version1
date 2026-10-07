@@ -15,9 +15,13 @@ import type {
   BookCategoryInput,
   BookCopy,
   BookDetail,
+  BookLabels,
   BookInput,
   BookListParams,
   BookLookupRow,
+  BulkImportInputRow,
+  BulkImportPreview,
+  BulkImportResult,
   CopyListParams,
   LibraryEnvelope,
   LibraryErrorBody,
@@ -231,6 +235,38 @@ export async function withdrawCopy(id: number, reason: string): Promise<BookCopy
   const res = await libraryRequest<LibraryEnvelope<BookCopy>>(
     `${BASE}/copies/${id}/withdraw/`,
     json("POST", { reason }),
+  );
+  return res.data;
+}
+
+// ─── Bulk import and labels ──────────────────────────────────────────────────
+
+/** Validates rows on the server and saves nothing. Maximum 500 rows. */
+export async function previewBulkImport(rows: BulkImportInputRow[]): Promise<BulkImportPreview> {
+  const res = await libraryRequest<LibraryEnvelope<BulkImportPreview>>(
+    `${BASE}/books/bulk-import/preview/`,
+    json("POST", { rows }),
+  );
+  return res.data;
+}
+
+/**
+ * Creates the valid rows in one transaction. Reuse the same `clientBatchId` when retrying:
+ * the server applies a batch id once and answers a repeat with the first result.
+ */
+export async function commitBulkImport(rows: BulkImportInputRow[], clientBatchId: string): Promise<BulkImportResult> {
+  const res = await libraryRequest<LibraryEnvelope<BulkImportResult>>(
+    `${BASE}/books/bulk-import/commit/`,
+    json("POST", { rows, client_batch_id: clientBatchId }),
+  );
+  return res.data;
+}
+
+/** Copy codes and the title line for printing. `copyId` returns a single label. */
+export async function getBookLabels(id: number, options?: { copyId?: number; includeWithdrawn?: boolean }): Promise<BookLabels> {
+  const res = await libraryRequest<LibraryEnvelope<BookLabels>>(
+    `${BASE}/books/${id}/labels/${query({ copy: options?.copyId, all: options?.includeWithdrawn ? "true" : undefined })}`,
+    { method: "GET" },
   );
   return res.data;
 }

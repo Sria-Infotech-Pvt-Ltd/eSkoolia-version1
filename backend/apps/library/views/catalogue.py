@@ -17,9 +17,11 @@ from apps.library.serializers import (
     BookListSerializer,
     BookLookupSerializer,
     BookWriteSerializer,
+    BulkImportCommitSerializer,
+    BulkImportSerializer,
     WithdrawCopySerializer,
 )
-from apps.library.services import accession
+from apps.library.services import accession, bulk_import
 from apps.library.services.catalogue import (
     AVAILABILITY_VALUES,
     annotate_copy_counts,
@@ -93,6 +95,9 @@ class BookViewSet(LibraryViewSet):
         "add_copies": "library.books.update",
         "lookup": "library.book_issues.view",
         "copies": "library.book_copies.view",
+        "labels": "library.book_copies.view",
+        "bulk_import_preview": "library.books.import",
+        "bulk_import_commit": "library.books.import",
     }
 
     # -- queryset and serializers ------------------------------------------
@@ -115,6 +120,10 @@ class BookViewSet(LibraryViewSet):
             return AddCopiesSerializer
         if self.action == "lookup":
             return BookLookupSerializer
+        if self.action == "bulk_import_preview":
+            return BulkImportSerializer
+        if self.action == "bulk_import_commit":
+            return BulkImportCommitSerializer
         return BookListSerializer
 
     def get_serializer_context(self):
@@ -198,6 +207,54 @@ class BookViewSet(LibraryViewSet):
         book = self.get_object()
         queryset = BookCopy.objects.filter(school=book.school_id, book=book).select_related("book", "created_by", "updated_by")
         return self.list_response(queryset.order_by("id"), serializer_class=BookCopySerializer)
+
+    @action(detail=True, methods=["get"], url_path="labels")
+    def labels(self, request, pk=None):
+        """Copy codes and the title line for printing. Withdrawn copies are left out unless ?all=true;
+        ?copy=<id> returns a single label."""
+        book = self.get_object()
+        copies = BookCopy.objects.filter(school=book.school_id, book=book).order_by("id")
+        if request.query_params.get("all") != "true":
+            copies = copies.exclude(status=BookCopy.STATUS_WITHDRAWN)
+        if request.query_params.get("copy"):
+            copies = copies.filter(pk=request.query_params["copy"]) if request.query_params["copy"].isdigit() else copies.none()
+        extra = " ".join(part for part in (f"{book.edition} ed." if book.edition else "", book.part_label) if part)
+        data = {
+            "book_id": book.pk,
+            "title_line": " - ".join(part for part in (book.title + (f" ({extra})" if extra else ""), book.author) if part),
+            "accession_code": book.accession_code,
+            "call_number": book.call_number,
+            "rack": book.rack,
+            "copies": [{"id": c.pk, "code": c.code, "status": c.status, "condition": c.condition} for c in copies],
+        }
+        return Response({"success": True, "message": "Data retrieved successfully", "data": data})
+
+    @action(detail=False, methods=["post"], url_path="bulk-import/preview")
+    def bulk_import_preview(self, request):
+        serializer = self.get_serializer(data=request.data)
+        serializer.is_valid(raise_exception=True)
+        data = bulk_import.preview(self.get_school_or_deny(), serializer.validated_data["rows"])
+        return Response({"success": True, "message": "Preview ready. Nothing was saved.", "data": data})
+
+    @action(detail=False, methods=["post"], url_path="bulk-import/commit")
+    def bulk_import_commit(self, request):
+        serializer = self.get_serializer(data=request.data)
+        serializer.is_valid(raise_exception=True)
+        result, replayed = bulk_import.commit(
+            self.get_school_or_deny(), request.user,
+            serializer.validated_data["rows"], serializer.validated_data["client_batch_id"],
+        )
+        ids = [item["id"] for item in result["created"]]
+        books = self.get_queryset().filter(pk__in=ids).order_by("accession_code")
+        titles = BookListSerializer(books, many=True, context=self.get_serializer_context()).data
+        return Response(
+            {
+                "success": True,
+                "message": "Import already applied" if replayed else "Import complete",
+                "data": {"created": result["created"], "skipped": result["skipped"], "titles": titles, "replayed": replayed},
+            },
+            status=status.HTTP_200_OK if replayed else status.HTTP_201_CREATED,
+        )
 
     @action(detail=False, methods=["get"], url_path="lookup")
     def lookup(self, request):

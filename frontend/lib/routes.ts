@@ -283,14 +283,13 @@ export const MODULES: ModuleRoute[] = [
   {
     id: 'library',
     name: 'Library',
-    path: '/library/books',
+    path: '/library/catalogue',
     icon: BookMarked,
     bg: '#FDF2F8',
     ic: '#BE185D',
     permission: 'library',
     sub: [
-      { label: 'Book Categories', path: '/library/categories', icon: BookMarked },
-      { label: 'Books', path: '/library/books', icon: BookOpen },
+      { label: 'Catalogue', path: '/library/catalogue', icon: BookOpen },
       { label: 'Library Members', path: '/library/members', icon: Users },
       { label: 'Book Issues', path: '/library/issues', icon: BookmarkCheck },
     ],

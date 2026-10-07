@@ -41,11 +41,11 @@ def _new_copies(school, actor, book, first_number, count, condition):
 
 
 @transaction.atomic
-def create_book_with_copies(school, actor, data, copies_count, condition=BookCopy.CONDITION_NEW):
+def create_book_with_copies(school, actor, data, copies_count, condition=BookCopy.CONDITION_NEW, log=True):
     """One transaction: lock the category, take the next sequence, create the title and its copies, log it.
 
     `data` holds the title fields plus `category` (a BookCategory of `school`).
-    Returns (book, copies).
+    Returns (book, copies). Bulk import passes ``log=False`` and writes one row per batch.
     """
     category, accession_code = next_accession_code(school, data["category"].pk)
     if not category.is_active:
@@ -59,14 +59,15 @@ def create_book_with_copies(school, actor, data, copies_count, condition=BookCop
         **{name: data[name] for name in BOOK_FIELDS if name in data},
     )
     copies = _new_copies(school, actor, book, 1, copies_count, condition)
-    log_event(
-        school,
-        actor,
-        LibraryActivityLog.EVENT_ACCESSION,
-        f"Accessioned {book.title} ({accession_code}) with {copies_count} cop{'y' if copies_count == 1 else 'ies'}",
-        book=book,
-        metadata={"book_id": book.pk, "accession_code": accession_code, "copies": copies_count},
-    )
+    if log:
+        log_event(
+            school,
+            actor,
+            LibraryActivityLog.EVENT_ACCESSION,
+            f"Accessioned {book.title} ({accession_code}) with {copies_count} cop{'y' if copies_count == 1 else 'ies'}",
+            book=book,
+            metadata={"book_id": book.pk, "accession_code": accession_code, "copies": copies_count},
+        )
     return book, copies
 
 

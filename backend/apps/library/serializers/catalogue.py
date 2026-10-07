@@ -247,5 +247,15 @@ class AddCopiesSerializer(serializers.Serializer):
     condition = serializers.ChoiceField(choices=BookCopy.CONDITION_CHOICES, required=False, default=BookCopy.CONDITION_NEW)
 
 
+class BulkImportSerializer(serializers.Serializer):
+    """Rows are free-form on purpose: the service reports a per-row error instead of failing the request."""
+
+    rows = serializers.ListField(child=serializers.JSONField(allow_null=True), min_length=1, max_length=500)
+
+
+class BulkImportCommitSerializer(BulkImportSerializer):
+    client_batch_id = serializers.UUIDField()
+
+
 class WithdrawCopySerializer(serializers.Serializer):
     reason = serializers.CharField(max_length=500)

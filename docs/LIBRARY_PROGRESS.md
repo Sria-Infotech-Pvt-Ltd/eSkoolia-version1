@@ -56,7 +56,7 @@ plus the untracked library planning documents, staged in prompt 1.
 |---|---|---|
 | 1 | Foundations | Done (2026-10-07). 111 backend tests pass. tsc and lint clean for library files. |
 | 2 | Catalogue backend | Done (2026-10-07). 186 backend tests pass, 1 Postgres-only test skipped (unverified). tsc has no library errors. |
-| 3 | Catalogue frontend and bulk tools | Not started |
+| 3 | Catalogue frontend and bulk tools | Done (2026-10-07). 221 backend tests pass (1 Postgres-only skipped), 18 Jest tests pass. tsc and lint show only the baseline errors from other modules. Browser behaviour not checked by me. |
 | 4 | Members, charges and settings | Not started. Note: the settings endpoints (GET and PUT `settings/`) already exist from prompt 1; prompt 4 only needs the Settings screen (its item 6) and must not rebuild the endpoints. |
 | 5 | Circulation backend | Not started |
 | 6 | Issue Desk and exceptions screens | Not started |
@@ -85,6 +85,14 @@ plus the untracked library planning documents, staged in prompt 1.
 - Test helpers: `make_book(school, category, title=..., copies=n, **fields)` in `tests/conftest.py`; the `category` fixture has code `FIC`.
 - `LibraryViewSet` gained `annotate_queryset` (hook, runs before the DRF search and ordering backends), `disabled_actions` (405) and `list_response(queryset, serializer_class)`.
 
+## What prompt 3 built (for the next prompt)
+
+- Backend: `POST books/bulk-import/preview/` and `.../commit/` (code `library.books.import`), `GET books/{id}/labels/` (code `library.book_copies.view`), in `views/catalogue.py` and `services/bulk_import.py`. `create_book_with_copies` takes `log=False` so a batch writes one activity row.
+- Frontend: `/library/catalogue` (page file is thin, everything is in `components/library/catalogue/`): `CataloguePage`, `AccessionWizard` (also edits and adds copies), `CategoriesModal`, `BulkImportModal`, `CopiesRegisterModal`, `LabelPrintView`, `ScannerSetupPanel`, plus pure helpers `wizard.ts`, `bulkParse.ts`, `code39.ts`, `colors.ts` and small shared primitives in `ui.tsx` (`Modal`, `Pill`, `Btn`, `Field`, `ConfirmDialog`, `StateBox`, `SkeletonRows`, `useToast`, `describeError`, `fieldMessages`). Prompts 4 onward can reuse `ui.tsx`.
+- `/library/books` and `/library/categories` are server redirects to `/library/catalogue`. `lib/routes.ts` now has Catalogue, Library Members and Book Issues as sub items (the module path is `/library/catalogue`). The retired sidebar list in `components/layout/sidebar-menu.data.ts` still points at the old routes and works through the redirects.
+- `styles/tokens.css` gained ten `--cat-<key>` colours (rose, orange, amber, lime, emerald, teal, sky, indigo, violet, slate) and `--overlay`. The status tokens (ok, warn, danger, info and their soft variants) already existed, so none were added. No raw colour values exist in the new components.
+- Jest: `__tests__/library/wizard.test.ts` covers step validation, bulk-text parsing, Code 39 and colour helpers.
+
 ## Decisions made
 
 1. **`LibraryViewSet` does not inherit the CRUD methods of `PaginatedModelViewSet`.** Those methods wrap everything in `except Exception` and answer 400 (`retrieve_error`, `create_error`, ...). That would turn a cross-school 404 into a 400 and hide 403s and the library 409 codes. The library base re-implements the five verbs with the same success envelope and lets errors reach `config/exception_handler.py`. It also skips the base `filter_queryset`, which re-applies filters with a raw `.filter(field=value)` and rejects `?is_active=true` (the library pages send exactly that).
@@ -109,6 +117,13 @@ plus the untracked library planning documents, staged in prompt 1.
 20. **Call numbers are entered, not generated.** The blueprint says "generated from the prototype's rule" but the rule is not written down anywhere.
 21. **Withdraw uses `library_invalid_state_transition`** (409) when the copy is not available. The activity row for withdrawing is an `accession` event with `metadata.action = "withdraw"` because no withdraw event type exists.
 22. **`holds_waiting` is a constant 0** until the holds model exists (prompt 5).
+23. **(Prompt 3) Bulk import normalisation.** Cells starting with `=`, `+`, `-`, `@`, tab or carriage return are neutralised by prefixing an apostrophe (a lone leading tab is collapsed as whitespace and dropped). Category matching uses the typed name, case-insensitive, within the school. Extra row rules beyond the blueprint: copies 1 to 500 per row, cost 0 to 9999999999.99, title and author length caps, a row that repeats an existing title+author (edition and part blank) or an earlier row is "Title already exists" or "Duplicate of an earlier row". A request over 500 rows, or with an invalid `client_batch_id`, is a 400.
+24. **Batch idempotency** is a lookup of `metadata.client_batch_id` on the school's accession activity rows, under a lock on the school's settings row (a real lock on PostgreSQL only; unverified under concurrency). A repeat returns the stored first result (`replayed: true`, HTTP 200) whatever rows it carries. The batch's activity metadata holds ids, accession codes, row numbers and the error text of skipped rows (which can contain a category name the user typed).
+25. **Labels** exclude withdrawn copies unless `?all=true`; `?copy=<id>` gives one label. The barcode is Code 39 drawn as inline SVG by `code39.ts`, so no library was added. Code 39 only carries A-Z, 0-9, `-`, `.` and `/`; a copy code outside that set prints as text only.
+26. **Labels use `useDocumentBranding("student_verification")`** only for the school header image. The hook requires a document type and offers no generic one; the declaration text it returns is ignored.
+27. **Catalogue filters.** "Reader" is one dropdown (students, teachers or staff), mapped to `for_students=true` and so on. Search is debounced 300 ms; stale list responses are discarded; a page past the end after filtering resets to page 1.
+28. **Edit title** reuses the wizard (loads `GET books/{id}/`); its copies step becomes "Add more copies" (0 adds none) and calls `add-copies`. Copies are never removed by editing a number.
+29. **Gating.** Buttons use `can()`: New accession `books.create`, Bulk import `books.import`, Manage categories `book_categories.view` (add, edit, delete need `.create`, `.update`, `.delete`), Edit `books.update`, Copies and Labels `book_copies.view`, withdraw `book_copies.withdraw`, condition edit `book_copies.update`, add copies `books.update`. The page itself needs `books.view`. Category, scanner and wizard lookups use `silent401`; saves do not.
 
 ## Migrations to apply
 
@@ -134,7 +149,10 @@ After migrating, in this order: `seed_permissions`, `seed_module_tiers`, `seed_r
 - **FKs still CASCADE** on `LibraryMember.student/staff` and `BookIssue.book/member` (blueprint: PROTECT plus `library_has_history`). Deleting a *member* with loans still deletes the loans (prompt 4); a *book* with loans is now refused by the API, but `BookIssue.book` is still CASCADE at database level (prompt 5).
 - **`updated_at` is missing** on `library_members` (prompt 4 adds it). Categories have it since prompt 2.
 - **Category tighten is not done.** `Book.category` is still nullable and legacy loans are not bound to copies; blueprint section 5 migrations C and D (tighten, drop `quantity` columns) are later releases.
-- **Legacy Books page cannot create titles** (decision 15) until prompt 3 replaces it.
+- **Legacy Books and Categories panels** (`LibraryPanels.tsx`) are no longer routed to; they stay in the file until prompt 13 removes it. The Members and Issues pages still use that file.
+- **Not checked in a browser.** The catalogue screens, print view and scanner panel were type-checked, linted and unit-tested only; the user does the visual check.
+- **No Jest component tests**: only the pure helpers are tested (as specified).
+- **Print layout is basic** (CSS grid of 230 px labels, no label-sheet presets). Barcode scanning of printed Code 39 labels is untested with real hardware.
 - **Backfill and the concurrent-accession test are unverified on the real database.** SQLite cannot run the migration chain, so `0004` was tested through `services.backfill.backfill_catalogue` on hand-built legacy rows, not by `migrate`. `test_concurrent_accession_in_one_category_never_repeats_a_code` is skipped unless the test database is PostgreSQL. Run both on staging.
 - **Migration not executed.** SQLite cannot run the project's migration chain, so `0002_foundations` was verified by `makemigrations --check` and `sqlmigrate`, not by `migrate`. Run it on Postgres staging first.
 - **Tests that need Postgres** (row locks, partial indexes): none yet. Future ones must be marked skip-unless-Postgres.

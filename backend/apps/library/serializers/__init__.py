@@ -6,6 +6,8 @@ from .catalogue import (
     BookListSerializer,
     BookLookupSerializer,
     BookWriteSerializer,
+    BulkImportCommitSerializer,
+    BulkImportSerializer,
     WithdrawCopySerializer,
 )
 from .circulation import BookIssueSerializer, LibraryMemberSerializer
@@ -13,6 +15,8 @@ from .settings import LibrarySettingsSerializer
 
 __all__ = [
     "AddCopiesSerializer",
+    "BulkImportCommitSerializer",
+    "BulkImportSerializer",
     "BookCategorySerializer",
     "BookCopySerializer",
     "BookDetailSerializer",

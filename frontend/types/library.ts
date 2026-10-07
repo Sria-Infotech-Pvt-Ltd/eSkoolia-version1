@@ -256,3 +256,51 @@ export interface AddCopiesInput {
 export interface AddCopiesResult extends LibraryEnvelope<BookDetail> {
   added: string[];
 }
+
+// ─── Bulk import and labels ──────────────────────────────────────────────────
+
+/** One line the librarian typed or pasted. Everything is optional text; the server validates. */
+export interface BulkImportInputRow {
+  title?: string;
+  author?: string;
+  category?: string;
+  copies?: string | number | null;
+  cost?: string | number | null;
+}
+
+/** A row after server validation. `error` is null when `valid`. */
+export interface BulkImportRow {
+  row: number;
+  title: string;
+  author: string;
+  category: string;
+  category_id: number | null;
+  copies: number;
+  cost: string;
+  valid: boolean;
+  error: string | null;
+}
+
+export interface BulkImportPreview {
+  rows: BulkImportRow[];
+  valid_count: number;
+  invalid_count: number;
+}
+
+export interface BulkImportResult {
+  created: { id: number; accession_code: string; copies: number }[];
+  skipped: { row: number; error: string }[];
+  titles: Book[];
+  /** True when this client_batch_id was already applied: nothing new was created. */
+  replayed: boolean;
+}
+
+/** GET /books/{id}/labels/ */
+export interface BookLabels {
+  book_id: number;
+  title_line: string;
+  accession_code: string;
+  call_number: string;
+  rack: string;
+  copies: CopyBrief[];
+}
