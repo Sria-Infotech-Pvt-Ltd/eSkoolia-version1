@@ -795,3 +795,189 @@ export function fetchTeacherNotifications(): Promise<TeacherNotification[]> {
 export function markNotificationRead(id: number): Promise<{ success: boolean }> {
   return teacherPost(`/notifications/${id}/read/`, {});
 }
+
+// ── Library (My Class, My Books, Recommend a Book) ───────────────────────────
+// Plain JSON from /api/v1/teacher/library/. Background reads pass { silent401: true } so a stray 401
+// does not log the teacher out mid-form; actions use the default so a dead session redirects.
+
+function libraryRequest<T>(path: string, init?: { method?: 'GET' | 'POST'; body?: unknown; silent401?: boolean }): Promise<T> {
+  return apiRequestWithRefresh<T>(`/api/v1/teacher/library${path}`, {
+    method: init?.method ?? 'GET',
+    headers: { 'Content-Type': 'application/json' },
+    ...(init?.body !== undefined ? { body: JSON.stringify(init.body) } : {}),
+    cache: 'no-store',
+    silent401: init?.silent401,
+  });
+}
+
+export interface LibraryOverview {
+  registered: boolean;
+  member: { card_no: string; is_active: boolean; borrowing_limit: number; open_loans: number; suspended: boolean } | null;
+  has_class_scope: boolean;
+  class_count: number;
+}
+
+export type LibraryLoanState = 'open' | 'due_today' | 'overdue';
+
+export interface LibraryClassLoan {
+  id: number;
+  student_name: string;
+  section_name: string;
+  book_title: string;
+  copy_code: string;
+  due_date: string;
+  days_overdue: number;
+  accrued_fine: string;
+  state: LibraryLoanState;
+  reminded_today: boolean;
+}
+
+export interface LibraryNextSlot {
+  id: number;
+  date: string;
+  day: string;
+  period_name: string;
+  start_time: string;
+  end_time: string;
+  room_label: string;
+}
+
+export interface LibraryClassGroup {
+  school_class: number;
+  class_name: string;
+  section: number | null;
+  section_name: string;
+  next_slot: LibraryNextSlot | null;
+  loans: LibraryClassLoan[];
+  loan_count: number;
+}
+
+export interface LibraryMyClass {
+  has_class_scope: boolean;
+  today: string;
+  classes: LibraryClassGroup[];
+}
+
+export type RenewBlockReason = '' | 'overdue' | 'cap' | 'hold';
+
+export interface LibraryMyLoan {
+  id: number;
+  book_title: string;
+  author: string;
+  copy_code: string;
+  issue_date: string;
+  due_date: string;
+  days_overdue: number;
+  accrued_fine: string;
+  renew_count: number;
+  max_renewals: number;
+  state: LibraryLoanState;
+  can_renew: boolean;
+  reason: RenewBlockReason;
+  /** "On hold for someone else", "Renewal limit reached" or "Overdue, please return"; "" when it can be renewed. */
+  reason_text: string;
+}
+
+export interface LibraryMyBooks {
+  registered: boolean;
+  is_active?: boolean;
+  card_no?: string;
+  borrowing_limit: number | null;
+  open_loans: number;
+  loans: LibraryMyLoan[];
+}
+
+export interface LibraryRenewResult {
+  id: number;
+  due_date: string;
+  snapped: boolean;
+  note: string;
+  renew_count: number;
+}
+
+export type LibraryRequestStatus = 'pending' | 'approved' | 'rejected' | 'ordered' | 'fulfilled';
+
+export interface LibraryBookRequestItem {
+  id: number;
+  title: string;
+  notes: string;
+  status: LibraryRequestStatus;
+  review_note: string;
+  reviewed_at: string | null;
+  linked_book_title: string;
+  created_at: string;
+}
+
+export interface LibraryBookSearchRow {
+  id: number;
+  title: string;
+  author: string;
+  edition: string;
+  category_name: string;
+  available_copies: number;
+  total_copies: number;
+  reference_only: boolean;
+}
+
+/** GET /api/v1/teacher/library/overview/ */
+export function fetchLibraryOverview(silent401 = false): Promise<LibraryOverview> {
+  return libraryRequest<LibraryOverview>('/overview/', { silent401 });
+}
+
+/** GET /api/v1/teacher/library/my-class/. An empty `classes` list means the teacher has no class-teacher scope. */
+export function fetchLibraryMyClass(silent401 = false): Promise<LibraryMyClass> {
+  return libraryRequest<LibraryMyClass>('/my-class/', { silent401 });
+}
+
+/** POST .../my-class/loans/<id>/remind/. 409 library_reminder_already_sent after the first reminder of the day. */
+export function sendLibraryReminder(issueId: number): Promise<{ queued: boolean; loan: number; reminded_today: boolean }> {
+  return libraryRequest(`/my-class/loans/${issueId}/remind/`, { method: 'POST', body: {} });
+}
+
+/** GET /api/v1/teacher/library/my-books/ */
+export function fetchLibraryMyBooks(silent401 = false): Promise<LibraryMyBooks> {
+  return libraryRequest<LibraryMyBooks>('/my-books/', { silent401 });
+}
+
+/** POST .../my-books/loans/<id>/renew/ */
+export function renewLibraryLoan(issueId: number): Promise<LibraryRenewResult> {
+  return libraryRequest(`/my-books/loans/${issueId}/renew/`, { method: 'POST', body: {} });
+}
+
+/** GET /api/v1/teacher/library/book-requests/ */
+export function fetchLibraryBookRequests(silent401 = false): Promise<{ count: number; results: LibraryBookRequestItem[] }> {
+  return libraryRequest('/book-requests/', { silent401 });
+}
+
+/** POST /api/v1/teacher/library/book-requests/. Class and section are set by the server. */
+export function createLibraryBookRequest(payload: { title: string; notes?: string }): Promise<LibraryBookRequestItem> {
+  return libraryRequest('/book-requests/', { method: 'POST', body: payload });
+}
+
+/** GET /api/v1/teacher/library/books/search/?q= (two or more characters). */
+export function searchLibraryBooks(q: string, silent401 = true): Promise<{ count: number; results: LibraryBookSearchRow[] }> {
+  return libraryRequest(`/books/search/?q=${encodeURIComponent(q)}`, { silent401 });
+}
+
+/**
+ * The message to show for a failed library call. The server's text is already in plain words
+ * ("This loan is already closed."); a field error (a blank title) is shown in preference to the generic line.
+ */
+export function libraryErrorMessage(error: unknown, fallback: string): string {
+  const thrown = error as { status?: number; message?: string; details?: { error?: { message?: string }; field_errors?: Record<string, string[] | string> } };
+  if (thrown?.status === 503) return 'The library is temporarily unavailable. Please try again in a few seconds.';
+  const fields = thrown?.details?.field_errors;
+  if (fields) {
+    const first = Object.values(fields)[0];
+    const text = Array.isArray(first) ? first[0] : first;
+    if (text) return String(text);
+  }
+  const message = thrown?.details?.error?.message ?? thrown?.message;
+  return message && message !== '401' ? message : fallback;
+}
+
+/** The error code of a failed library call (for example library_reminder_already_sent), or ''. */
+export function libraryErrorCode(error: unknown): string {
+  const thrown = error as { details?: { error?: { code?: string } } };
+  return thrown?.details?.error?.code ?? '';
+}

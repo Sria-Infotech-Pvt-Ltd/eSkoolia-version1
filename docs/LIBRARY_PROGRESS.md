@@ -64,7 +64,7 @@ plus the untracked library planning documents, staged in prompt 1.
 | 8 | Acquisitions and requests | Done (2026-10-08). 558 backend tests pass (3 Postgres-only skipped, unverified), 58 Jest tests pass in `__tests__/library`. `makemigrations --check` clean. tsc and eslint report nothing in the library files. No dev server, Celery worker or Redis was started; nothing was checked in a browser. |
 | 9 | Periods, occupancy and stock check | Done (2026-10-08). 641 backend tests pass (4 Postgres-only skipped, unverified), 67 Jest tests pass in `__tests__/library`. `makemigrations --check` clean. tsc and eslint report nothing in the library files. No dev server, Celery worker, Redis or beat process was started; the management command was not run; nothing was checked in a browser. **You must run `library_register_periodic_tasks` (see Migrations to apply).** |
 | 10 | Oversight: logs and reports | Done (2026-10-08). 684 backend tests pass (4 Postgres-only skipped, unverified), 77 Jest tests pass in `__tests__/library`. `makemigrations --check` clean (no migration in this prompt). tsc and eslint report nothing in the library files. No dev server, worker or Redis was started; nothing was checked in a browser. |
-| 11 | Teacher portal | Not started |
+| 11 | Teacher portal | Done (2026-10-08). 759 backend tests pass (4 Postgres-only skipped, unverified), 86 Jest tests pass in `__tests__/library`. `makemigrations --check` clean (no migration in this prompt). tsc and eslint report nothing in the library, teacher or route files. No dev server, worker or Redis was started; nothing was checked in a browser. |
 | 12 | Parent portal | Not started |
 | 13 | Cleanup and final audit | Not started |
 
@@ -159,6 +159,13 @@ plus the untracked library planning documents, staged in prompt 1.
 - Endpoints under `/api/v1/library/`: `activity-logs/` (filters `event_type` (comma list), `from`, `to`, `actor`, `member`, `book`, `search`), `activity-logs/export/`, `reports/circulation-by-category/`, `reports/monthly-trend/`, `reports/fines-and-fees/`, `reports/budget-vs-spend/`. Codes `library.activity_logs.view`, `.export` and `library.reports.view` were already seeded.
 - Frontend: `/library/transactions` (`components/library/transactions/`) and `/library/reports` (`components/library/reports/`, using recharts, the chart library already in `package.json`), hook functions (`listActivityLogs`, `exportActivityLogs`, four report getters), types, sub items at their final positions. Jest: `__tests__/library/oversight.test.ts`.
 - For prompt 13: the activity feed has no row for check-ins (decision 82), so "Transactions and Logs" does not show them.
+
+## What prompt 11 built (for the next prompt)
+
+- Backend: `apps/teacher_portal/library_views.py` (seven `APIView`s: JWTAuthentication, `IsTeacherPortalUser`, plain JSON), routes in `apps/teacher_portal/urls.py` under `library/`: `overview/`, `my-class/`, `my-class/loans/<id>/remind/`, `my-books/`, `my-books/loans/<id>/renew/`, `book-requests/` (GET, POST), `books/search/`. Logic is in `apps/library/services/teacher.py`. No model changes, no migration.
+- Frontend: Library module with My Class, My Books and Recommend in `lib/teacher-routes.ts`; pages `app/(teacher-portal)/teacher/library/` (`page.tsx`, `my-books/`, `recommend/`); components in `components/teacher/library/`; API functions and types appended to `lib/api/teacher.ts` (`fetchLibraryMyClass`, `sendLibraryReminder`, `fetchLibraryMyBooks`, `renewLibraryLoan`, `fetchLibraryBookRequests`, `createLibraryBookRequest`, `searchLibraryBooks`, `libraryErrorMessage`, `libraryErrorCode`). Jest: `__tests__/library/teacherPortal.test.ts`.
+- All three pages refetch quietly (`silent401`) when `usePortalNotifications` delivers a `library` event.
+- For prompt 12 (parent portal): `services/teacher.py` shows the pattern (`loan_state`, `loan_fine`, `days_overdue`, one grouped query); the parent routes must use `_resolve_child` from `apps/parent_portal/views.py`.
 
 ## Decisions made
 
@@ -265,6 +272,16 @@ plus the untracked library planning documents, staged in prompt 1.
 98. **Query shape.** Every report is one or two grouped queries (monthly trend two, fines one, circulation one, budget three); a test seeds 40 loans and charges and caps each request at 8 queries including the permission lookup. Loops run over months and over at most twelve type and status groups, never over loans.
 99. **Charts.** The Reports page uses recharts with design tokens only (`var(--pu)`, `var(--ok)` and so on, category colours through `--cat-<key>`), plus a "Show the figures" table under each chart as the accessible text version. Each panel loads on its own, so one failure does not blank the page.
 
+100. **(Prompt 11) Who gets in.** `IsTeacherPortalUser` is used unchanged: a user needs an active role with portal type teacher and a Staff record in their school; superusers, school admins without a teacher role, parents and unauthenticated callers are refused (403, or 401 without a token). A test runs all eight routes against each refused kind.
+101. **My Class scope.** The scope is `get_attendance_scope(user)`. A pair with a section means that section; a pair with no section means the whole class. Only open loans of student members inside the scope are listed, grouped per pair, oldest due first, at most 300 rows per group (with `loan_count`). Loans are fetched once for the whole scope and the slots once, so the request does not grow with the number of students (a test caps it at 16 queries with 20 loans). The row has the student's name, the book, copy code, due date, days overdue, accrued fine and state, and no card number. No scope returns `has_class_scope: false` and an empty list (200).
+102. **Next library period** is the first active slot for the class (or its section, or class-wide) that has not started, today first and then up to seven days ahead, from the period slots of prompt 9.
+103. **Remind.** The loan must be an open loan of a student inside the scope, otherwise 404 (outside the scope, another class, another school, a staff loan, a closed loan, an unknown id, or a teacher with no scope all give the same answer). It then goes through `reminders.send_reminders` for that one loan, so the rules are the librarian's: only an overdue loan (409 `library_invalid_state_transition` otherwise), once per loan per day (409 `library_reminder_already_sent`), one `reminder` activity row, and a queued `overdue_reminder` event to the primary guardian. `reminded_today` is returned on every row so the button stays disabled after a reload. The teacher never sees the guardian's phone or email.
+104. **My Books** finds the member through `Staff.user` in the same school. Each open loan carries `can_renew`, a `reason` (`overdue`, `cap`, `hold`) and the plain text "Overdue, please return", "Renewal limit reached" or "On hold for someone else", checked in the order `renew_loan` checks them. An unregistered teacher gets `registered: false`, a null limit and no loans (200). Renew first checks the loan belongs to the teacher's own member (404 otherwise, including for an unregistered teacher), then calls `circulation.renew_loan` with the R5 rules and the teacher as actor.
+105. **Recommend.** `requested_by` is the caller; class and section are the first scope pair in a stable order (or none), whatever the client sends. A pending request with the same title (case-insensitive) is a 409 `conflict`; more than 20 pending requests is a 400; a blank or over-long title is a 400. Creating one writes one `request` activity row naming the request id (not the title). A rejected or fulfilled title can be requested again. The list is the teacher's own, newest first, with the librarian's note, never another teacher's.
+106. **Book search** needs two characters, matches title, author or ISBN in the teacher's school, returns at most ten rows and only title, author, edition, category, available and total copies and the reference-only flag: no cost, accession code, rack, vendor or donor.
+107. **Navigation.** The Library module is added to `TEACHER_MODULES` before Notices, always shown like its siblings (access is enforced on the server). Its colours are design tokens (`var(--pu-soft)`, `var(--pu-deep)`), not hex.
+108. **The notification bell** (`components/nav/NotificationBell.tsx`) was checked and left as it is: it lists every `CommunicationNotification` of the signed-in user whatever its type, so `system` and `reminder` library rows show with their title, body and link (a test checks both the teacher endpoint and the shared one). It polls once a minute and is not connected to the portal socket; wiring it would open one more WebSocket on every page of every portal, so the library pages refresh themselves instead.
+
 ## Migrations to apply
 
 Not applied by the build. Apply in this order on each environment.
@@ -345,6 +362,11 @@ After migrating, in this order: `seed_permissions`, `seed_module_tiers`, `seed_r
 - **(Prompt 10) Reports read the server's time zone for "today" and for the day of an activity row.**
 - **(Prompt 10) Export is not rate limited beyond its permission, the cap, and the log row.** There is no per-user throttle.
 - **(Prompt 10) The export is streamed from a normal database cursor.** On SQLite (the test database) the stream is checked only for content, not for memory use at 50,000 rows.
+- **(Prompt 11) Nothing was checked in a browser or with a real teacher account.** The three pages, the push refresh and the new nav entry were type-checked, linted and covered by helper tests; the endpoints are covered by API tests with `force_authenticate`, not with real JWT tokens or a WebSocket.
+- **(Prompt 11) The bell can lag by up to a minute** for a library notification (see decision 108). The pages refresh immediately on the push; the bell count does not.
+- **(Prompt 11) A teacher with several class-teacher sections** has requests filed under the first one only (decision 105); the request does not record which of their classes it is about.
+- **(Prompt 11) My Class shows at most 300 loans per class** and says so; there is no page control.
+- **(Prompt 11) Library registration for a teacher is done by the librarian.** There is no self-registration, so an unregistered teacher sees only the "ask the librarian" message.
 
 ## Deviations from blueprint
 

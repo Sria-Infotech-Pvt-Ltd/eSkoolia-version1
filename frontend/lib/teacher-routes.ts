@@ -29,6 +29,7 @@ import {
   ClipboardList,
   Bell,
   Award,
+  BookMarked,
 } from 'lucide-react';
 import type { ModuleRoute } from '@/lib/routes';
 
@@ -124,6 +125,21 @@ export const TEACHER_MODULES: ModuleRoute[] = [
     permission: 'academics', // backend prefix: academics.* or exams.*
     sub: [
       { label: 'Marks Entry', path: '/teacher/exams', icon: ClipboardList },
+    ],
+  },
+  {
+    id: 'teacher-library',
+    name: 'Library',
+    path: '/teacher/library',
+    icon: BookMarked,
+    bg: 'var(--pu-soft)',
+    ic: 'var(--pu-deep)',
+    // No permission guard — every teacher sees all three pages. Access is scoped server-side
+    // (class-teacher scope for My Class, the teacher's own member record for My Books).
+    sub: [
+      { label: 'My Class',  path: '/teacher/library',           icon: Users },
+      { label: 'My Books',  path: '/teacher/library/my-books',  icon: BookOpen },
+      { label: 'Recommend', path: '/teacher/library/recommend', icon: ClipboardList },
     ],
   },
   {
