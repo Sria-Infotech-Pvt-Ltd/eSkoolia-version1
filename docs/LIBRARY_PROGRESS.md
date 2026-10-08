@@ -60,7 +60,7 @@ plus the untracked library planning documents, staged in prompt 1.
 | 4 | Members, charges and settings | Done (2026-10-07). 296 backend tests pass (1 Postgres-only skipped), 29 Jest tests pass. tsc and lint show only the baseline errors from other modules. Screens not checked in a browser. |
 | 5 | Circulation backend | Done (2026-10-07). 424 backend tests pass, 2 Postgres-only tests skipped and UNVERIFIED (last-copy race, concurrent accession). tsc has no library errors. The legacy Issues page no longer works until prompt 6. |
 | 6 | Issue Desk and exceptions screens | Done (2026-10-07). 436 backend tests pass (2 Postgres-only skipped, unverified), 44 Jest tests pass. tsc and lint show only the baseline errors. Nothing was checked in a browser. |
-| 7 | Console, reminders and push | Not started |
+| 7 | Console, reminders and push | Done (2026-10-08). 494 backend tests pass (2 Postgres-only skipped, unverified), 49 Jest tests pass. tsc and lint show only the baseline errors. No Celery worker, Redis or dev server was started; nothing was checked in a browser. |
 | 8 | Acquisitions and requests | Not started |
 | 9 | Periods, occupancy and stock check | Not started |
 | 10 | Oversight: logs and reports | Not started |
@@ -119,6 +119,15 @@ plus the untracked library planning documents, staged in prompt 1.
 - `/library/issues` is a redirect to `/library/issue-desk`. `lib/routes.ts` sub items are now Catalogue, Issue Desk, Lost and Damaged, Library Members, Settings. `ModuleSubNav.tsx` shows a pending count on Lost and Damaged (hook `hooks/useLostDamagedPending.ts`, no request outside the Library module).
 - `LibraryPanels.tsx` is no longer routed from anywhere. Prompt 13 deletes it.
 - Jest: `__tests__/library/desk.test.ts` (due-date notes, block reasons, refusal messages, undo countdown, return choices, scan detection, renew pre-checks).
+
+## What prompt 7 built (for the next prompt)
+
+- `apps/communication/realtime.py::push_portal_event(user_id, notification)`: best effort, returns True or False, never raises.
+- `services/notifications.py`: `enqueue_event(school_id, event, ids)` (queued from `transaction.on_commit`), `deliver_event(school_id, event, ids)`, `resolve_recipient(member)`, `DeliveryFailed`. Events: `hold_ready`, `overdue_reminder`, `replacement_fee`. `tasks.py::deliver_library_event` (Celery task `library.deliver_event`, 4 retries, backoff 30 s doubling to 15 min). The other two events in blueprint 6.1 (`unscanned_flag`, `request_reviewed`) belong to prompts 9 and 8; add them to `EVENTS`, `NOTIFICATION_TYPE` and `deliver_event`.
+- `services/reminders.py::send_reminders` and `POST issues/remind/` (code `library.book_issues.remind`).
+- `GET console/summary/` (`views/console.py`, code `library.console.view`).
+- Wiring: `return_loan` queues `hold_ready` for the first waiting hold when the copy is back on the shelf, and `replacement_fee` when a report with a borrower is created (at return or through `lost-damaged/`).
+- Frontend: `PortalNotification` is now a union of `PortalMessageNotification` and `PortalLibraryNotification` (with `isLibraryNotification`); the two existing pages that use the hook already ignore non-message kinds. `/library/console` (`components/library/console/`), `getConsoleSummary` and `remindLoans` in the hook, Console as the first Library sub item and the module landing page. Jest: `__tests__/library/console.test.ts`.
 
 ## Decisions made
 
@@ -183,6 +192,14 @@ plus the untracked library planning documents, staged in prompt 1.
 59. **Report a copy** (Lost and Damaged page) bills nobody, because it has no borrower; a borrower is billed by returning their loan with a lost or damaged report on the Return tab. The Resolve button is labelled Resolve (the prototype said Write off) and shows when the fee is settled or absent; Mark fee paid shows while the fee is charged.
 60. **Print views** (overdue notice, replacement bill) use `useDocumentBranding` for the school header image only; the hook needs a document type, so `student_verification` is passed and its declaration text is ignored. They print through CSS `@media print` rules, with no new dependency.
 61. **Suggestion lookups** (`books/lookup/`, `issues/open/lookup/`, member search, the roster) pass an `AbortSignal` and `silent401`. Actions (issue, return, renew, save) use the default so a dead session redirects.
+62. **(Prompt 7) Queueing.** Events are queued with `apply_async(args=(school_id, event, ids), retry=False)` from `transaction.on_commit`, so nothing is sent for an action that rolled back, and with no broker the call fails at once instead of stalling the librarian. Broker errors are swallowed and logged (no ids, no contact details). Task arguments are the school id, the event name and ids or ISO dates only; a test asserts no phone, email or name appears.
+63. **Recipients.** A student's notification goes to `Student.guardian.user` (the primary guardian); a teacher or staff member's goes to their own user. No user (no guardian, a guardian with no portal account, or a staff member with no user) means nothing is sent, not even SMS, and one `reminder` activity row records why. Link: `/parent/library` for guardians, `/teacher/library/my-books` for staff. Types: `hold_ready` is `system`; `overdue_reminder` and `replacement_fee` are `reminder`. The teacher bell lists every `CommunicationNotification` row whatever its type, so it shows these without a change.
+64. **Idempotency.** In-app delivery is idempotent through the notification's own `data`: one per `hold_id`, one per `report_id`, one per `issue_id` and date. A repeated task, or a retry, never notifies twice and never pushes twice.
+65. **SMS and email** run only when `notify_sms_email_enabled` is on, through `send_sms_twilio` and `send_email_sendgrid`. Each channel's status (`sent`, `skipped` when the person has no number or address, `failed`) is stored on the notification, so a retry repeats only the channel that failed. A failure raises `DeliveryFailed` inside the task so Celery retries with backoff; it never touches the circulation transaction (which has committed by then).
+66. **`hold_ready` only for a plain return.** A lost or damaged return leaves the copy off the shelf, so the first member in line is not told the book is ready; the borrower gets `replacement_fee` instead. Undoing a return does not retract a notification already sent.
+67. **Reminder rate limit.** One reminder per loan per day, enforced through the activity log: each batch writes one `reminder` row with `metadata.action = remind`, the date and the loan ids, and later requests read today's rows. Asking for one loan twice is a 409 `library_reminder_already_sent`; a batch lists it as skipped (`already_sent`, `not_overdue`, `not_found`). A single loan that is not overdue is a 409 `library_invalid_state_transition`; a single unknown loan is a 404. A batch queuing nothing writes no log row. An `all_overdue` run leaves out loans already reminded today before applying the cap of 200, so repeated runs reach the rest; the response says how many are `remaining`.
+68. **Console summary** is a fixed 10 queries plus the permission lookup, whatever the data volume (a test checks it with 3 and with 41 titles). `collection_value` adds the cost of every copy that is not lost or withdrawn; `copies_total` leaves out withdrawn copies only. `attention` is the 8 oldest overdue or due-today loans, `holds` the 8 oldest waiting, `activity` the latest 10 events of any type. `period` is an empty object until prompt 9. The console polls every 30 seconds with `silent401` and pauses while the tab is hidden.
+69. **Remind buttons** (all overdue, per loan) need `library.book_issues.remind`; "Remind all overdue" asks for confirmation first.
 
 ## Migrations to apply
 
@@ -217,7 +234,10 @@ After migrating, in this order: `seed_permissions`, `seed_module_tiers`, `seed_r
 - **The desk was not exercised in a browser.** Scanner behaviour (a keyboard-wedge scanner typing a code and Enter), focus handling after an action, the undo countdown and the print layouts were type-checked, linted and covered only through their pure helpers. The user does the visual check.
 - **No component tests** for the desk and lost and damaged screens, only helper tests.
 - **Roster size.** The issue tab asks for up to 500 members of a class or group at once; a larger group would be cut off.
-- **No notifications yet.** Returns report `hold_queue_count` but nobody is told that a held title is back, and no overdue reminder exists (prompt 7).
+- **Notifications need a worker.** Events are queued to Celery. Nothing is delivered until a Celery worker and the broker (Redis) are running; without them the queue call fails quietly and the in-app notification and push never happen. The in-app rows, pushes and SMS or email were tested with the task function called directly, never through a real worker, broker or WebSocket.
+- **No Celery Beat entry yet.** Reminders are sent only when a librarian asks. The unscanned-slot flag (blueprint 6.1) arrives with prompt 9.
+- **The teacher and parent portals do not show library events yet.** The push and the bell rows exist; the portal Library pages that refetch on them are prompts 11 and 12.
+- **A blocking `delay` is avoided, not eliminated.** `retry=False` makes a missing broker fail fast, but a half-open broker connection could still add latency to a return at commit time.
 - **`library_period_slots` does not exist yet**, so students always get the flat period (decision 46).
 - **Postgres-only behaviour is unverified.** `test_last_copy_race_gives_one_success_and_one_conflict` and `test_concurrent_accession_in_one_category_never_repeats_a_code` are skipped on SQLite. Run them on a PostgreSQL test database before relying on the locking. The partial unique index that blocks a second open loan is tested on SQLite and does not need Postgres to be exercised.
 - **Migrations `0009` to `0011` were rendered to SQL and the backfill functions were tested directly on hand-built legacy rows, but `migrate` was never run** (SQLite cannot run the project chain).

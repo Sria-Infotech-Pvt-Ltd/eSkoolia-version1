@@ -169,6 +169,18 @@ class BulkIssueInputSerializer(serializers.Serializer):
         return attrs
 
 
+class RemindInputSerializer(serializers.Serializer):
+    """Remind named loans, or every overdue loan. Exactly one of the two."""
+
+    issue_ids = serializers.ListField(child=serializers.IntegerField(min_value=1), required=False, max_length=MAX_BULK_MEMBERS)
+    all_overdue = serializers.BooleanField(required=False, default=False)
+
+    def validate(self, attrs):
+        if bool(attrs.get("issue_ids")) == bool(attrs.get("all_overdue")):
+            raise serializers.ValidationError({"issue_ids": "Give issue_ids or set all_overdue, not both and not neither."})
+        return attrs
+
+
 class ReportInputSerializer(serializers.Serializer):
     type = serializers.ChoiceField(choices=LostDamagedReport.TYPE_CHOICES)
     notes = serializers.CharField(required=False, allow_blank=True, max_length=1000)

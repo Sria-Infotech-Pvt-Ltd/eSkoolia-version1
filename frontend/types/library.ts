@@ -657,6 +657,68 @@ export interface ReportBill {
   notes: string;
 }
 
+// ─── Console and reminders ───────────────────────────────────────────────────
+
+export interface ConsoleTiles {
+  titles: number;
+  /** Money as a string with two decimals. Counts every copy that is not lost or withdrawn. */
+  collection_value: string;
+  /** Copies on the books: everything except withdrawn. */
+  copies_total: number;
+  copies_available: number;
+  /** copies_available divided by copies_total, 0 to 1. */
+  available_share: number;
+  active_loans: number;
+  overdue: number;
+  pending_reports: number;
+}
+
+export interface ConsoleMixRow {
+  category_id: number | null;
+  name: string;
+  code: string;
+  color_key: string;
+  copies: number;
+  /** Share of the collection, 0 to 1. */
+  share: number;
+}
+
+/** Any activity-log line. `event_type` covers every library event, not only the five desk events. */
+export interface ActivityEntry {
+  id: number;
+  event_type: string;
+  summary: string;
+  created_at: string;
+  actor_name: string;
+  issue: number | null;
+}
+
+/** GET /console/summary/. `period` is an empty object until library periods exist. */
+export interface ConsoleSummary {
+  generated_at: string;
+  tiles: ConsoleTiles;
+  due_today: number;
+  overdue: number;
+  holds_waiting: number;
+  /** Overdue and due-today loans, oldest due date first (at most 8). */
+  attention: Loan[];
+  /** Waiting holds, oldest first (at most 8). */
+  holds: Hold[];
+  mix: ConsoleMixRow[];
+  activity: ActivityEntry[];
+  period: Record<string, unknown>;
+}
+
+export type RemindSkipReason = "not_found" | "not_overdue" | "already_sent";
+
+export interface RemindResult {
+  queued: number;
+  queued_ids: number[];
+  skipped: { issue: number; reason: RemindSkipReason }[];
+  /** Overdue loans an all_overdue run left out because of the batch cap. Run it again. */
+  remaining: number;
+}
+
 export type EligibilityReason = "ok" | BulkSkipReason;
 
 /** /members/eligible/ row: the issue-desk roster. */

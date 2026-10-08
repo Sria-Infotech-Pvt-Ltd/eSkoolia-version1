@@ -17,10 +17,11 @@ from apps.library.serializers.loans import (
     IssueDetailSerializer,
     IssueInputSerializer,
     IssueRowSerializer,
+    RemindInputSerializer,
     ReportSerializer,
     ReturnInputSerializer,
 )
-from apps.library.services import circulation
+from apps.library.services import circulation, reminders
 from apps.library.services.settings import get_settings
 
 from .base import LibraryViewSet
@@ -75,6 +76,7 @@ class BookIssueViewSet(LibraryViewSet):
         "return_loan": "library.book_issues.return",
         "undo_return": "library.book_issues.return",
         "renew": "library.book_issues.renew",
+        "remind": "library.book_issues.remind",
     }
 
     # -- context and filters -----------------------------------------------------------------------
@@ -263,6 +265,19 @@ class BookIssueViewSet(LibraryViewSet):
         loan = self.get_object()
         circulation.undo_return(self.get_school_or_deny(), request.user, loan.pk)
         return Response({"success": True, "message": "Return undone", "data": {"loan": self._row(loan.pk)}})
+
+    @action(detail=False, methods=["post"], url_path="remind")
+    def remind(self, request):
+        """Queue overdue reminders for named loans or for every overdue loan. Once per loan per day."""
+        serializer = RemindInputSerializer(data=request.data, context=self.get_serializer_context())
+        serializer.is_valid(raise_exception=True)
+        data = serializer.validated_data
+        result = reminders.send_reminders(
+            self.get_school_or_deny(), request.user, issue_ids=data.get("issue_ids"), all_overdue=data.get("all_overdue", False)
+        )
+        return Response(
+            {"success": True, "message": f"Queued {result['queued']} reminder(s)", "data": result}
+        )
 
     @action(detail=True, methods=["post"], url_path="renew")
     def renew(self, request, pk=None):

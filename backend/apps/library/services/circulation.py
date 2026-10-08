@@ -42,6 +42,7 @@ from apps.library.models import (
 )
 
 from . import charges as charges_service
+from . import notifications
 from .activity import log_event
 from .due_dates import compute_due_date
 from .dues import ZERO, borrowing_limit, loan_fine, replacement_cost
@@ -348,6 +349,8 @@ def create_report(school, actor, *, copy_id, report_type, member_id=None, issue_
         book=copy.book, copy=copy, member=member, issue=issue,
         metadata={"report_id": report.pk, "replacement_cost": str(report.replacement_cost), "source": source},
     )
+    if charge is not None:
+        notifications.enqueue_event(school.id, notifications.EVENT_REPLACEMENT_FEE, {"report_id": report.pk})
     return report, charge, True
 
 
@@ -468,7 +471,7 @@ def return_loan(school, actor, loan_id, *, fine_action="", waive_reason="", cond
 
     new_report = replacement_charge = None
     if report_type:
-        new_report, replacement_charge, _created = _new_report(
+        new_report, replacement_charge, created_report = _new_report(
             school, actor, copy=copy, member=member, issue=loan, report_type=report_type,
             notes=report.get("notes", ""), source=LostDamagedReport.SOURCE_DESK_RETURN, settings=settings, today=today,
         )
@@ -487,6 +490,15 @@ def return_loan(school, actor, loan_id, *, fine_action="", waive_reason="", cond
     _touch(loan, actor, "status", "return_date", "returned_at", "returned_by", "fine_amount")
 
     queue = hold_queue_count(school, loan.book_id)
+    if new_report is None and copy is not None and queue > 0:
+        # The copy is back on the shelf and someone is waiting: tell the first in the queue once this commits.
+        first_hold = (
+            Hold.objects.filter(school=school, book_id=loan.book_id, status=Hold.STATUS_WAITING).order_by("created_at", "id").first()
+        )
+        if first_hold is not None:
+            notifications.enqueue_event(school.id, notifications.EVENT_HOLD_READY, {"hold_id": first_hold.pk})
+    elif new_report is not None and created_report and replacement_charge is not None:
+        notifications.enqueue_event(school.id, notifications.EVENT_REPLACEMENT_FEE, {"report_id": new_report.pk})
     event = {"lost": LibraryActivityLog.EVENT_LOST, "damaged": LibraryActivityLog.EVENT_DAMAGED}.get(report_type, LibraryActivityLog.EVENT_RETURN)
     log_event(
         school, actor, event,

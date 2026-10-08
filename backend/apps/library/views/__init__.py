@@ -1,5 +1,6 @@
 from .base import LibraryViewSet
 from .catalogue import BookCategoryViewSet, BookCopyViewSet, BookViewSet
+from .console import ConsoleSummaryView
 from .holds import HoldViewSet
 from .issue_desk import BookIssueViewSet
 from .lost_damaged import LostDamagedViewSet
@@ -12,6 +13,7 @@ __all__ = [
     "BookIssueViewSet",
     "BookViewSet",
     "ChargeViewSet",
+    "ConsoleSummaryView",
     "HoldViewSet",
     "LibraryMemberViewSet",
     "LibrarySettingsView",

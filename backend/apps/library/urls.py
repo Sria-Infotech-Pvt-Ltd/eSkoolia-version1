@@ -7,6 +7,7 @@ from .views import (
     BookIssueViewSet,
     BookViewSet,
     ChargeViewSet,
+    ConsoleSummaryView,
     HoldViewSet,
     LibraryMemberViewSet,
     LibrarySettingsView,
@@ -25,5 +26,6 @@ router.register("lost-damaged", LostDamagedViewSet, basename="library-lost-damag
 
 urlpatterns = [
     path("settings/", LibrarySettingsView.as_view(), name="library-settings"),
+    path("console/summary/", ConsoleSummaryView.as_view(), name="library-console-summary"),
     *router.urls,
 ]

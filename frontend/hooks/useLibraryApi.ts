@@ -12,6 +12,8 @@ import type {
   AddCopiesResult,
   BulkIssueInput,
   BulkIssueResult,
+  ConsoleSummary,
+  RemindResult,
   DeskLog,
   DeskLogEntry,
   EligibleMember,
@@ -416,6 +418,25 @@ export function listOverdue(
   options?: ReadOptions,
 ): Promise<LibraryPage<Loan>> {
   return libraryRequest(`${BASE}/issues/overdue/${query(params)}`, { method: "GET", silent401: options?.silent401 });
+}
+
+/** Everything the librarian console shows, in one request. Poll it with silent401. */
+export async function getConsoleSummary(options?: ReadOptions): Promise<ConsoleSummary> {
+  const res = await libraryRequest<LibraryEnvelope<ConsoleSummary>>(`${BASE}/console/summary/`, {
+    method: "GET",
+    silent401: options?.silent401,
+    signal: options?.signal,
+  });
+  return res.data;
+}
+
+/**
+ * Queue overdue reminders: for named loans, or `all_overdue`. At most once per loan per day. A single
+ * loan reminded twice is refused with `library_reminder_already_sent`; a batch lists it in `skipped`.
+ */
+export async function remindLoans(body: { issue_ids?: number[]; all_overdue?: boolean }): Promise<RemindResult> {
+  const res = await libraryRequest<LibraryEnvelope<RemindResult>>(`${BASE}/issues/remind/`, json("POST", body));
+  return res.data;
 }
 
 /** Today's issue, return and renewal events, newest first (at most 100), with a count per type. */

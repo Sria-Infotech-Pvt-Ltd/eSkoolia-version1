@@ -283,12 +283,13 @@ export const MODULES: ModuleRoute[] = [
   {
     id: 'library',
     name: 'Library',
-    path: '/library/catalogue',
+    path: '/library/console',
     icon: BookMarked,
     bg: '#FDF2F8',
     ic: '#BE185D',
     permission: 'library',
     sub: [
+      { label: 'Console', path: '/library/console', icon: LayoutGrid, permission: 'library.console.view' },
       { label: 'Catalogue', path: '/library/catalogue', icon: BookOpen },
       { label: 'Issue Desk', path: '/library/issue-desk', icon: BookmarkCheck, permission: 'library.book_issues.view' },
       { label: 'Lost and Damaged', path: '/library/lost-damaged', icon: AlertTriangle, permission: 'library.lost_damaged.view' },
