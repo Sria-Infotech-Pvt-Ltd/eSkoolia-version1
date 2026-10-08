@@ -3,15 +3,15 @@
 Students: the class's next library period that is at least `student_min_due_days` away. If the
 class has no library period, the flat period. Teachers and staff: always the flat period.
 
-Library periods (`library_period_slots`) arrive in a later slice. `class_slot_weekdays` looks the
-model up by name and answers "no slots" while it does not exist or has no rows for the class, so
-every student currently gets the flat period.
+Library periods are the active rows of `library_period_slots` (`PeriodSlot`): `class_slot_weekdays`
+reads the weekdays on which the class (or its section) has one, and a class with none gets the flat period.
 """
 from dataclasses import dataclass
 from datetime import date, timedelta
 
-from django.apps import apps as django_apps
 from django.db.models import Q
+
+from apps.library.models import PeriodSlot
 
 DAY_INDEX = {"Mon": 0, "Tue": 1, "Wed": 2, "Thu": 3, "Fri": 4, "Sat": 5}
 
@@ -27,11 +27,7 @@ def class_slot_weekdays(school, school_class_id, section_id=None):
     """Weekday numbers (Monday is 0) on which the class has an active library period. Empty when none."""
     if not school_class_id:
         return set()
-    try:
-        slot_model = django_apps.get_model("library", "PeriodSlot")
-    except LookupError:
-        return set()
-    slots = slot_model.objects.filter(school=school, school_class_id=school_class_id, is_active=True).filter(
+    slots = PeriodSlot.objects.filter(school=school, school_class_id=school_class_id, is_active=True).filter(
         Q(section__isnull=True) | Q(section_id=section_id)
     )
     return {DAY_INDEX[day] for day in slots.values_list("day", flat=True) if day in DAY_INDEX}

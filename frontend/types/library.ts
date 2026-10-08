@@ -697,7 +697,7 @@ export interface ActivityEntry {
   issue: number | null;
 }
 
-/** GET /console/summary/. `period` is an empty object until library periods exist. */
+/** GET /console/summary/. `period` is an empty object when no library period is running. */
 export interface ConsoleSummary {
   generated_at: string;
   tiles: ConsoleTiles;
@@ -710,7 +710,7 @@ export interface ConsoleSummary {
   holds: Hold[];
   mix: ConsoleMixRow[];
   activity: ActivityEntry[];
-  period: Record<string, unknown>;
+  period: LivePeriodCard | Record<string, never>;
 }
 
 export type RemindSkipReason = "not_found" | "not_overdue" | "already_sent";
@@ -871,4 +871,179 @@ export interface BookRequestReviewInput {
   status: Exclude<BookRequestStatus, "pending">;
   note?: string;
   linked_book?: number | null;
+}
+
+// ─── Periods, visits and stock check ─────────────────────────────────────────
+
+export type SlotDay = "Mon" | "Tue" | "Wed" | "Thu" | "Fri" | "Sat";
+
+export interface PeriodSlot {
+  id: number;
+  school_class: number;
+  class_name: string;
+  section: number | null;
+  section_name: string;
+  day: SlotDay;
+  period: number;
+  period_name: string;
+  start_time: string;
+  end_time: string;
+  room_label: string;
+  supervisor: number | null;
+  supervisor_name: string;
+  is_active: boolean;
+}
+
+export interface PeriodSlotInput {
+  school_class: number;
+  section: number | null;
+  day: SlotDay;
+  period: number;
+  room_label?: string;
+  is_active?: boolean;
+}
+
+/** The 409 body for a clashing slot: `error.conflict` is "room", "class" or "twin", `error.slot` names the other slot. */
+export interface SlotSummary {
+  id: number;
+  class_name: string;
+  section_name: string;
+  day: SlotDay;
+  period_name: string;
+  start_time: string;
+  end_time: string;
+  room_label: string;
+}
+
+export interface GridPeriod {
+  id: number;
+  name: string;
+  start_time: string;
+  end_time: string;
+}
+
+export interface GridSlot extends SlotSummary {
+  period: number;
+  school_class: number;
+  section: number | null;
+  supervisor_name: string;
+  is_active: boolean;
+  live: boolean;
+}
+
+export interface WeekGrid {
+  days: SlotDay[];
+  /** Mon to Sat, or null on a Sunday. */
+  today: SlotDay | null;
+  now: string;
+  periods: GridPeriod[];
+  slots: GridSlot[];
+  live_slot_ids: number[];
+}
+
+export interface OccupancyRow extends SlotSummary {
+  slot_id: number;
+  checked_in: number;
+  scheduled: number;
+}
+
+export interface Occupancy {
+  date: string;
+  checked_in: number;
+  scheduled: number;
+  slots: OccupancyRow[];
+}
+
+/** Console live-period card. An empty object when no period is running. */
+export type LivePeriodCard = Occupancy & { label: string };
+
+export interface FootfallRow {
+  school_class: number;
+  class_name: string;
+  visits: number;
+  members: number;
+}
+
+export interface Footfall {
+  from: string;
+  to: string;
+  total: number;
+  results: FootfallRow[];
+}
+
+export interface BriefingList<T> {
+  count: number;
+  rows: T[];
+}
+
+export interface PrepBriefing {
+  slot: SlotSummary;
+  date: string;
+  /** Minutes until it starts when it is today, else null. */
+  starts_in_minutes: number | null;
+  due_back: BriefingList<{ issue_id: number; book_title: string; member_name: string; due_date: string; days_overdue: number }>;
+  blocked: BriefingList<{ member_id: number; member_name: string; card_no: string }>;
+  holds_ready: BriefingList<{ hold_id: number; book_title: string; member_name: string }>;
+}
+
+export type CheckInMethod = "card_tap" | "manual" | "camera";
+
+export interface CheckInInput {
+  card_no?: string;
+  member?: number;
+  period_slot?: number | null;
+  method?: CheckInMethod;
+}
+
+export interface CheckInResult {
+  created: boolean;
+  visit: { id: number; member: number; member_name: string; card_no: string; period_slot: number; checked_in_at: string; method: CheckInMethod };
+  slot: OccupancyRow;
+  checked_in: number;
+  scheduled: number;
+}
+
+export type AuditStatus = "in_progress" | "completed" | "cancelled";
+
+export interface StockAudit {
+  id: number;
+  scope_rack: string;
+  status: AuditStatus;
+  started_at: string;
+  finished_at: string | null;
+  total_in_scope: number;
+  accounted_count: number;
+  missing_count: number;
+  value_at_risk: string;
+  progress: { found: number; total: number };
+}
+
+export interface StockAuditItem {
+  id: number;
+  copy: number;
+  copy_code: string;
+  copy_status: CopyStatus;
+  book: number;
+  book_title: string;
+  rack: string;
+  cost_per_copy: string;
+  found: boolean;
+  verified_at: string | null;
+}
+
+export interface StockAuditItemParams {
+  page?: number;
+  page_size?: number;
+  found?: boolean;
+  book?: number;
+}
+
+export interface FinishedAudit extends StockAudit {
+  missing: StockAuditItem[];
+}
+
+export interface MarkLostResult {
+  created: boolean;
+  report: LostDamagedRow;
+  item: StockAuditItem;
 }

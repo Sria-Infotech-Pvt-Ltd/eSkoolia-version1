@@ -13,6 +13,7 @@ argument, stored in an activity row or written to a log line.
 """
 import logging
 from dataclasses import dataclass
+from datetime import date
 
 from django.db import transaction
 from django.utils import timezone
@@ -23,6 +24,7 @@ from apps.core.services.parent_notifications import send_email_sendgrid, send_sm
 from apps.library.models import (
     BookIssue,
     BookRequest,
+    PeriodSlot,
     Hold,
     LibraryActivityLog,
     LibraryMember,
@@ -41,11 +43,13 @@ EVENT_HOLD_READY = "hold_ready"
 EVENT_OVERDUE_REMINDER = "overdue_reminder"
 EVENT_REPLACEMENT_FEE = "replacement_fee"
 EVENT_REQUEST_REVIEWED = "request_reviewed"
-EVENTS = (EVENT_HOLD_READY, EVENT_OVERDUE_REMINDER, EVENT_REPLACEMENT_FEE, EVENT_REQUEST_REVIEWED)
+EVENT_UNSCANNED_FLAG = "unscanned_flag"
+EVENTS = (EVENT_HOLD_READY, EVENT_OVERDUE_REMINDER, EVENT_REPLACEMENT_FEE, EVENT_REQUEST_REVIEWED, EVENT_UNSCANNED_FLAG)
 
 LINK_STAFF = "/teacher/library/my-books"
 LINK_GUARDIAN = "/parent/library"
 LINK_REQUESTS = "/teacher/library/recommend"
+LINK_TEACHER_LIBRARY = "/teacher/library"
 
 # Notification type per event (blueprint 6.2): reminders and fees are "reminder", the rest "system".
 NOTIFICATION_TYPE = {
@@ -53,6 +57,7 @@ NOTIFICATION_TYPE = {
     EVENT_OVERDUE_REMINDER: CommunicationNotification.TYPE_REMINDER,
     EVENT_REPLACEMENT_FEE: CommunicationNotification.TYPE_REMINDER,
     EVENT_REQUEST_REVIEWED: CommunicationNotification.TYPE_SYSTEM,
+    EVENT_UNSCANNED_FLAG: CommunicationNotification.TYPE_REMINDER,
 }
 
 
@@ -192,6 +197,34 @@ def _build_request_reviewed(school, ids):
     }
 
 
+def _build_unscanned_flag(school, ids):
+    """Tell one class teacher how many students have not checked in. Counts only, no student names."""
+    from django.contrib.auth import get_user_model
+
+    from .unscanned import unscanned_count
+
+    slot = (
+        PeriodSlot.objects.select_related("school_class", "section", "period")
+        .filter(pk=ids["slot_id"], school=school, is_active=True)
+        .first()
+    )
+    teacher = get_user_model().objects.filter(pk=ids["teacher_id"], school=school).first()
+    if slot is None or teacher is None:
+        return None
+    unscanned, scheduled = unscanned_count(school, slot, date.fromisoformat(ids["date"]))
+    if unscanned == 0:
+        return None
+    where = f"{slot.school_class.name} {slot.section.name if slot.section_id else ''}".strip()
+    return {
+        "member": None,
+        "recipient": Recipient(teacher, link_url=LINK_TEACHER_LIBRARY),
+        "title": "Students missing from the library period",
+        "body": f"{unscanned} of {scheduled} students in {where} had not checked in to the library period "
+        f"that started at {slot.period.start_time.strftime('%H:%M')}.",
+        "key": {"slot_id": slot.pk, "date": ids["date"]},
+    }
+
+
 # ---- delivery ---------------------------------------------------------------------------------------------------------
 
 
@@ -235,6 +268,8 @@ def deliver_event(school_id, event, ids):
         built = _build_replacement_fee(school, ids)
     elif event == EVENT_REQUEST_REVIEWED:
         built = _build_request_reviewed(school, ids)
+    elif event == EVENT_UNSCANNED_FLAG:
+        built = _build_unscanned_flag(school, ids)
     else:
         raise ValueError(f"Unknown library notification event: {event!r}")
     if built is None:

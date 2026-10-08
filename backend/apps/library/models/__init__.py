@@ -4,7 +4,9 @@ from .base import LibraryAuditModel
 from .catalogue import Book, BookCategory, BookCopy
 from .circulation import BookIssue, Hold, LibraryMember
 from .money import Charge, LostDamagedReport
+from .periods import PeriodSlot, Visit
 from .settings import LibrarySettings
+from .stock import StockAudit, StockAuditItem
 
 __all__ = [
     "Book",
@@ -21,5 +23,9 @@ __all__ = [
     "LibraryMember",
     "LibrarySettings",
     "LostDamagedReport",
+    "PeriodSlot",
     "PurchaseOrder",
+    "StockAudit",
+    "StockAuditItem",
+    "Visit",
 ]

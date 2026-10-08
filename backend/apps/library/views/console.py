@@ -19,6 +19,7 @@ from apps.library.serializers import (
     HoldSerializer,
     IssueRowSerializer,
 )
+from apps.library.services import periods
 from apps.library.services.settings import get_settings
 
 from .issue_desk import BookIssueViewSet
@@ -33,7 +34,7 @@ class ConsoleSummaryView(APIView):
 
     Queries, whatever the amount of data: settings (1), copies (1), loans (1), titles (1), reports (1),
     holds (1), collection mix (1), the attention list (1), the holds list (1) and recent activity (1).
-    The live period card is an empty object until library periods exist.
+    The live period card adds up to three more queries (running slots, head count, check-ins) and is an empty object when no period is running.
     """
 
     permission_classes = [IsAuthenticated]
@@ -119,7 +120,7 @@ class ConsoleSummaryView(APIView):
                     "holds": HoldSerializer(holds, many=True).data,
                     "mix": mix,
                     "activity": DeskLogSerializer(activity, many=True).data,
-                    "period": {},
+                    "period": periods.console_card(school),
                 },
             }
         )

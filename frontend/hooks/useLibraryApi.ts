@@ -8,6 +8,20 @@
  */
 import { apiRequestWithRefresh, type RequestOptions } from "@/lib/api-auth";
 import type {
+  AuditStatus,
+  CheckInInput,
+  CheckInResult,
+  FinishedAudit,
+  Footfall,
+  MarkLostResult,
+  Occupancy,
+  PeriodSlot,
+  PeriodSlotInput,
+  PrepBriefing,
+  StockAudit,
+  StockAuditItem,
+  StockAuditItemParams,
+  WeekGrid,
   AcquisitionsSummary,
   BookRequest,
   BookRequestListParams,
@@ -633,5 +647,134 @@ export function listBookRequests(params?: BookRequestListParams, options?: ReadO
 
 export async function reviewBookRequest(id: number, body: BookRequestReviewInput): Promise<BookRequest> {
   const res = await libraryRequest<LibraryEnvelope<BookRequest>>(`${BASE}/book-requests/${id}/review/`, json("POST", body));
+  return res.data;
+}
+
+// ─── Periods, visits and stock check ─────────────────────────────────────────
+
+export function listPeriodSlots(params?: { page?: number; page_size?: number }, options?: ReadOptions): Promise<LibraryPage<PeriodSlot>> {
+  return libraryRequest(`${BASE}/period-slots/${query(params)}`, { method: "GET", silent401: options?.silent401 });
+}
+
+export async function createPeriodSlot(body: PeriodSlotInput): Promise<PeriodSlot> {
+  const res = await libraryRequest<LibraryEnvelope<PeriodSlot>>(`${BASE}/period-slots/`, json("POST", body));
+  return res.data;
+}
+
+export async function updatePeriodSlot(id: number, body: Partial<PeriodSlotInput>): Promise<PeriodSlot> {
+  const res = await libraryRequest<LibraryEnvelope<PeriodSlot>>(`${BASE}/period-slots/${id}/`, json("PATCH", body));
+  return res.data;
+}
+
+/** 409 library_has_history when the period has check-ins: switch it off instead. */
+export async function deletePeriodSlot(id: number): Promise<void> {
+  await libraryRequest(`${BASE}/period-slots/${id}/`, { method: "DELETE" });
+}
+
+export async function getWeekGrid(options?: ReadOptions): Promise<WeekGrid> {
+  const res = await libraryRequest<LibraryEnvelope<WeekGrid>>(`${BASE}/period-slots/week/`, { method: "GET", silent401: options?.silent401 });
+  return res.data;
+}
+
+/** The next upcoming slot's briefing, or an empty object when no slot is set up. */
+export async function getPrepBriefing(options?: ReadOptions): Promise<PrepBriefing | Record<string, never>> {
+  const res = await libraryRequest<LibraryEnvelope<PrepBriefing | Record<string, never>>>(`${BASE}/period-slots/prep-briefing/`, {
+    method: "GET",
+    silent401: options?.silent401,
+  });
+  return res.data;
+}
+
+export async function getOccupancy(periodSlot?: number, options?: ReadOptions): Promise<Occupancy> {
+  const res = await libraryRequest<LibraryEnvelope<Occupancy>>(`${BASE}/visits/occupancy/${query({ period_slot: periodSlot })}`, {
+    method: "GET",
+    silent401: options?.silent401,
+  });
+  return res.data;
+}
+
+export async function getFootfall(range?: { from?: string; to?: string }, options?: ReadOptions): Promise<Footfall> {
+  const res = await libraryRequest<LibraryEnvelope<Footfall>>(`${BASE}/visits/footfall/${query(range)}`, {
+    method: "GET",
+    silent401: options?.silent401,
+  });
+  return res.data;
+}
+
+/** Repeating it for the same slot, member and day returns the first visit with `created: false`. */
+export async function checkIn(body: CheckInInput): Promise<CheckInResult> {
+  const res = await libraryRequest<LibraryEnvelope<CheckInResult>>(`${BASE}/visits/check-in/`, json("POST", body));
+  return res.data;
+}
+
+/** Sections of one class from the existing core API. */
+export async function listClassSections(classId: number, options?: ReadOptions): Promise<{ id: number; name: string }[]> {
+  const data = await apiRequestWithRefresh<
+    { id: number; name: string; school_class?: number }[] | { results?: { id: number; name: string; school_class?: number }[] }
+  >(`/api/v1/core/sections/?school_class=${classId}&page_size=100`, { method: "GET", silent401: options?.silent401 });
+  const rows = Array.isArray(data) ? data : (data.results ?? []);
+  return rows.filter((row) => row.school_class === undefined || row.school_class === classId).map((row) => ({ id: row.id, name: row.name }));
+}
+
+export function listStockAudits(params?: { page?: number; page_size?: number; status?: AuditStatus }, options?: ReadOptions): Promise<LibraryPage<StockAudit>> {
+  return libraryRequest(`${BASE}/stock-audits/${query(params)}`, { method: "GET", silent401: options?.silent401 });
+}
+
+export async function getStockAudit(id: number, options?: ReadOptions): Promise<StockAudit> {
+  const res = await libraryRequest<LibraryEnvelope<StockAudit>>(`${BASE}/stock-audits/${id}/`, { method: "GET", silent401: options?.silent401 });
+  return res.data;
+}
+
+/** Blank rack means every rack. 409 library_audit_in_progress when that scope already has an open check. */
+export async function startStockAudit(rack: string): Promise<StockAudit> {
+  const res = await libraryRequest<LibraryEnvelope<StockAudit>>(`${BASE}/stock-audits/`, json("POST", { rack }));
+  return res.data;
+}
+
+export function listStockAuditItems(id: number, params?: StockAuditItemParams, options?: ReadOptions): Promise<LibraryPage<StockAuditItem>> {
+  return libraryRequest(`${BASE}/stock-audits/${id}/items/${query(params)}`, { method: "GET", silent401: options?.silent401 });
+}
+
+export async function markAuditItem(auditId: number, itemId: number, found: boolean): Promise<{ item: StockAuditItem; progress: { found: number; total: number } }> {
+  const res = await libraryRequest<LibraryEnvelope<{ item: StockAuditItem; progress: { found: number; total: number } }>>(
+    `${BASE}/stock-audits/${auditId}/items/${itemId}/`,
+    json("PATCH", { found }),
+  );
+  return res.data;
+}
+
+export async function bulkMarkAuditItems(auditId: number, itemIds: number[], found: boolean): Promise<{ changed: number; progress: { found: number; total: number } }> {
+  const res = await libraryRequest<LibraryEnvelope<{ changed: number; progress: { found: number; total: number } }>>(
+    `${BASE}/stock-audits/${auditId}/items/bulk-mark/`,
+    json("POST", { item_ids: itemIds, found }),
+  );
+  return res.data;
+}
+
+export async function finishStockAudit(id: number): Promise<FinishedAudit> {
+  const res = await libraryRequest<LibraryEnvelope<FinishedAudit>>(`${BASE}/stock-audits/${id}/finish/`, { method: "POST" });
+  return res.data;
+}
+
+export async function cancelStockAudit(id: number): Promise<StockAudit> {
+  const res = await libraryRequest<LibraryEnvelope<StockAudit>>(`${BASE}/stock-audits/${id}/cancel/`, { method: "POST" });
+  return res.data;
+}
+
+/** Only for a missing copy of a finished check that is still on the shelf. Repeating it returns the same report. */
+export async function markAuditItemLost(auditId: number, itemId: number, notes?: string): Promise<MarkLostResult> {
+  const res = await libraryRequest<LibraryEnvelope<MarkLostResult>>(
+    `${BASE}/stock-audits/${auditId}/items/${itemId}/mark-lost/`,
+    json("POST", { notes: notes ?? "" }),
+  );
+  return res.data;
+}
+
+/** Racks that have copies on the shelf, for the stock-check picker. `no_rack` counts shelf copies with no rack set. */
+export async function listStockRacks(options?: ReadOptions): Promise<{ racks: { rack: string; copies: number }[]; no_rack: number }> {
+  const res = await libraryRequest<LibraryEnvelope<{ racks: { rack: string; copies: number }[]; no_rack: number }>>(
+    `${BASE}/stock-audits/racks/`,
+    { method: "GET", silent401: options?.silent401 },
+  );
   return res.data;
 }

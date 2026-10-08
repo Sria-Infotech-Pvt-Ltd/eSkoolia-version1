@@ -207,10 +207,20 @@ export function ConsolePage() {
             <div style={{ flex: "1 1 300px", minWidth: 0, display: "grid", gap: 16 }}>
               <section style={card} aria-label="Library period">
                 <h2 style={{ margin: "0 0 6px", fontSize: 15, color: "var(--ink-1)" }}>Library period</h2>
-                {Object.keys(data.period).length === 0 ? (
-                  <p style={{ fontSize: 13, color: "var(--ink-3)", margin: 0 }}>No library period is running. Periods and live check-ins will appear here once timetable slots are set up.</p>
+                {!("slots" in data.period) ? (
+                  <p style={{ fontSize: 13, color: "var(--ink-3)", margin: 0 }}>No library period is running right now. Set up periods on the Periods and Occupancy page.</p>
                 ) : (
-                  <p style={{ fontSize: 13, color: "var(--ink-1)", margin: 0 }}>A period is running.</p>
+                  <>
+                    <p style={{ fontSize: 13, color: "var(--ink-3)", margin: "0 0 6px" }}>{data.period.label}</p>
+                    <div style={{ fontSize: 24, fontWeight: 700, color: "var(--ink-1)", fontVariantNumeric: "tabular-nums" }}>
+                      {data.period.checked_in} <span style={{ fontSize: 13, fontWeight: 400, color: "var(--ink-3)" }}>checked in of {data.period.scheduled}</span>
+                    </div>
+                    {data.period.slots.map((row) => (
+                      <div key={row.slot_id} style={{ fontSize: 12, color: "var(--ink-2)", marginTop: 4 }}>
+                        {[row.class_name, row.section_name].filter(Boolean).join(" ")} in {row.room_label}: {row.checked_in} / {row.scheduled}
+                      </div>
+                    ))}
+                  </>
                 )}
               </section>
 

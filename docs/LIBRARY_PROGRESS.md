@@ -62,7 +62,7 @@ plus the untracked library planning documents, staged in prompt 1.
 | 6 | Issue Desk and exceptions screens | Done (2026-10-07). 436 backend tests pass (2 Postgres-only skipped, unverified), 44 Jest tests pass. tsc and lint show only the baseline errors. Nothing was checked in a browser. |
 | 7 | Console, reminders and push | Done (2026-10-08). 494 backend tests pass (2 Postgres-only skipped, unverified), 49 Jest tests pass. tsc and lint show only the baseline errors. No Celery worker, Redis or dev server was started; nothing was checked in a browser. |
 | 8 | Acquisitions and requests | Done (2026-10-08). 558 backend tests pass (3 Postgres-only skipped, unverified), 58 Jest tests pass in `__tests__/library`. `makemigrations --check` clean. tsc and eslint report nothing in the library files. No dev server, Celery worker or Redis was started; nothing was checked in a browser. |
-| 9 | Periods, occupancy and stock check | Not started |
+| 9 | Periods, occupancy and stock check | Done (2026-10-08). 641 backend tests pass (4 Postgres-only skipped, unverified), 67 Jest tests pass in `__tests__/library`. `makemigrations --check` clean. tsc and eslint report nothing in the library files. No dev server, Celery worker, Redis or beat process was started; the management command was not run; nothing was checked in a browser. **You must run `library_register_periodic_tasks` (see Migrations to apply).** |
 | 10 | Oversight: logs and reports | Not started |
 | 11 | Teacher portal | Not started |
 | 12 | Parent portal | Not started |
@@ -139,6 +139,18 @@ plus the untracked library planning documents, staged in prompt 1.
 - Book serializer and accession service accept `purchase_order` and `donation` (same school); `BookDetailSerializer` returns their ids.
 - Frontend: `/library/acquisitions` (`components/library/acquisitions/`), sub item after Catalogue, hook functions in `useLibraryApi.ts`, types in `types/library.ts`, source-step selects in the accession wizard. Jest: `__tests__/library/acquisitions.test.ts`.
 - For prompt 11 (teacher portal): `BookRequest` rows are created there. The model needs `requested_by`, `title`, optional `school_class`, `section` and `notes`; this prompt only reads and reviews them.
+
+## What prompt 9 built (for the next prompt)
+
+- Models: `models/periods.py` (`PeriodSlot`, `Visit`) and `models/stock.py` (`StockAudit`, `StockAuditItem`). Migration `0013_periods_stock` (new tables only).
+- `services/periods.py`: slot conflicts, running slots, one grouped students query for head counts, check-in, week grid, prep briefing, footfall and the Console card. Everything that reads the clock goes through `periods.local_now()`.
+- `services/unscanned.py`: `flag_unscanned(school, now)`. `services/stock_audit.py`: start, mark, bulk mark, finish, cancel, mark missing lost.
+- Endpoints under `/api/v1/library/`: `period-slots/` (CRUD plus `week/`, `current/`, `prep-briefing/`), `visits/check-in/`, `visits/occupancy/`, `visits/footfall/`, `stock-audits/` (plus `racks/`, `{id}/items/`, `{id}/items/{item}/`, `items/bulk-mark/`, `finish/`, `cancel/`, `{id}/items/{item}/mark-lost/`). Permission codes were already seeded.
+- `services/due_dates.py` now imports `PeriodSlot` directly; a student's due date snaps to the class's next active library weekday (section slots and class-wide slots both count).
+- Console `period` card is filled by `periods.console_card` (empty object when nothing is running).
+- Celery: `tasks.flag_unscanned_students` (name `library.flag_unscanned_students`), notification event `unscanned_flag`, management command `library_register_periodic_tasks`, and the same every-minute entry in `config/celery.py`.
+- Frontend: `/library/periods` (`components/library/periods/`), `/library/stock-check` (`components/library/stock-check/`), hook functions and types, sub items at their final positions, Console card. Jest: `__tests__/library/periods.test.ts`.
+- For prompts 11 and 12 (portals): `PeriodSlot` is the read-only timetable source for teachers and parents; the `unscanned_flag` notification links to `/teacher/library`.
 
 ## Decisions made
 
@@ -222,6 +234,20 @@ plus the untracked library planning documents, staged in prompt 1.
 77. **Sub nav.** The Acquisitions item has no single permission code (it spans budgets, purchase orders, donations and requests), like Catalogue and Members; each section hides itself by its own code and the page shows a no-access state when none apply.
 78. **Source links in the wizard.** The purchase order and donation selects appear only for a caller with the matching view code and only for the matching source. Editing a title without those codes keeps its existing links. Choosing a link fills an empty vendor or donor name.
 
+79. **(Prompt 9) Slot conflicts** return the core 409 `conflict` (not a sixteenth library code, because blueprint 2.3 fixes the list at fifteen and a test asserts it). The body is `error.conflict` ("room", "class" or "twin") and `error.slot` with the clashing slot's id, class, section, day, period, times and room. "room": the room is taken at that time (an inactive slot still holds its room, matching the unique constraint). "class": the class or one of its sections already has an active period then; a class-wide slot clashes with any section slot of that class. "twin": the same class and section at the same time, refused even when the other slot is off (otherwise the database constraint would answer 500). A new constraint `uq_library_period_slots_class_wide` covers the NULL-section case, which a plain unique constraint cannot.
+80. **Period validation.** Class, section, period and supervisor must belong to the school; the section must belong to the class; the period must be a class period that is not a break and not an exam. A slot with check-ins cannot be deleted (409 `library_has_history`); switch it off.
+81. **Live slot** means an active slot for today's weekday whose period contains the current local time. Several can run at once (one per room); occupancy and the Console card list them all and add the totals. Sunday has no slots.
+82. **Check-in.** By `card_no` (404 when unknown) or `member` id (400 when not in the school). A student is placed in the running slot of their class and section; a teacher or staff member in the only running slot; otherwise a 400 on `period_slot`. An explicit slot must be active and for today's weekday. A repeat for the same slot, member and date is a 200 with `created: false` and no new row. Check-ins write no activity-log row (the activity types have none that fits and the volume would drown the feed); the `visits` table is the record. Inactive members cannot check in.
+83. **Occupancy.** Scheduled is the active students of the slot's class (and section when the slot has one); a class-wide slot counts every section. Checked in is every visit to the slot that day. Two grouped queries serve all slots (a test caps the whole request at 8 queries with 7 slots). The Console card adds at most 3 queries and one when nothing is running.
+84. **Footfall** groups visits by the slot's class, default from this week's Monday to today, and lists classes that have an active slot with 0 visits.
+85. **Prep briefing** is for the next active slot that has not started (today, else the next day with one, up to a week ahead). Books due back: open loans of that class's students due on or before the slot date. Blocked: class members with accrued or pending fines or unpaid replacement fees (the same rule as suspension). Holds ready: waiting holds of the class whose title has an available copy now. Each list is capped at 50 rows with the full count.
+86. **Unscanned flag.** Runs every minute. A slot is flagged once its period has been running longer than `unscanned_flag_minutes` and before it ends, at most once per slot per date. The marker is a `reminder` activity row with `metadata.action = unscanned_flag`, slot id, date, counts; it is written even when nobody is missing or no class teacher exists, so the slot is not re-evaluated all day. Unscanned means scheduled students minus distinct students of that class who checked in. Recipients are the active `ClassTeacherAssignment` teachers of the class (those of the slot's section, and class-wide ones). One notification per teacher, type `reminder`, link `/teacher/library`, text with counts only: no student names, ids or contact details.
+87. **Beat registration.** `django_celery_beat` is installed as a package but is not in `INSTALLED_APPS`, and the project schedules through the static `beat_schedule` in `config/celery.py`. So the entry `library-flag-unscanned-students` (every 60 s) is declared there, which works with the default scheduler. `library_register_periodic_tasks` writes the same entry, under the same name, into the `django_celery_beat` tables with `update_or_create`; it refuses with an explanation when that app is not installed. Under a DatabaseScheduler the two do not double up because the name is the same.
+88. **Stock check scope.** Blank rack means all racks. The open-audit rule is per exact scope (blueprint 2.2), so "R1" and "all racks" can be open together and overlap; this is as specified. Starting with no shelf copies in scope is a 400 on `rack`. Racks come from the title's `rack` field; copies with no rack are reachable only through "all racks" (`stock-audits/racks/` reports how many).
+89. **Finish.** Counts, value at risk (sum of the titles' cost per copy over missing copies) and `finished_at` are frozen; found copies get `last_verified_on` set. A copy that left the shelf during the check (issued meanwhile) and was not ticked still counts as missing, as specified; the item shows its current status.
+90. **Mark lost (R15).** Only for a missing item of a finished check, only while the copy is still available, and idempotent: a repeat returns the same report (found through the copy, source `stock_audit` and a creation time after the audit finished). The report has no borrower and no replacement charge. A found copy, an unfinished audit, or a copy no longer on the shelf is a 409 `library_invalid_state_transition`.
+91. **Supervisor** is stored and shown but the slot form does not set it (the HR staff list needs HR permissions the librarian may not hold). It can be set through the API.
+
 ## Migrations to apply
 
 Not applied by the build. Apply in this order on each environment.
@@ -239,6 +265,15 @@ Not applied by the build. Apply in this order on each environment.
 | `library.0010_circulation_backfill` | Data: binds every open and lost loan to a copy (decision 51). **Stops with an error listing library_book_issues ids** if a loan's due or return date is before its issue date; fix those dates by hand and run it again. Take a snapshot first. |
 | `library.0011_circulation_constraints` | `uq_library_book_issues_open_copy` (one open loan per copy), `ck_library_book_issues_due_after_issue`, `ck_library_book_issues_return_after_issue`. |
 | `library.0012_acquisitions` | New tables `library_purchase_orders`, `library_donations`, `library_budgets`, `library_book_requests` with their unique, check and index definitions; nullable `library_books.purchase_order` and `library_books.donation`. No data step: the tables are new. |
+| `library.0013_periods_stock` | New tables `library_period_slots`, `library_visits`, `library_stock_audits`, `library_stock_audit_items` with their unique (including the partial ones), index definitions. No data step: the tables are new. |
+
+**After `0013`, run this command once per environment (not run by the build):**
+
+```
+python manage.py library_register_periodic_tasks
+```
+
+It creates the every-minute `library-flag-unscanned-students` entry in `django_celery_beat`. It stops with a clear message if `django_celery_beat` is not an installed app; in that case the entry in `config/celery.py` is what schedules the task, and you need only run Celery Beat. Either way a Celery worker and Redis must be running for the flag to be sent.
 
 **After `0011`:** run `python manage.py library_reconcile` again. Its Loans section must read "no mismatches". Anything listed there is an open loan without a copy, an issued copy with no open loan, or an open loan on a copy not marked issued.
 
@@ -264,10 +299,10 @@ After migrating, in this order: `seed_permissions`, `seed_module_tiers`, `seed_r
 - **No component tests** for the desk and lost and damaged screens, only helper tests.
 - **Roster size.** The issue tab asks for up to 500 members of a class or group at once; a larger group would be cut off.
 - **Notifications need a worker.** Events are queued to Celery. Nothing is delivered until a Celery worker and the broker (Redis) are running; without them the queue call fails quietly and the in-app notification and push never happen. The in-app rows, pushes and SMS or email were tested with the task function called directly, never through a real worker, broker or WebSocket.
-- **No Celery Beat entry yet.** Reminders are sent only when a librarian asks. The unscanned-slot flag (blueprint 6.1) arrives with prompt 9.
+- **Reminders are still manual.** Overdue reminders go out only when a librarian asks. The unscanned-slot flag is the only scheduled library task.
 - **The teacher and parent portals do not show library events yet.** The push and the bell rows exist; the portal Library pages that refetch on them are prompts 11 and 12.
 - **A blocking `delay` is avoided, not eliminated.** `retry=False` makes a missing broker fail fast, but a half-open broker connection could still add latency to a return at commit time.
-- **`library_period_slots` does not exist yet**, so students always get the flat period (decision 46).
+- **(Resolved in prompt 9)** `library_period_slots` now exists; a student's due date snaps to the class's library day (decision 46 still describes the rule).
 - **Postgres-only behaviour is unverified.** `test_last_copy_race_gives_one_success_and_one_conflict` and `test_concurrent_accession_in_one_category_never_repeats_a_code` are skipped on SQLite. Run them on a PostgreSQL test database before relying on the locking. The partial unique index that blocks a second open loan is tested on SQLite and does not need Postgres to be exercised.
 - **Migrations `0009` to `0011` were rendered to SQL and the backfill functions were tested directly on hand-built legacy rows, but `migrate` was never run** (SQLite cannot run the project chain).
 - **Undo deletes the fine charge row** rather than writing a reversal entry. The reversal is visible only in the activity log.
@@ -282,6 +317,12 @@ After migrating, in this order: `seed_permissions`, `seed_module_tiers`, `seed_r
 - **Migration not executed.** SQLite cannot run the project's migration chain, so `0002_foundations` was verified by `makemigrations --check` and `sqlmigrate`, not by `migrate`. Run it on Postgres staging first.
 - **Tests that need Postgres** (row locks, partial indexes): none yet. Future ones must be marked skip-unless-Postgres.
 - **Frontend baseline errors** (tsc 13, lint 7) belong to the exams, HR and academics modules.
+- **(Prompt 9) The flag has never run against a worker or beat.** `flag_unscanned_students` and the `unscanned_flag` event were tested by calling the task function and `deliver_event` with a fixed clock and an eager Celery config. The beat entry, the management command against real `django_celery_beat` tables, and delivery over Redis are unverified.
+- **(Prompt 9) The concurrency tests are Postgres-only and were skipped** (a double check-in race is covered only by the unique constraint and a caught `IntegrityError`; two desks starting the same audit scope by the partial unique index). Unverified.
+- **(Prompt 9) Marker lookup scans reminder rows.** Idempotency reads `library_activity_logs` by school, type `reminder` and exact JSON keys; the index covers the first two. Fine at current volume; revisit if reminder rows grow into the hundreds of thousands.
+- **(Prompt 9) Time zone.** The clock is the server's local time (`timezone.localtime`). Slots and the flag assume the school and the server share it.
+- **(Prompt 9) Nothing was checked in a browser.** The two pages, the 30 second refresh, the slot manager and the Console card were type-checked, linted and covered by helper tests only.
+- **(Prompt 9) Check-ins are not in the activity feed** (decision 82), so Transactions and Logs (prompt 10) will not show them unless it reads `library_visits`.
 
 ## Deviations from blueprint
 
