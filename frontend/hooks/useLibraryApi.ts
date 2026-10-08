@@ -6,8 +6,15 @@
  * Portal (teacher / parent) library calls do not belong here; they live in the
  * portal API clients.
  */
-import { apiRequestWithRefresh, type RequestOptions } from "@/lib/api-auth";
+import { apiRequestWithRefresh, apiRequestWithRefreshResponse, type RequestOptions } from "@/lib/api-auth";
 import type {
+  ActivityLogParams,
+  ActivityLogRow,
+  BudgetVsSpend,
+  CirculationByCategory,
+  FinesAndFees,
+  MonthlyTrend,
+  ReportRangeParams,
   AuditStatus,
   CheckInInput,
   CheckInResult,
@@ -777,4 +784,69 @@ export async function listStockRacks(options?: ReadOptions): Promise<{ racks: { 
     { method: "GET", silent401: options?.silent401 },
   );
   return res.data;
+}
+
+// ─── Transactions, export and reports ────────────────────────────────────────
+
+export function listActivityLogs(params?: ActivityLogParams, options?: ReadOptions): Promise<LibraryPage<ActivityLogRow>> {
+  return libraryRequest(`${BASE}/activity-logs/${query(params)}`, { method: "GET", silent401: options?.silent401 });
+}
+
+/**
+ * Downloads the filtered log as a CSV file. Auth needs the fetch wrapper, so this is not a plain link.
+ * The server caps the file at 50,000 rows and writes its own log row. Resolves with the row count.
+ */
+export async function exportActivityLogs(params?: Omit<ActivityLogParams, "page" | "page_size">): Promise<number> {
+  let res: Response;
+  try {
+    res = await apiRequestWithRefreshResponse(`${BASE}/activity-logs/export/${query(params)}`, { method: "GET" });
+  } catch (err) {
+    throw toLibraryApiError(err);
+  }
+  if (!res.ok) {
+    let message = "Could not export the log.";
+    try {
+      const body = (await res.json()) as Partial<LibraryErrorBody>;
+      if (typeof body.error?.message === "string") message = body.error.message;
+    } catch {
+      // not JSON: keep the generic message
+    }
+    throw new LibraryApiError(message, { status: res.status });
+  }
+  const blob = await res.blob();
+  const url = window.URL.createObjectURL(blob);
+  const link = document.createElement("a");
+  link.href = url;
+  link.download = (/filename="([^"]+)"/.exec(res.headers.get("Content-Disposition") ?? "") ?? [])[1] ?? "library-activity.csv";
+  document.body.appendChild(link);
+  link.click();
+  link.remove();
+  window.URL.revokeObjectURL(url);
+  return Number(res.headers.get("X-Export-Rows") ?? 0);
+}
+
+async function getReport<T>(name: string, params?: object, options?: ReadOptions): Promise<T> {
+  const res = await libraryRequest<LibraryEnvelope<T>>(`${BASE}/reports/${name}/${query(params)}`, {
+    method: "GET",
+    silent401: options?.silent401,
+  });
+  return res.data;
+}
+
+/** Default range is the current academic year; `from` and `to` override it. 400 with no current year and no dates. */
+export function getCirculationByCategory(params?: ReportRangeParams, options?: ReadOptions): Promise<CirculationByCategory> {
+  return getReport("circulation-by-category", params, options);
+}
+
+export function getMonthlyTrend(params?: ReportRangeParams, options?: ReadOptions): Promise<MonthlyTrend> {
+  return getReport("monthly-trend", params, options);
+}
+
+export function getFinesAndFees(params?: ReportRangeParams, options?: ReadOptions): Promise<FinesAndFees> {
+  return getReport("fines-and-fees", params, options);
+}
+
+/** 404 when the school has no current academic year and none is given. */
+export function getBudgetVsSpend(params?: { academic_year?: number }, options?: ReadOptions): Promise<BudgetVsSpend> {
+  return getReport("budget-vs-spend", params, options);
 }

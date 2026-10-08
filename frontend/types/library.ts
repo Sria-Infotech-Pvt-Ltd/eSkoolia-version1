@@ -1047,3 +1047,106 @@ export interface MarkLostResult {
   report: LostDamagedRow;
   item: StockAuditItem;
 }
+
+// ─── Transactions, export and reports ────────────────────────────────────────
+
+/** Every value the activity feed can carry. */
+export type ActivityEventType =
+  | "accession" | "issue" | "return" | "renewal" | "lost" | "damaged" | "fine" | "donation" | "purchase"
+  | "member" | "hold" | "request" | "reminder" | "audit" | "settings" | "export";
+
+export interface ActivityLogRow {
+  id: number;
+  event_type: ActivityEventType;
+  summary: string;
+  created_at: string;
+  actor: number | null;
+  actor_name: string;
+  member: number | null;
+  book: number | null;
+  issue: number | null;
+}
+
+export interface ActivityLogParams {
+  page?: number;
+  page_size?: number;
+  /** One type or several joined with commas. */
+  event_type?: string;
+  from?: string;
+  to?: string;
+  actor?: number;
+  member?: number;
+  book?: number;
+  search?: string;
+}
+
+export interface ReportRange {
+  from: string;
+  to: string;
+  academic_year: number | null;
+  academic_year_name: string;
+}
+
+export interface ReportRangeParams {
+  academic_year?: number;
+  from?: string;
+  to?: string;
+}
+
+export interface CategoryCirculationRow {
+  category: number | null;
+  category_name: string;
+  color_key: string;
+  issues: number;
+  share: number;
+}
+
+export interface CirculationByCategory extends ReportRange {
+  total: number;
+  results: CategoryCirculationRow[];
+}
+
+export interface MonthlyTrendRow {
+  /** "2026-07" */
+  month: string;
+  issues: number;
+  returns: number;
+}
+
+export interface MonthlyTrend extends ReportRange {
+  total_issues: number;
+  total_returns: number;
+  results: MonthlyTrendRow[];
+}
+
+/** Money is an exact string such as "1500.50". */
+export interface FeeColumns {
+  count: number;
+  charged: string;
+  collected: string;
+  waived: string;
+  written_off: string;
+  outstanding: string;
+}
+
+export interface FeeTypeRow extends FeeColumns {
+  charge_type: "registration" | "overdue_fine" | "replacement";
+}
+
+export interface FinesAndFees extends ReportRange {
+  results: FeeTypeRow[];
+  totals: FeeColumns;
+}
+
+export interface BudgetVsSpend {
+  academic_year: number;
+  academic_year_name: string;
+  from: string;
+  to: string;
+  has_budget: boolean;
+  budget: string;
+  committed: string;
+  paid: string;
+  remaining: string;
+  by_status: { status: PoStatus; orders: number; total: string }[];
+}

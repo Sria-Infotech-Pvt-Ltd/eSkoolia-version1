@@ -63,7 +63,7 @@ plus the untracked library planning documents, staged in prompt 1.
 | 7 | Console, reminders and push | Done (2026-10-08). 494 backend tests pass (2 Postgres-only skipped, unverified), 49 Jest tests pass. tsc and lint show only the baseline errors. No Celery worker, Redis or dev server was started; nothing was checked in a browser. |
 | 8 | Acquisitions and requests | Done (2026-10-08). 558 backend tests pass (3 Postgres-only skipped, unverified), 58 Jest tests pass in `__tests__/library`. `makemigrations --check` clean. tsc and eslint report nothing in the library files. No dev server, Celery worker or Redis was started; nothing was checked in a browser. |
 | 9 | Periods, occupancy and stock check | Done (2026-10-08). 641 backend tests pass (4 Postgres-only skipped, unverified), 67 Jest tests pass in `__tests__/library`. `makemigrations --check` clean. tsc and eslint report nothing in the library files. No dev server, Celery worker, Redis or beat process was started; the management command was not run; nothing was checked in a browser. **You must run `library_register_periodic_tasks` (see Migrations to apply).** |
-| 10 | Oversight: logs and reports | Not started |
+| 10 | Oversight: logs and reports | Done (2026-10-08). 684 backend tests pass (4 Postgres-only skipped, unverified), 77 Jest tests pass in `__tests__/library`. `makemigrations --check` clean (no migration in this prompt). tsc and eslint report nothing in the library files. No dev server, worker or Redis was started; nothing was checked in a browser. |
 | 11 | Teacher portal | Not started |
 | 12 | Parent portal | Not started |
 | 13 | Cleanup and final audit | Not started |
@@ -151,6 +151,14 @@ plus the untracked library planning documents, staged in prompt 1.
 - Celery: `tasks.flag_unscanned_students` (name `library.flag_unscanned_students`), notification event `unscanned_flag`, management command `library_register_periodic_tasks`, and the same every-minute entry in `config/celery.py`.
 - Frontend: `/library/periods` (`components/library/periods/`), `/library/stock-check` (`components/library/stock-check/`), hook functions and types, sub items at their final positions, Console card. Jest: `__tests__/library/periods.test.ts`.
 - For prompts 11 and 12 (portals): `PeriodSlot` is the read-only timetable source for teachers and parents; the `unscanned_flag` notification links to `/teacher/library`.
+
+## What prompt 10 built (for the next prompt)
+
+- `services/activity_feed.py`: `clean_filters`, `apply_filters`, `csv_cell`, `csv_rows`, `start_export`, `EXPORT_ROW_CAP = 50_000`. `services/reports.py`: `resolve_range`, `circulation_by_category`, `monthly_trend`, `fines_and_fees`, `budget_vs_spend`.
+- `views/logs.py`: `ActivityLogViewSet` (read only; `export` action) and the four report views. No model or migration changes.
+- Endpoints under `/api/v1/library/`: `activity-logs/` (filters `event_type` (comma list), `from`, `to`, `actor`, `member`, `book`, `search`), `activity-logs/export/`, `reports/circulation-by-category/`, `reports/monthly-trend/`, `reports/fines-and-fees/`, `reports/budget-vs-spend/`. Codes `library.activity_logs.view`, `.export` and `library.reports.view` were already seeded.
+- Frontend: `/library/transactions` (`components/library/transactions/`) and `/library/reports` (`components/library/reports/`, using recharts, the chart library already in `package.json`), hook functions (`listActivityLogs`, `exportActivityLogs`, four report getters), types, sub items at their final positions. Jest: `__tests__/library/oversight.test.ts`.
+- For prompt 13: the activity feed has no row for check-ins (decision 82), so "Transactions and Logs" does not show them.
 
 ## Decisions made
 
@@ -248,6 +256,15 @@ plus the untracked library planning documents, staged in prompt 1.
 90. **Mark lost (R15).** Only for a missing item of a finished check, only while the copy is still available, and idempotent: a repeat returns the same report (found through the copy, source `stock_audit` and a creation time after the audit finished). The report has no borrower and no replacement charge. A found copy, an unfinished audit, or a copy no longer on the shelf is a 409 `library_invalid_state_transition`.
 91. **Supervisor** is stored and shown but the slot form does not set it (the HR staff list needs HR permissions the librarian may not hold). It can be set through the API.
 
+92. **(Prompt 10) Feed filters.** `event_type` takes one value or a comma list and refuses unknown values (400). `from` and `to` are inclusive dates on the row's creation day in the server time zone. `actor`, `member` and `book` are ids; an id from another school simply matches nothing (the queryset is school-scoped first), it is not a 404. `search` is a case-insensitive match on the details text. The DRF filter backends are switched off for this endpoint so only these validated filters apply. The list is newest first, read only (405 for writes), and loads only the actor (a test caps a 100-row page at 8 queries).
+93. **Export.** `activity-logs/export/` needs `library.activity_logs.export` only (the view code alone is refused, and the export code alone cannot list). It streams `text/csv` in 2,000-row chunks, at most 50,000 rows, newest first, and sends `X-Export-Rows`, `Cache-Control: no-store` and an attachment filename. Columns: timestamp, type, details, staff, member id, book id. The export asks for no particular `Accept`: the viewset ignores it so a client asking for `text/csv` is not given a 406.
+94. **Export is logged first.** One `export` activity row is written before streaming starts, with the row count, whether it was capped, and the filters (dates, types, ids). The search words are not stored, only that a search was used, because they could be a person's name. That row is left out of its own file.
+95. **CSV injection.** A cell is prefixed with an apostrophe when, ignoring leading spaces, it begins with `=`, `+`, `-`, `@`, tab or carriage return (the same list the bulk import uses). The check runs on every cell, including the timestamp and ids. A lone `-` is also prefixed. A cell with a newline inside is quoted by the csv writer.
+96. **Report range (D9).** Default is the current academic year's start and end dates. `academic_year` picks another of the school's own years (another school's id, or a non-number, is a 404). `from` and `to` override either end. With no current year and a missing end, the answer is a 400 naming `from` and `to`; a backwards range is a 400. `budget-vs-spend` is per year only (it ignores `from` and `to`) and is a 404 when there is no year.
+97. **What each report counts.** Circulation by category: loans issued (`issue_date`) in the range, any status, grouped by the title's category; titles with none show as Uncategorised; `share` is the fraction of the total. Monthly trend: loans issued per month by `issue_date` and loans returned per month by `return_date`; every month of the range is present, empty ones as 0. Fines and fees: charges whose `assessed_on` is in the range, by type; charged is everything assessed, and collected, waived, written off and outstanding (pending) add up to it. Budget against spend: the same budget, committed, paid and remaining as `acquisitions/summary/`, plus orders and totals by status. Money in reports is an exact string such as `"1500.50"`.
+98. **Query shape.** Every report is one or two grouped queries (monthly trend two, fines one, circulation one, budget three); a test seeds 40 loans and charges and caps each request at 8 queries including the permission lookup. Loops run over months and over at most twelve type and status groups, never over loans.
+99. **Charts.** The Reports page uses recharts with design tokens only (`var(--pu)`, `var(--ok)` and so on, category colours through `--cat-<key>`), plus a "Show the figures" table under each chart as the accessible text version. Each panel loads on its own, so one failure does not blank the page.
+
 ## Migrations to apply
 
 Not applied by the build. Apply in this order on each environment.
@@ -323,6 +340,11 @@ After migrating, in this order: `seed_permissions`, `seed_module_tiers`, `seed_r
 - **(Prompt 9) Time zone.** The clock is the server's local time (`timezone.localtime`). Slots and the flag assume the school and the server share it.
 - **(Prompt 9) Nothing was checked in a browser.** The two pages, the 30 second refresh, the slot manager and the Console card were type-checked, linted and covered by helper tests only.
 - **(Prompt 9) Check-ins are not in the activity feed** (decision 82), so Transactions and Logs (prompt 10) will not show them unless it reads `library_visits`.
+- **(Prompt 10) Charts were not rendered in a browser or a test.** recharts, the `var()` fills in SVG attributes, and the responsive containers are type-checked only. If a token colour does not show in some browser, the table under each chart carries the same numbers.
+- **(Prompt 10) The member filter on Transactions needs the members view permission** to look a member up; without it the box reports that it could not search and the rest of the filters still work.
+- **(Prompt 10) Reports read the server's time zone for "today" and for the day of an activity row.**
+- **(Prompt 10) Export is not rate limited beyond its permission, the cap, and the log row.** There is no per-user throttle.
+- **(Prompt 10) The export is streamed from a normal database cursor.** On SQLite (the test database) the stream is checked only for content, not for memory use at 50,000 rows.
 
 ## Deviations from blueprint
 

@@ -11,12 +11,24 @@ from .console import ConsoleSummaryView
 from .holds import HoldViewSet
 from .issue_desk import BookIssueViewSet
 from .lost_damaged import LostDamagedViewSet
+from .logs import (
+    ActivityLogViewSet,
+    BudgetVsSpendView,
+    CirculationByCategoryView,
+    FinesAndFeesView,
+    MonthlyTrendView,
+)
 from .members import ChargeViewSet, LibraryMemberViewSet
 from .periods import CheckInView, FootfallView, OccupancyView, PeriodSlotViewSet
 from .settings import LibrarySettingsView
 from .stock import StockAuditViewSet
 
 __all__ = [
+    "ActivityLogViewSet",
+    "BudgetVsSpendView",
+    "CirculationByCategoryView",
+    "FinesAndFeesView",
+    "MonthlyTrendView",
     "CheckInView",
     "FootfallView",
     "OccupancyView",
