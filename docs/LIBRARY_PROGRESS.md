@@ -376,6 +376,15 @@ Run these in order, on one environment at a time, starting with a staging copy o
 10. **Verify:** `python manage.py makemigrations --check` (must print no changes), `python manage.py library_reconcile` again (Stock now says the old columns are dropped), then sign in and check each screen in a browser: the 11 librarian screens, the teacher Library module (3 pages), the parent Library pages (2), and one overdue reminder end to end (librarian remind, guardian bell and push).
 11. **Next release:** delete the redirect pages `app/(dashboard)/library/books`, `categories` and `issues`, and the four old entries in `components/layout/sidebar-menu.data.ts`.
 
+## Applied on the shared database (2026-10-08, at the owner's request, after they confirmed a backup)
+
+- `migrate library 0013_periods_stock` applied. Two migrations stopped on bad legacy data, as designed, and were fixed with the owner's choice each time:
+  - 0007: library members 1 (card 89) and 6 (card 78) were the same staff member. Member 6's one returned loan was moved to member 1 and member 6 was deleted (card 78 no longer exists).
+  - 0010: loan 2 had a return date (2026-08-05) before its issue date (2026-08-06). Its issue date was set to 2026-08-05.
+- `library_reconcile`: Loans, no mismatches. Stock: one title differs (school 1, book 3, "Malgudi Days", old available 12, derived 15; the derived copy state is used). Tightening: every title has a category; the only loans without a copy are 2 returned ones.
+- `seed_permissions`, `seed_module_tiers` and `seed_role_templates` ran. `library_role_report` lists three roles that lost write access: Parent (3 users), Principal (1) and Student (210); they only held view codes, so nothing to grant unless they should write.
+- **Not done:** migration `0014` (drops the old quantity columns) was left unapplied on purpose. `library_register_periodic_tasks` refuses because `django_celery_beat` is not an installed app (the schedule is in `config/celery.py`). Celery, beat and Redis were not started: Redis is not installed on this machine and the Docker daemon is not running. Until a worker, beat and Redis run, no notification is delivered and the unscanned flag does not run.
+
 ## Known gaps
 
 - **(Prompt 8) Teacher requests cannot be created yet.** The admin queue reads `library_book_requests`, but the teacher portal form that fills it is prompt 11. Until then the list is empty.
