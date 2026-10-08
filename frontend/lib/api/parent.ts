@@ -459,3 +459,95 @@ export interface HealthProfile {
 export function fetchChildHealth(childId: number): Promise<HealthProfile> {
   return parentGet<HealthProfile>(`/health/?child_id=${childId}`);
 }
+
+// ── Library (Current and Due, History) ────────────────────────────────────────
+// Read only. The child is always sent as ?child_id= and checked against the guardian on the server.
+// Background reads pass silent401 so a stray 401 does not log the parent out; the first load of a page uses the default.
+
+function parentLibraryGet<T>(path: string, silent401 = false): Promise<T> {
+  return apiRequestWithRefresh<T>(`/api/v1/parent/library${path}`, {
+    headers: { "Content-Type": "application/json" },
+    cache: "no-store",
+    silent401,
+  });
+}
+
+export type LibraryLoanState = "open" | "due_today" | "overdue";
+
+export interface LibraryNextSlot {
+  id: number;
+  date: string;
+  day: string;
+  period_name: string;
+  start_time: string;
+  end_time: string;
+  room_label: string;
+}
+
+export interface LibraryCurrentLoan {
+  id: number;
+  book_title: string;
+  author: string;
+  copy_code: string;
+  issue_date: string;
+  due_date: string;
+  overdue: boolean;
+  days_overdue: number;
+  /** Exact money string such as "20.00". */
+  accrued_fine: string;
+  state: LibraryLoanState;
+  renew_count: number;
+}
+
+export interface LibraryReplacementFee {
+  book_title: string;
+  amount: string;
+  assessed_on: string;
+}
+
+export interface LibraryCurrent {
+  /** False when the child has no library card yet: an explicit state, not an error. */
+  registered: boolean;
+  is_active: boolean | null;
+  card_no: string;
+  next_slot: LibraryNextSlot | null;
+  loans: LibraryCurrentLoan[];
+  open_loans: number;
+  loan_limit: number | null;
+  /** Borrowing is on hold because of an overdue fine or an unpaid replacement fee. */
+  suspended: boolean;
+  fines: { total: string };
+  replacement_fees: { total: string; items: LibraryReplacementFee[] };
+  registration: { status: "unpaid" | "paid" | "waived" | null; amount: string };
+  total_due: string;
+}
+
+export interface LibraryHistoryLoan {
+  id: number;
+  book_title: string;
+  author: string;
+  copy_code: string;
+  issue_date: string;
+  due_date: string;
+  return_date: string | null;
+  state: "returned" | "lost";
+  returned_late: boolean;
+  fine_amount: string;
+}
+
+export interface LibraryHistoryPage {
+  count: number;
+  next: string | null;
+  previous: string | null;
+  results: LibraryHistoryLoan[];
+}
+
+/** GET /api/v1/parent/library/current/?child_id=<id> */
+export function fetchChildLibraryCurrent(childId: number, silent401 = false): Promise<LibraryCurrent> {
+  return parentLibraryGet<LibraryCurrent>(`/current/?child_id=${childId}`, silent401);
+}
+
+/** GET /api/v1/parent/library/history/?child_id=<id>&page=<n>: closed loans, newest first, 20 a page. */
+export function fetchChildLibraryHistory(childId: number, page = 1, silent401 = false): Promise<LibraryHistoryPage> {
+  return parentLibraryGet<LibraryHistoryPage>(`/history/?child_id=${childId}&page=${page}`, silent401);
+}

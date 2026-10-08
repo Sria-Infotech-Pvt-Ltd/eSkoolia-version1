@@ -65,7 +65,7 @@ plus the untracked library planning documents, staged in prompt 1.
 | 9 | Periods, occupancy and stock check | Done (2026-10-08). 641 backend tests pass (4 Postgres-only skipped, unverified), 67 Jest tests pass in `__tests__/library`. `makemigrations --check` clean. tsc and eslint report nothing in the library files. No dev server, Celery worker, Redis or beat process was started; the management command was not run; nothing was checked in a browser. **You must run `library_register_periodic_tasks` (see Migrations to apply).** |
 | 10 | Oversight: logs and reports | Done (2026-10-08). 684 backend tests pass (4 Postgres-only skipped, unverified), 77 Jest tests pass in `__tests__/library`. `makemigrations --check` clean (no migration in this prompt). tsc and eslint report nothing in the library files. No dev server, worker or Redis was started; nothing was checked in a browser. |
 | 11 | Teacher portal | Done (2026-10-08). 759 backend tests pass (4 Postgres-only skipped, unverified), 86 Jest tests pass in `__tests__/library`. `makemigrations --check` clean (no migration in this prompt). tsc and eslint report nothing in the library, teacher or route files. No dev server, worker or Redis was started; nothing was checked in a browser. |
-| 12 | Parent portal | Not started |
+| 12 | Parent portal | Done (2026-10-08). 793 backend tests pass (4 Postgres-only skipped, unverified), 96 Jest tests pass in `__tests__/library`. `makemigrations --check` clean (no migration in this prompt). tsc and eslint report nothing in the library, parent or route files. No dev server, worker or Redis was started; nothing was checked in a browser. |
 | 13 | Cleanup and final audit | Not started |
 
 ## What prompt 1 built (for the next prompt)
@@ -166,6 +166,13 @@ plus the untracked library planning documents, staged in prompt 1.
 - Frontend: Library module with My Class, My Books and Recommend in `lib/teacher-routes.ts`; pages `app/(teacher-portal)/teacher/library/` (`page.tsx`, `my-books/`, `recommend/`); components in `components/teacher/library/`; API functions and types appended to `lib/api/teacher.ts` (`fetchLibraryMyClass`, `sendLibraryReminder`, `fetchLibraryMyBooks`, `renewLibraryLoan`, `fetchLibraryBookRequests`, `createLibraryBookRequest`, `searchLibraryBooks`, `libraryErrorMessage`, `libraryErrorCode`). Jest: `__tests__/library/teacherPortal.test.ts`.
 - All three pages refetch quietly (`silent401`) when `usePortalNotifications` delivers a `library` event.
 - For prompt 12 (parent portal): `services/teacher.py` shows the pattern (`loan_state`, `loan_fine`, `days_overdue`, one grouped query); the parent routes must use `_resolve_child` from `apps/parent_portal/views.py`.
+
+## What prompt 12 built (for the next prompt)
+
+- Backend: `apps/parent_portal/library_views.py` (`ParentLibraryCurrentView`, `ParentLibraryHistoryView`: JWTAuthentication, `IsParentPortalUser`, plain JSON, read only) and routes `library/current/` and `library/history/` in `apps/parent_portal/urls.py`. `_resolve_child` is imported from `apps/parent_portal/views.py`, not copied. Logic is in `apps/library/services/parent.py`. No model changes, no migration.
+- Frontend: the Library item in `lib/parent-routes.ts` now points at `/parent/library` (it was `/parent/home`) and a "Library History" item was added; pages `app/(parent-portal)/parent/library/page.tsx` and `.../history/page.tsx`; components in `components/parent/library/` (`CurrentPage`, `HistoryPage`, `shared`, `parentLibraryHelpers`); `fetchChildLibraryCurrent` and `fetchChildLibraryHistory` and their types appended to `lib/api/parent.ts`. Jest: `__tests__/library/parentPortal.test.ts`.
+- Both pages refetch quietly (`silent401`) when `usePortalNotifications` delivers a `library` event, so the `hold_ready`, `overdue_reminder` and `replacement_fee` notifications (link `/parent/library`) refresh an open page.
+- For prompt 13: all three portals (teacher, parent, librarian) are now built; the remaining work is cleanup and the final audit.
 
 ## Decisions made
 
@@ -282,6 +289,16 @@ plus the untracked library planning documents, staged in prompt 1.
 107. **Navigation.** The Library module is added to `TEACHER_MODULES` before Notices, always shown like its siblings (access is enforced on the server). Its colours are design tokens (`var(--pu-soft)`, `var(--pu-deep)`), not hex.
 108. **The notification bell** (`components/nav/NotificationBell.tsx`) was checked and left as it is: it lists every `CommunicationNotification` of the signed-in user whatever its type, so `system` and `reminder` library rows show with their title, body and link (a test checks both the teacher endpoint and the shared one). It polls once a minute and is not connected to the portal socket; wiring it would open one more WebSocket on every page of every portal, so the library pages refresh themselves instead.
 
+109. **(Prompt 12) Who gets in and which child.** `IsParentPortalUser` is unchanged (active role with portal type parent and a guardian profile; superusers, school admins without that role, teachers and anonymous callers are refused). `_resolve_child` decides the child: no `child_id` is a 400, and another guardian's child, an inactive child, an unknown id, a malformed id, and a child of another school are all the same 404. Tests run every refusal against both routes.
+110. **Current.** One response: `registered`, `card_no`, `is_active`, `next_slot`, `loans`, `open_loans`, `loan_limit`, `suspended`, `fines.total`, `replacement_fees` (total and one item per pending charge, with the book title), `registration` (`unpaid`, `paid` or `waived`, with the amount) and `total_due`. The figures come from the same functions the librarian screens use (`annotate_member_dues`, `accrued_fines_by_member`, `member_dues`, `loan_fine`, `borrowing_limit` for the student limit), so they cannot drift; a test compares them with `services/dues.py`. Money is an exact string. Open loans are the child's own member's, oldest due first, with `overdue`, `days_overdue`, `accrued_fine` and `state`.
+111. **Unregistered child.** A child with no member record gets 200 with `registered: false`, no loans, a null limit, `suspended: false` and no registration status. The class's next library period is still shown, because it does not depend on a card. The History route returns an empty page.
+112. **Suspension text.** `suspended` follows R3: an overdue fine (accrued or pending) or an unpaid replacement fee. An unpaid registration fee is shown and counted in `total_due` but never suspends (D6). The page explains the reason in words and states the amounts.
+113. **Next period** is the first active slot for the child's class (or section, or class-wide) not yet started, today first and then up to seven days ahead (the helper from prompt 11). A child with no class has none.
+114. **History.** Closed loans only (returned and lost), ordered by when they closed (`return_date`, falling back to the issue date for lost loans), newest first, id as the tie-break. Page size is fixed at 20 (a `page_size` parameter is ignored), the response is `count`, `next`, `previous`, `results`, and `next` keeps `child_id`. A page past the end is a 404, and the page resets to 1 when that happens. Each row says whether it was returned late and the fine charged at return.
+115. **Query bound.** Current uses a fixed number of queries whatever the number of loans (a test caps it at 22 including authentication, with none and with 25 loans).
+116. **Navigation label.** The new sub item is called "Library History" so it reads clearly in the Academics list beside Timetable, Syllabus, Homework and Grades. Both items sit in the existing Academics module.
+117. **No contact or staff data.** The parent responses contain no guardian or staff contact details, no accession code, no cost per copy and no rack; the book price appears only through fines and replacement fees owed.
+
 ## Migrations to apply
 
 Not applied by the build. Apply in this order on each environment.
@@ -367,6 +384,11 @@ After migrating, in this order: `seed_permissions`, `seed_module_tiers`, `seed_r
 - **(Prompt 11) A teacher with several class-teacher sections** has requests filed under the first one only (decision 105); the request does not record which of their classes it is about.
 - **(Prompt 11) My Class shows at most 300 loans per class** and says so; there is no page control.
 - **(Prompt 11) Library registration for a teacher is done by the librarian.** There is no self-registration, so an unregistered teacher sees only the "ask the librarian" message.
+- **(Prompt 12) Nothing was checked in a browser or with a real guardian login.** The two pages, the child switch, the push refresh and the nav change were type-checked, linted and covered by helper tests; the endpoints are covered by API tests with `force_authenticate`, not real JWT tokens or a WebSocket.
+- **(Prompt 12) No renewals or payments from the parent portal.** It is read only by design (D15); fees are paid at the library office.
+- **(Prompt 12) The child switch is a copy of the Homework page's** (as asked), inside `components/parent/library/shared.tsx`; a change to the Homework switch will not reach it.
+- **(Prompt 12) History orders lost loans by their issue date**, because a lost loan has no return date; a loan marked lost long after it was issued can sit lower in the list than its closing date suggests.
+- **(Prompt 12) Student period slots exist only if the librarian sets them up** (prompt 9); until then every parent sees the "no library period" line.
 
 ## Deviations from blueprint
 
