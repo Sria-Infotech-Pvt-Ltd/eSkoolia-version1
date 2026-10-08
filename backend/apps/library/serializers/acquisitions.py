@@ -68,10 +68,17 @@ class DonationSerializer(LibraryModelSerializer):
             raise serializers.ValidationError("Enter at least one book.")
         return value
 
+    def _can_view_contact(self):
+        """Asked once per request: the permission lookup is a query, so it is cached in the shared context."""
+        context = self.context
+        if "can_view_contact" not in context:
+            user = getattr(context.get("request"), "user", None)
+            context["can_view_contact"] = bool(user is not None and user.has_permission_code(DONATIONS_VIEW_CODE))
+        return context["can_view_contact"]
+
     def to_representation(self, instance):
         data = super().to_representation(instance)
-        user = getattr(self.context.get("request"), "user", None)
-        if user is None or not user.has_permission_code(DONATIONS_VIEW_CODE):
+        if not self._can_view_contact():
             data.pop("contact", None)
         return data
 

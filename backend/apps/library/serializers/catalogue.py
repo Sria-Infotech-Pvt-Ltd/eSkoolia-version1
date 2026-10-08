@@ -84,12 +84,7 @@ class CopyBriefSerializer(serializers.ModelSerializer):
 
 
 class BookListSerializer(serializers.ModelSerializer):
-    """One catalogue row. Needs a queryset from services.catalogue.annotate_copy_counts.
-
-    ``quantity`` and ``available_quantity`` are kept as derived aliases of the copy
-    counts so the legacy Books page still shows real numbers; the stored columns
-    are deprecated and never written.
-    """
+    """One catalogue row. Needs a queryset from services.catalogue.annotate_copy_counts."""
 
     category = CategoryBriefSerializer(read_only=True)
     copies_total = serializers.IntegerField(read_only=True)
@@ -99,8 +94,6 @@ class BookListSerializer(serializers.ModelSerializer):
     copies_damaged = serializers.IntegerField(read_only=True)
     copies_withdrawn = serializers.IntegerField(read_only=True)
     holds_waiting = serializers.IntegerField(read_only=True)
-    quantity = serializers.IntegerField(source="copies_total", read_only=True)
-    available_quantity = serializers.IntegerField(source="copies_available", read_only=True)
     availability_status = serializers.SerializerMethodField()
 
     class Meta:
@@ -111,7 +104,7 @@ class BookListSerializer(serializers.ModelSerializer):
             "for_students", "for_teachers", "for_staff", "format", "is_reference_only", "source",
             "cost_per_copy", "rack",
             "copies_total", "copies_available", "copies_issued", "copies_lost", "copies_damaged",
-            "copies_withdrawn", "holds_waiting", "availability_status", "quantity", "available_quantity",
+            "copies_withdrawn", "holds_waiting", "availability_status",
             "created_at",
         ]
         read_only_fields = fields

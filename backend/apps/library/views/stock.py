@@ -24,7 +24,7 @@ class StockAuditViewSet(LibraryViewSet):
     model = StockAudit
     serializer_class = StockAuditSerializer
     http_method_names = ["get", "post", "patch", "head", "options"]
-    disabled_actions = ("update", "destroy")
+    disabled_actions = ("update", "partial_update", "destroy")
     filterset_fields = ["status"]
     ordering_fields = ["started_at"]
     default_ordering = ["-started_at", "-id"]

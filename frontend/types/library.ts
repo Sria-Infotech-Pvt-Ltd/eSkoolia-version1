@@ -155,9 +155,6 @@ export interface Book {
   copies_withdrawn: number;
   holds_waiting: number;
   availability_status: AvailabilityStatus;
-  /** Deprecated aliases of copies_total and copies_available, kept for the legacy Books page. */
-  quantity: number;
-  available_quantity: number;
   created_at: string;
 }
 

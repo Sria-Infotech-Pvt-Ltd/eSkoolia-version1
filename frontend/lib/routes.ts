@@ -295,7 +295,7 @@ export const MODULES: ModuleRoute[] = [
       { label: 'Periods and Occupancy', path: '/library/periods', icon: Calendar, permission: 'library.periods.view' },
       { label: 'Issue Desk', path: '/library/issue-desk', icon: BookmarkCheck, permission: 'library.book_issues.view' },
       { label: 'Lost and Damaged', path: '/library/lost-damaged', icon: AlertTriangle, permission: 'library.lost_damaged.view' },
-      { label: 'Library Members', path: '/library/members', icon: Users },
+      { label: 'Members', path: '/library/members', icon: Users },
       { label: 'Transactions and Logs', path: '/library/transactions', icon: FileText, permission: 'library.activity_logs.view' },
       { label: 'Reports', path: '/library/reports', icon: BarChart2, permission: 'library.reports.view' },
       { label: 'Stock Check', path: '/library/stock-check', icon: ClipboardList, permission: 'library.stock_audits.view' },

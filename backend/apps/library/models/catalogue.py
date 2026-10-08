@@ -101,10 +101,8 @@ class Book(LibraryAuditModel):
     donor_name = models.CharField(max_length=180, blank=True)
     rack = models.CharField(max_length=50, blank=True)
     remarks = models.TextField(blank=True)
-    # DEPRECATED (blueprint 2.2): nothing writes these any more. Every count comes
-    # from library_book_copies. Dropped in the final cleanup slice.
-    quantity = models.PositiveIntegerField(default=0)
-    available_quantity = models.PositiveIntegerField(default=0)
+    # Every count comes from library_book_copies. The old quantity and available_quantity columns were
+    # dropped by migration 0014 (apply after a backup).
     created_at = models.DateTimeField(auto_now_add=True)
     updated_at = models.DateTimeField(auto_now=True)
 

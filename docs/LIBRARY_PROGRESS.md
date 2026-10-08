@@ -66,7 +66,7 @@ plus the untracked library planning documents, staged in prompt 1.
 | 10 | Oversight: logs and reports | Done (2026-10-08). 684 backend tests pass (4 Postgres-only skipped, unverified), 77 Jest tests pass in `__tests__/library`. `makemigrations --check` clean (no migration in this prompt). tsc and eslint report nothing in the library files. No dev server, worker or Redis was started; nothing was checked in a browser. |
 | 11 | Teacher portal | Done (2026-10-08). 759 backend tests pass (4 Postgres-only skipped, unverified), 86 Jest tests pass in `__tests__/library`. `makemigrations --check` clean (no migration in this prompt). tsc and eslint report nothing in the library, teacher or route files. No dev server, worker or Redis was started; nothing was checked in a browser. |
 | 12 | Parent portal | Done (2026-10-08). 793 backend tests pass (4 Postgres-only skipped, unverified), 96 Jest tests pass in `__tests__/library`. `makemigrations --check` clean (no migration in this prompt). tsc and eslint report nothing in the library, parent or route files. No dev server, worker or Redis was started; nothing was checked in a browser. |
-| 13 | Cleanup and final audit | Not started |
+| 13 | Cleanup and final audit | Done (2026-10-08). 840 backend tests pass in `apps/library` (4 Postgres-only skipped, unverified), 96 Jest tests pass. `makemigrations --check` clean. `tsc` shows only the 13 exams errors that were already there and ESLint only the 7 errors outside the library that were already there. Audit in `docs/LIBRARY_AUDIT.md` (155 test references, all checked to exist). Release steps are under Release steps below. Nothing was run against the shared database, no worker, Redis or browser was used. |
 
 ## What prompt 1 built (for the next prompt)
 
@@ -117,7 +117,7 @@ plus the untracked library planning documents, staged in prompt 1.
 - Frontend `/library/lost-damaged` (`components/library/lost-damaged/`): table with inline notes, Mark fee paid, Resolve, Bill print view, and a Report a copy modal.
 - Catalogue rows have a Reserve action (`library.holds.create`) opening `ReserveModal`.
 - `/library/issues` is a redirect to `/library/issue-desk`. `lib/routes.ts` sub items are now Catalogue, Issue Desk, Lost and Damaged, Library Members, Settings. `ModuleSubNav.tsx` shows a pending count on Lost and Damaged (hook `hooks/useLostDamagedPending.ts`, no request outside the Library module).
-- `LibraryPanels.tsx` is no longer routed from anywhere. Prompt 13 deletes it.
+- `LibraryPanels.tsx` is no longer routed from anywhere. Prompt 13 deleted it.
 - Jest: `__tests__/library/desk.test.ts` (due-date notes, block reasons, refusal messages, undo countdown, return choices, scan detection, renew pre-checks).
 
 ## What prompt 7 built (for the next prompt)
@@ -167,6 +167,17 @@ plus the untracked library planning documents, staged in prompt 1.
 - All three pages refetch quietly (`silent401`) when `usePortalNotifications` delivers a `library` event.
 - For prompt 12 (parent portal): `services/teacher.py` shows the pattern (`loan_state`, `loan_fine`, `days_overdue`, one grouped query); the parent routes must use `_resolve_child` from `apps/parent_portal/views.py`.
 
+## What prompt 13 built
+
+- No new feature. Cleanup, audit and release notes.
+- Migration `0014_drop_deprecated_quantities` (written, **apply after a backup**) drops `library_books.quantity` and `available_quantity`; the model, the books list serializer, the `Book` TypeScript type and the reconcile command no longer use them.
+- `library_reconcile` gained a "Tightening" section, and its stock check now uses plain SQL so it still works before `0014`, and says so after.
+- Deleted `frontend/components/library/LibraryPanels.tsx`. The three redirect pages (`/library/books`, `/library/categories`, `/library/issues`) stay for one release.
+- `lib/routes.ts`: the Library sub items now match blueprint 8.1 in order and labels ("Library Members" became "Members").
+- `docs/LIBRARY_AUDIT.md` (new), `docs/TEAM_CONTEXT.md` (new section at the top), the release steps below.
+- Tests added: `tests/test_audit.py` (42 tests), reconcile and tightening tests in `test_backfill.py`, which now rebuilds the pre-`0014` models with `legacy_apps()`.
+- Two defects found by the audit tests and fixed: the donations list N+1, and `PATCH stock-audits/{id}/` answering 403 not 405.
+
 ## What prompt 12 built (for the next prompt)
 
 - Backend: `apps/parent_portal/library_views.py` (`ParentLibraryCurrentView`, `ParentLibraryHistoryView`: JWTAuthentication, `IsParentPortalUser`, plain JSON, read only) and routes `library/current/` and `library/history/` in `apps/parent_portal/urls.py`. `_resolve_child` is imported from `apps/parent_portal/views.py`, not copied. Logic is in `apps/library/services/parent.py`. No model changes, no migration.
@@ -190,7 +201,7 @@ plus the untracked library planning documents, staged in prompt 1.
 12. **(Prompt 2) Migrations are split in three** so the backfill can fill codes before the unique constraints that blank codes would break: `0003_catalogue` (schema), `0004_catalogue_backfill` (data, calls `services/backfill.py`, writes no files, reverse is a no-op because undoing 0003 drops the columns), `0005_catalogue_constraints` (`uq_library_books_school_accession`, `uq_library_book_categories_school_code`).
 13. **Backfill copy rule.** Each legacy title gets `max(quantity, open loans + lost loans)` copies, so every loan has a copy: lost loans make that many copies `lost`, open loans make that many `issued`, the rest `available`. Loans are not bound to copies yet (prompt 5). Titles with no category go to a per-school `Uncategorised` category (code `UNC`). Categories without a code get one derived from the name (FIC, FIC2 on a clash). Legacy titles keep the model defaults for age band (`primary`), audience (all true), format (`non_fiction`), cost 0 and source `purchased`, and are not flagged anywhere for review beyond these defaults.
 14. **`copies_total` excludes withdrawn copies** (they have left the collection). Availability (R11): `issued` when 0 available, `low` when available/total is at most the school's `low_stock_ratio`, otherwise `available`. The `availability` filter and the row status use the same rule.
-15. **The old counters are aliases now.** `quantity` and `available_quantity` in API output equal `copies_total` and `copies_available`, so the legacy Books page shows real numbers. The stored columns are never written. The legacy Books page can no longer create titles (the accession payload needs category and copies); that is accepted until prompt 3.
+15. **The old counters are aliases now.** `quantity` and `available_quantity` in API output equal `copies_total` and `copies_available`, so the legacy Books page shows real numbers. (Removed in prompt 13, decision 119.) The stored columns are never written. The legacy Books page can no longer create titles (the accession payload needs category and copies); that is accepted until prompt 3.
 16. **Legacy loans move copy rows.** `POST /issues/` locks an available copy and sets it `issued`; `return` sets one issued copy of the title back to `available`. The loan is not linked to the copy, so which copy is freed is arbitrary. Prompt 5 replaces this with real binding.
 17. **`?format=` on `/books/` is a catalogue filter.** DRF reads `format` as a renderer override, so `BookViewSet` uses a content negotiator that ignores it (the API only renders JSON).
 18. **`copies/by-code/{code}/`** matches case-insensitively and accepts the slash inside a code. Copy codes repeat across schools, so every lookup is school-scoped.
@@ -299,6 +310,13 @@ plus the untracked library planning documents, staged in prompt 1.
 116. **Navigation label.** The new sub item is called "Library History" so it reads clearly in the Academics list beside Timetable, Syllabus, Homework and Grades. Both items sit in the existing Academics module.
 117. **No contact or staff data.** The parent responses contain no guardian or staff contact details, no accession code, no cost per copy and no rack; the book price appears only through fines and replacement fees owed.
 
+118. **(Prompt 13) The tightening migration was not written.** Blueprint section 5 step 5 says to make `Book.category` and the loan `copy` link required only after the reconcile commands show no nulls. Two things stop that. The real database could not be read (it must not be migrated or tested against, and none of these migrations had been applied to it, so the columns the check needs did not exist there). And a loan with no copy is **normal** for a returned loan that predates copies (decision 51: only open and lost loans are bound), so `copy` could not become required without inventing a placeholder copy for every historic loan, which changes behaviour. What was done instead: `library_reconcile` now prints a "Tightening" section with counts only (titles with no category per school, loans with no copy by status) and says in words whether each link could be made required. Run it after migrating; if it says "every title has a category" the category step can be done; the copy link should stay optional.
+119. **The old quantity columns are dropped.** Migration `0014` removes `quantity` and `available_quantity` from `library_books` (docstring: apply after a backup, not cleanly reversible: reversing re-adds both columns filled with 0). Everything that read them was removed: the model fields; the derived `quantity` and `available_quantity` aliases in the books list API (decision 15; nothing in the frontend read them: only the deleted `LibraryPanels.tsx` and the TypeScript type did); the stock section of `library_reconcile` now reads them with plain SQL and only while they exist. Earlier migrations (0004, 0010) use historical models and are unaffected. `services/backfill.py::find_reconcile_mismatches` still takes model classes because migration 0004 passes it historical ones. The backfill tests now build the pre-0014 models with `legacy_apps()` (a project state with the two fields, and the two columns added to the test table), so the legacy backfill logic is still tested on rows that have the counters. **API change:** `GET /library/books/` no longer has `quantity` and `available_quantity`; use `copies_total` and `copies_available`.
+120. **Old routes.** `/library/books`, `/library/categories` and `/library/issues` still redirect (to the catalogue and the issue desk) and should be deleted next release. `frontend/components/layout/sidebar-menu.data.ts` still lists the four old entries; it is outside this module's files, so it was left and is listed in the audit as open.
+121. **Navigation labels.** The Library sub items in `lib/routes.ts` are, in order: Console, Catalogue, Acquisitions, Periods and Occupancy, Issue Desk, Lost and Damaged, Members, Transactions and Logs, Reports, Stock Check, Settings. Only the Members label differed.
+122. **Beat scheduling.** `django_celery_beat` is in `requirements/base.txt` but is **not in `INSTALLED_APPS`** in any settings file, while `docker-compose.yml` starts beat with `--scheduler django_celery_beat.schedulers:DatabaseScheduler`. With the app not installed that scheduler cannot work, so the library's every-minute task is declared in `config/celery.py` (`beat_schedule`), which the default scheduler reads. Start beat without the `--scheduler` flag (or install and migrate `django_celery_beat`, after which `library_register_periodic_tasks` writes the same entry). This is a pre-existing mismatch outside the library, reported not changed.
+123. **Regression scope.** Backend apps changed by this branch outside the library: `access_control` (two seed commands), `communication` (`realtime.py`), `teacher_portal`, `parent_portal`, `config/celery.py`. Those apps have no test files of their own; their library behaviour is tested in `apps/library/tests`. The broader suites (`backend/tests`, `apps/academics`, `apps/core`) were run on this branch and on the branch's base commit in a throwaway worktree: the failures are the same except that this branch passes one more test; none involves a file the library changed.
+
 ## Migrations to apply
 
 Not applied by the build. Apply in this order on each environment.
@@ -317,6 +335,7 @@ Not applied by the build. Apply in this order on each environment.
 | `library.0011_circulation_constraints` | `uq_library_book_issues_open_copy` (one open loan per copy), `ck_library_book_issues_due_after_issue`, `ck_library_book_issues_return_after_issue`. |
 | `library.0012_acquisitions` | New tables `library_purchase_orders`, `library_donations`, `library_budgets`, `library_book_requests` with their unique, check and index definitions; nullable `library_books.purchase_order` and `library_books.donation`. No data step: the tables are new. |
 | `library.0013_periods_stock` | New tables `library_period_slots`, `library_visits`, `library_stock_audits`, `library_stock_audit_items` with their unique (including the partial ones), index definitions. No data step: the tables are new. |
+| `library.0014_drop_deprecated_quantities` | **Apply after a backup, and only after `library_reconcile` has been read.** Drops `library_books.quantity` and `available_quantity`. Not cleanly reversible (reverse re-adds both columns filled with 0). |
 
 **After `0013`, run this command once per environment (not run by the build):**
 
@@ -330,7 +349,32 @@ It creates the every-minute `library-flag-unscanned-students` entry in `django_c
 
 **Right after `0004`:** run `python manage.py library_reconcile` (read-only). It lists legacy titles whose old `available_quantity` differs from the derived available copies; the derived copy state is what the system uses, the list is for a librarian to check. Run it before circulation resumes, because the old counter stops moving afterwards. `--school <id>` narrows it.
 
-After migrating, in this order: `seed_permissions`, `seed_module_tiers`, `seed_role_templates` (re-syncs role tiers), then `library_role_report` and review the output. The full release list is written in prompt 13.
+After migrating, in this order: `seed_permissions`, `seed_module_tiers`, `seed_role_templates` (re-syncs role tiers), then `library_role_report` and review the output. The full release list is in "Release steps" below.
+
+## Release steps
+
+Run these in order, on one environment at a time, starting with a staging copy of real data. None of them has been run by the build.
+
+0. **Back up.** Take a database snapshot or a Neon branch. Make sure nothing else is migrating the same database.
+1. **Migrate up to the periods and stock tables** (this includes the three data steps, which stop with an error listing ids if the data is bad, see each migration above):
+   `python manage.py migrate library 0013_periods_stock`
+2. **Read the reconcile report** (read-only; it needs the old columns, so it must run before step 3):
+   `python manage.py library_reconcile`
+   Stock differences are expected to be reviewed by a librarian; the derived copy state wins. The Loans section must say "no mismatches". The Tightening section tells you whether category could be required (decision 118).
+3. **Back up again, then apply the cleanup** that drops the old counters:
+   `python manage.py migrate library`
+4. **Seed the permission codes:** `python manage.py seed_permissions`
+5. **Seed the tiers:** `python manage.py seed_module_tiers` (the library has its own explicit tier map; the shared classifier problem for other modules is in `docs/TEAM_CONTEXT.md`).
+6. **Re-sync the role templates:** `python manage.py seed_role_templates`
+7. **Review who lost write access:** `python manage.py library_role_report` (read-only). Roles that relied on a view code for write access now need the new codes; give them through the Roles page (D12).
+8. **Register the periodic task:** `python manage.py library_register_periodic_tasks` (only if `django_celery_beat` is an installed app; otherwise skip, the entry in `config/celery.py` is used, decision 122).
+9. **Processes that must be running** for notifications and the unscanned flag:
+   - Redis (the Celery broker and the Channels layer).
+   - A Celery worker that consumes the `default` queue: `celery -A config worker -l info -Q default,admissions`. The tasks are `library.deliver_event` and `library.flag_unscanned_students`.
+   - Celery beat, started **without** the `django_celery_beat` scheduler flag unless that app is installed and migrated: `celery -A config beat -l info`.
+   - The ASGI server (daphne) that already serves `/ws/chat/`, so the portal pushes arrive.
+10. **Verify:** `python manage.py makemigrations --check` (must print no changes), `python manage.py library_reconcile` again (Stock now says the old columns are dropped), then sign in and check each screen in a browser: the 11 librarian screens, the teacher Library module (3 pages), the parent Library pages (2), and one overdue reminder end to end (librarian remind, guardian bell and push).
+11. **Next release:** delete the redirect pages `app/(dashboard)/library/books`, `categories` and `issues`, and the four old entries in `components/layout/sidebar-menu.data.ts`.
 
 ## Known gaps
 
@@ -345,7 +389,7 @@ After migrating, in this order: `seed_permissions`, `seed_module_tiers`, `seed_r
 - **Roles that held library `.view` codes could previously write.** After the split they can only read. Run `library_role_report` on each environment and grant the new codes where the write access was intended.
 - **Shared tier-seeding defect.** `seed_module_tiers.classify()` misclassifies dot-style codes for other modules too. Only the library has an explicit map now. Report to the owner of the other modules.
 - **`TENANT_FEATURE_GATES` does not exist** in any settings module (the middleware reads it with `getattr(..., {})` and defaults to empty), so the three v1 patterns from blueprint fact 8 were not added. Adding the setting would live in `config/settings/base.py`, which prompt 1 may not edit. The frontend gate `hasFeature('library_enabled')` is not wired yet.
-- **The old Issues page is gone.** `/library/issues` redirects to the new desk; `LibraryPanels.tsx` is dead code until prompt 13 deletes it.
+- **The old Issues page is gone.** `/library/issues` redirects to the new desk; `LibraryPanels.tsx` was dead code and prompt 13 deleted it.
 - **The desk was not exercised in a browser.** Scanner behaviour (a keyboard-wedge scanner typing a code and Enter), focus handling after an action, the undo countdown and the print layouts were type-checked, linted and covered only through their pure helpers. The user does the visual check.
 - **No component tests** for the desk and lost and damaged screens, only helper tests.
 - **Roster size.** The issue tab asks for up to 500 members of a class or group at once; a larger group would be cut off.
@@ -360,7 +404,7 @@ After migrating, in this order: `seed_permissions`, `seed_module_tiers`, `seed_r
 - **A copy that is out on loan cannot be reported through `lost-damaged/`**; the return desk is the only path. A borrower who loses a book is handled by returning the loan with a lost report.
 - **No Jest component tests** for the members and settings screens, only helper tests. Nothing was checked in a browser.
 - **Category tighten is not done.** `Book.category` is still nullable and legacy loans are not bound to copies; blueprint section 5 migrations C and D (tighten, drop `quantity` columns) are later releases.
-- **Legacy Books and Categories panels** (`LibraryPanels.tsx`) are no longer routed to; they stay in the file until prompt 13 removes it. The Members and Issues pages still use that file.
+- **Legacy Books and Categories panels** (`LibraryPanels.tsx`) are no longer routed to; prompt 13 deleted that file (the Members and Issues pages had long since moved to their own components).
 - **Not checked in a browser.** The catalogue screens, print view and scanner panel were type-checked, linted and unit-tested only; the user does the visual check.
 - **No Jest component tests**: only the pure helpers are tested (as specified).
 - **Print layout is basic** (CSS grid of 230 px labels, no label-sheet presets). Barcode scanning of printed Code 39 labels is untested with real hardware.
@@ -389,6 +433,10 @@ After migrating, in this order: `seed_permissions`, `seed_module_tiers`, `seed_r
 - **(Prompt 12) The child switch is a copy of the Homework page's** (as asked), inside `components/parent/library/shared.tsx`; a change to the Homework switch will not reach it.
 - **(Prompt 12) History orders lost loans by their issue date**, because a lost loan has no return date; a loan marked lost long after it was issued can sit lower in the list than its closing date suggests.
 - **(Prompt 12) Student period slots exist only if the librarian sets them up** (prompt 9); until then every parent sees the "no library period" line.
+- **(Prompt 13) Tightening not done** (decision 118). The reconcile command reports what blocks it.
+- **(Prompt 13) The four Postgres-only race tests are still unverified** (audit row 9).
+- **(Prompt 13) Nothing in the module has been checked in a browser, with a real login, a Celery worker, beat, Redis or a WebSocket.** Every screen, push and scheduled task was verified by type-check, lint, helper tests and API tests only.
+- **(Prompt 13) The broader repository has failures of its own** that this branch neither caused nor fixed: 40 failing and 23 erroring tests in `backend/tests/` (stale fixtures), 13 `tsc` errors under `frontend/app/(dashboard)/exams/`, 7 ESLint errors in `hr/leave` and `academics/timetable`.
 
 ## Deviations from blueprint
 

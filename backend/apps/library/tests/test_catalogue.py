@@ -148,15 +148,17 @@ def test_cross_school_category_is_a_field_error(librarian_client, other_category
     assert resp.status_code == 400 and "category" in resp.json()["field_errors"]
 
 
-def test_quantity_columns_are_never_written(librarian_client, category):
+def test_the_old_quantity_columns_and_aliases_are_gone(librarian_client, category):
     data = librarian_client.post(f"{BASE}/books/", wizard(category), format="json").json()["data"]
-    assert (data["quantity"], data["available_quantity"]) == (3, 3)  # derived aliases
+    assert "quantity" not in data and "available_quantity" not in data
+    assert data["copies_total"] == 3 and data["copies_available"] == 3
     book = Book.objects.get(pk=data["id"])
-    assert (book.quantity, book.available_quantity) == (0, 0)  # stored columns untouched
+    assert not hasattr(book, "quantity") and not hasattr(book, "available_quantity")
+    listed = librarian_client.get(f"{BASE}/books/").json()["results"][0]
+    assert "quantity" not in listed and "available_quantity" not in listed
     resp = librarian_client.patch(f"{BASE}/books/{book.pk}/", {"quantity": 50}, format="json")
-    assert resp.status_code == 200
-    book.refresh_from_db()
-    assert book.quantity == 0
+    assert resp.status_code == 200  # an unknown field is ignored, never stored
+    assert "quantity" not in librarian_client.get(f"{BASE}/books/{book.pk}/").json()["data"]
 
 
 def test_patch_keeps_the_accession_code_and_rejects_changing_it(librarian_client, category, book):

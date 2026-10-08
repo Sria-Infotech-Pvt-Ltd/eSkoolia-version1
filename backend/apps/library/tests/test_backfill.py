@@ -1,17 +1,21 @@
 """Catalogue backfill, reconcile command, numbering and (Postgres only) concurrent accession.
 
-Legacy rows are built by hand: blank codes, null category, and the old counters.
+Legacy rows are built by hand: blank codes, null category, and the old counters. Migration 0014 dropped the
+`quantity` and `available_quantity` columns from the model, so `legacy_apps()` rebuilds the models as they
+were before it (the same trick a historical migration state uses) and adds the two columns to the test table.
 The unique constraints on code and accession code (added by migration 0005, after
 the backfill) forbid two blank-coded rows in one school, so each scenario adds
 its legacy rows one at a time or uses a separate school.
 """
+import functools
 import threading
 from io import StringIO
 
 import pytest
 from django.apps import apps as django_apps
 from django.core.management import call_command
-from django.db import connection
+from django.db import connection, models
+from django.db.migrations.state import ProjectState
 
 from apps.library.models import Book, BookCategory, BookCopy, BookIssue
 from apps.library.services.backfill import (
@@ -24,27 +28,46 @@ from apps.library.services.numbering import derive_category_code, next_accession
 from apps.library.tests.conftest import make_book, make_member
 
 
+@functools.lru_cache(maxsize=1)
+def _legacy_state():
+    state = ProjectState.from_apps(django_apps)
+    for name in ("quantity", "available_quantity"):
+        state.add_field("library", "book", name, models.PositiveIntegerField(default=0), True)
+    return state
+
+
+def legacy_apps():
+    """The model registry as it was before migration 0014, with the two old columns present in the test table."""
+    with connection.cursor() as cursor:
+        existing = {column.name for column in connection.introspection.get_table_description(cursor, "library_books")}
+        for name in ("quantity", "available_quantity"):
+            if name not in existing:
+                cursor.execute(f"ALTER TABLE library_books ADD COLUMN {name} integer NOT NULL DEFAULT 0")
+    return _legacy_state().apps
+
+
 def legacy_book(school, title, quantity, available, category=None):
-    return Book.objects.create(
-        school=school, category=category, title=title, author="Legacy", quantity=quantity, available_quantity=available
+    return legacy_apps().get_model("library", "Book").objects.create(
+        school_id=school.pk, category_id=category.pk if category else None, title=title, author="Legacy",
+        quantity=quantity, available_quantity=available,
     )
 
 
 def loans(school, book, member, *statuses):
     for status in statuses:
         BookIssue.objects.create(
-            school=school, book=book, member=member, issue_date="2026-01-01", due_date="2026-01-15", status=status
+            school=school, book_id=book.pk, member=member, issue_date="2026-01-01", due_date="2026-01-15", status=status
         )
 
 
 def copies_of(book):
-    return [(c.code, c.status) for c in BookCopy.objects.filter(book=book).order_by("id")]
+    return [(c.code, c.status) for c in BookCopy.objects.filter(book_id=book.pk).order_by("id")]
 
 
 def test_backfill_codes_uncategorised_and_copies(school, member):
     book = legacy_book(school, "Orphan", quantity=3, available=1)  # null category
     loans(school, book, member, "issued", "lost", "returned")
-    mismatches = backfill_catalogue(django_apps)
+    mismatches = backfill_catalogue(legacy_apps())
 
     book.refresh_from_db()
     unc = BookCategory.objects.get(school=school, name="Uncategorised")
@@ -62,14 +85,14 @@ def test_backfill_continues_sequences_and_reports_mismatches(school, member):
     fiction = BookCategory.objects.create(school=school, name="Fiction")  # no code yet
     first = legacy_book(school, "One", quantity=2, available=2, category=fiction)
     loans(school, first, member, "issued")  # one copy is out, so derived available is 1, not 2
-    mismatches = backfill_catalogue(django_apps)
+    mismatches = backfill_catalogue(legacy_apps())
     fiction.refresh_from_db()
     assert fiction.code == "FIC"
     assert [row["book_id"] for row in mismatches] == [first.pk]
     assert (mismatches[0]["old_available"], mismatches[0]["derived_available"]) == (2, 1)
 
     second = legacy_book(school, "Two", quantity=1, available=1, category=fiction)
-    backfill_catalogue(django_apps)
+    backfill_catalogue(legacy_apps())
     first.refresh_from_db()
     second.refresh_from_db()
     assert (first.accession_code, second.accession_code) == ("LIB-FIC-0001", "LIB-FIC-0002")
@@ -78,9 +101,9 @@ def test_backfill_continues_sequences_and_reports_mismatches(school, member):
 
 def test_backfill_gives_colliding_names_distinct_codes(school):
     BookCategory.objects.create(school=school, name="Fiction", code="")
-    backfill_catalogue(django_apps)
+    backfill_catalogue(legacy_apps())
     BookCategory.objects.create(school=school, name="Fiction Two", code="")
-    backfill_catalogue(django_apps)
+    backfill_catalogue(legacy_apps())
     assert sorted(BookCategory.objects.filter(school=school).values_list("code", flat=True)) == ["FIC", "FIC2"]
 
 
@@ -88,27 +111,27 @@ def test_backfill_makes_a_copy_for_every_loan_even_if_quantity_is_too_low(other_
     member = make_member(other_school, "C-2")
     book = legacy_book(other_school, "Overbooked", quantity=1, available=0, category=other_category)
     loans(other_school, book, member, "issued", "issued")
-    backfill_catalogue(django_apps)
+    backfill_catalogue(legacy_apps())
     assert [status for _code, status in copies_of(book)] == ["issued", "issued"]
 
 
 def test_backfill_is_idempotent_and_leaves_new_books_alone(school, category, book, member):
     before = (book.accession_code, copies_of(book))
     legacy = legacy_book(school, "Legacy", quantity=1, available=1, category=category)
-    backfill_catalogue(django_apps)
-    backfill_catalogue(django_apps)
+    backfill_catalogue(legacy_apps())
+    backfill_catalogue(legacy_apps())
     book.refresh_from_db()
     assert (book.accession_code, copies_of(book)) == before
-    assert BookCopy.objects.filter(book=legacy).count() == 1
-    assert BookCopy.objects.filter(book=book).count() == 2
+    assert BookCopy.objects.filter(book_id=legacy.pk).count() == 1
+    assert BookCopy.objects.filter(book_id=book.pk).count() == 2
 
 
 def test_library_reconcile_is_read_only_and_lists_differences(school, member):
     fiction = BookCategory.objects.create(school=school, name="Fiction")
     book = legacy_book(school, "Mismatch", 2, 2, category=fiction)
     loans(school, book, member, "issued")
-    backfill_catalogue(django_apps)
-    backfill_loans(django_apps)
+    backfill_catalogue(legacy_apps())
+    backfill_loans(legacy_apps())
     snapshot = list(BookCopy.objects.values_list("id", "status"))
 
     out = StringIO()
@@ -124,9 +147,40 @@ def test_library_reconcile_is_read_only_and_lists_differences(school, member):
 
 
 def test_library_reconcile_ignores_titles_created_after_the_backfill(school, category, book):
+    legacy_apps()  # the old columns exist, as on a database that has not run migration 0014
     out = StringIO()
     call_command("library_reconcile", stdout=out)
     assert "Stock: no mismatches" in out.getvalue()
+
+
+def test_library_reconcile_says_so_once_the_old_columns_are_gone(school, category, book):
+    out = StringIO()
+    call_command("library_reconcile", stdout=out)
+    assert "old quantity columns have been dropped" in out.getvalue()
+
+
+def test_library_reconcile_reports_what_blocks_the_tightening_step(school, category, member):
+    book = BookCategory.objects.create(school=school, name="Tight", code="TGT")
+    Book.objects.create(school=school, category=None, title="No category", author="x", accession_code="LIB-X-0001")
+    real = Book.objects.create(school=school, category=book, title="With category", author="x", accession_code="LIB-TGT-0001")
+    BookIssue.objects.create(school=school, book=real, member=member, issue_date="2026-01-01", due_date="2026-01-15", status="returned", return_date="2026-01-05")
+    out = StringIO()
+    call_command("library_reconcile", stdout=out)
+    text = out.getvalue()
+    assert f"school {school.pk} = 1" in text and "do not make category required" in text
+    assert "loans with no copy by status: returned = 1" in text and "only returned loans lack a copy" in text
+    BookIssue.objects.create(school=school, book=real, member=member, issue_date="2026-01-01", due_date="2026-01-15", status="issued")
+    again = StringIO()
+    call_command("library_reconcile", stdout=again)
+    assert "open or lost loans have no copy" in again.getvalue()
+
+
+def test_library_reconcile_says_the_tightening_is_safe_when_nothing_is_missing(school, category, book):
+    out = StringIO()
+    call_command("library_reconcile", stdout=out)
+    text = out.getvalue()
+    assert "every title has a category" in text and "every loan has a copy" in text
+    assert "Nothing was changed" in text
 
 
 # ---- numbering -----------------------------------------------------------------
@@ -212,14 +266,14 @@ def test_loan_binding_gives_every_open_and_lost_loan_a_copy(school, member):
     fiction = BookCategory.objects.create(school=school, name="Fiction")
     book = legacy_book(school, "Bound", quantity=4, available=1, category=fiction)
     loans(school, book, member, "issued", "issued", "lost", "returned")
-    backfill_catalogue(django_apps)  # copies: lost, issued, issued, available
-    backfill_loans(django_apps)
-    open_copies = list(BookIssue.objects.filter(book=book, status="issued").values_list("copy__status", flat=True))
+    backfill_catalogue(legacy_apps())  # copies: lost, issued, issued, available
+    backfill_loans(legacy_apps())
+    open_copies = list(BookIssue.objects.filter(book_id=book.pk, status="issued").values_list("copy__status", flat=True))
     assert open_copies == ["issued", "issued"]
-    assert len(set(BookIssue.objects.filter(book=book, status="issued").values_list("copy_id", flat=True))) == 2
-    lost = BookIssue.objects.get(book=book, status="lost")
+    assert len(set(BookIssue.objects.filter(book_id=book.pk, status="issued").values_list("copy_id", flat=True))) == 2
+    lost = BookIssue.objects.get(book_id=book.pk, status="lost")
     assert lost.copy.status == "lost"
-    assert BookIssue.objects.get(book=book, status="returned").copy_id is None  # history stays unbound
+    assert BookIssue.objects.get(book_id=book.pk, status="returned").copy_id is None  # history stays unbound
     assert find_loan_mismatches(BookCopy, BookIssue) == {
         "open_loans_without_copy": [], "lost_loans_without_copy": [],
         "issued_copies_without_open_loan": [], "open_loans_on_unissued_copy": [],
@@ -229,23 +283,23 @@ def test_loan_binding_gives_every_open_and_lost_loan_a_copy(school, member):
 def test_loan_binding_uses_an_available_copy_or_makes_a_new_one(school, member):
     fiction = BookCategory.objects.create(school=school, name="Fiction")
     book = legacy_book(school, "Short", quantity=1, available=1, category=fiction)
-    backfill_catalogue(django_apps)  # one copy, available
+    backfill_catalogue(legacy_apps())  # one copy, available
     loans(school, book, member, "issued", "issued")  # two open loans, one copy: a loan arrived after the catalogue backfill
-    backfill_loans(django_apps)
-    bound = list(BookIssue.objects.filter(book=book, status="issued").values_list("copy_id", flat=True))
+    backfill_loans(legacy_apps())
+    bound = list(BookIssue.objects.filter(book_id=book.pk, status="issued").values_list("copy_id", flat=True))
     assert len(set(bound)) == 2 and all(bound)
-    assert BookCopy.objects.filter(book=book).count() == 2
-    assert set(BookCopy.objects.filter(book=book).values_list("status", flat=True)) == {"issued"}
+    assert BookCopy.objects.filter(book_id=book.pk).count() == 2
+    assert set(BookCopy.objects.filter(book_id=book.pk).values_list("status", flat=True)) == {"issued"}
 
 
 def test_loan_binding_is_idempotent(school, member):
     fiction = BookCategory.objects.create(school=school, name="Fiction")
     book = legacy_book(school, "Twice", quantity=2, available=1, category=fiction)
     loans(school, book, member, "issued")
-    backfill_catalogue(django_apps)
-    backfill_loans(django_apps)
+    backfill_catalogue(legacy_apps())
+    backfill_loans(legacy_apps())
     before = list(BookIssue.objects.values_list("id", "copy_id")) + list(BookCopy.objects.values_list("id", "status"))
-    backfill_loans(django_apps)
+    backfill_loans(legacy_apps())
     assert list(BookIssue.objects.values_list("id", "copy_id")) + list(BookCopy.objects.values_list("id", "status")) == before
 
 
