@@ -1,3 +1,10 @@
+from .acquisitions import (
+    BookRequestReviewSerializer,
+    BookRequestSerializer,
+    BudgetInputSerializer,
+    DonationSerializer,
+    PurchaseOrderSerializer,
+)
 from .catalogue import (
     AddCopiesSerializer,
     BookCategorySerializer,

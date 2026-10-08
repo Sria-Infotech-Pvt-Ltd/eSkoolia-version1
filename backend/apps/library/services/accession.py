@@ -20,7 +20,7 @@ from .numbering import next_accession_code
 BOOK_FIELDS = (
     "title", "author", "isbn", "publisher", "publication_year", "language", "age_band",
     "for_students", "for_teachers", "for_staff", "format", "is_reference_only", "cost_per_copy",
-    "edition", "part_label", "source", "vendor_name", "donor_name", "rack", "remarks", "call_number",
+    "edition", "part_label", "source", "purchase_order", "donation", "vendor_name", "donor_name", "rack", "remarks", "call_number",
 )
 
 

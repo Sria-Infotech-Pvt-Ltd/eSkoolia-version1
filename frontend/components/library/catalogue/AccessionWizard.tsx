@@ -1,8 +1,9 @@
 "use client";
 
 import { useEffect, useMemo, useState } from "react";
-import { addCopies, createBook, getBook, LibraryApiError, updateBook } from "@/hooks/useLibraryApi";
-import type { AgeBand, BookCategory, BookDetail, BookFormat, CopyCondition } from "@/types/library";
+import { addCopies, createBook, getBook, LibraryApiError, listDonations, listPurchaseOrders, updateBook } from "@/hooks/useLibraryApi";
+import { usePermissions } from "@/hooks/usePermissions";
+import type { AgeBand, BookCategory, BookDetail, BookFormat, CopyCondition, Donation, PurchaseOrder } from "@/types/library";
 import {
   AGE_BAND_LABELS,
   emptyWizard,
@@ -51,6 +52,8 @@ function fromDetail(book: BookDetail): WizardData {
     edition: book.edition,
     part_label: book.part_label,
     source: book.source,
+    purchase_order: book.purchase_order ? String(book.purchase_order) : "",
+    donation: book.donation ? String(book.donation) : "",
     vendor_name: book.vendor_name,
     donor_name: book.donor_name,
     call_number: book.call_number,
@@ -61,6 +64,9 @@ function fromDetail(book: BookDetail): WizardData {
 
 export function AccessionWizard({ categories, bookId, onClose, onSaved, onPrintLabels }: Props) {
   const editing = bookId !== undefined;
+  const { can } = usePermissions();
+  const [orders, setOrders] = useState<PurchaseOrder[]>([]);
+  const [donations, setDonations] = useState<Donation[]>([]);
   const [data, setData] = useState<WizardData>(emptyWizard());
   const [loaded, setLoaded] = useState(!editing);
   const [loadError, setLoadError] = useState("");
@@ -72,6 +78,26 @@ export function AccessionWizard({ categories, bookId, onClose, onSaved, onPrintL
   const [saving, setSaving] = useState(false);
   const [done, setDone] = useState<BookDetail | null>(null);
   const [addedCodes, setAddedCodes] = useState<string[]>([]);
+
+  // Open orders and recent donations for the source step. Skipped without the matching view code.
+  const canPickOrder = can("library.purchase_orders.view");
+  const canPickDonation = can("library.donations.view");
+  useEffect(() => {
+    let cancelled = false;
+    if (canPickOrder) {
+      listPurchaseOrders({ page_size: 100 }, { silent401: true })
+        .then((page) => !cancelled && setOrders(page.results.filter((order) => order.status !== "cancelled")))
+        .catch(() => undefined);
+    }
+    if (canPickDonation) {
+      listDonations({ page_size: 100 }, { silent401: true })
+        .then((page) => !cancelled && setDonations(page.results))
+        .catch(() => undefined);
+    }
+    return () => {
+      cancelled = true;
+    };
+  }, [canPickOrder, canPickDonation]);
 
   useEffect(() => {
     if (bookId === undefined) return;
@@ -384,6 +410,42 @@ export function AccessionWizard({ categories, bookId, onClose, onSaved, onPrintL
                   <option value="donated">Donated</option>
                 </select>
               </Field>
+              {data.source === "purchased" && canPickOrder ? (
+                <Field label="Purchase order (optional)" error={error("purchase_order")} hint="Links the title to an order so the order shows how many titles were cataloged.">
+                  <select
+                    style={inputStyle}
+                    value={data.purchase_order}
+                    onChange={(e) => {
+                      const order = orders.find((o) => String(o.id) === e.target.value);
+                      set("purchase_order", e.target.value);
+                      if (order && !data.vendor_name.trim()) set("vendor_name", order.vendor_name);
+                    }}
+                  >
+                    <option value="">No purchase order</option>
+                    {orders.map((order) => (
+                      <option key={order.id} value={order.id}>{order.po_number} - {order.vendor_name}</option>
+                    ))}
+                  </select>
+                </Field>
+              ) : null}
+              {data.source === "donated" && canPickDonation ? (
+                <Field label="Donation (optional)" error={error("donation")} hint="Links the title to a donation receipt.">
+                  <select
+                    style={inputStyle}
+                    value={data.donation}
+                    onChange={(e) => {
+                      const donation = donations.find((d) => String(d.id) === e.target.value);
+                      set("donation", e.target.value);
+                      if (donation && !data.donor_name.trim()) set("donor_name", donation.donor_name);
+                    }}
+                  >
+                    <option value="">No donation record</option>
+                    {donations.map((donation) => (
+                      <option key={donation.id} value={donation.id}>{donation.receipt_no} - {donation.donor_name}</option>
+                    ))}
+                  </select>
+                </Field>
+              ) : null}
               {data.source === "purchased" ? (
                 <Field label="Vendor" error={error("vendor_name")}>
                   <input style={inputStyle} value={data.vendor_name} maxLength={180} onChange={(e) => set("vendor_name", e.target.value)} />

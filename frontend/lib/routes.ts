@@ -291,6 +291,7 @@ export const MODULES: ModuleRoute[] = [
     sub: [
       { label: 'Console', path: '/library/console', icon: LayoutGrid, permission: 'library.console.view' },
       { label: 'Catalogue', path: '/library/catalogue', icon: BookOpen },
+      { label: 'Acquisitions', path: '/library/acquisitions', icon: Package },
       { label: 'Issue Desk', path: '/library/issue-desk', icon: BookmarkCheck, permission: 'library.book_issues.view' },
       { label: 'Lost and Damaged', path: '/library/lost-damaged', icon: AlertTriangle, permission: 'library.lost_damaged.view' },
       { label: 'Library Members', path: '/library/members', icon: Users },

@@ -139,7 +139,7 @@ class BookDetailSerializer(BookListSerializer):
     class Meta(BookListSerializer.Meta):
         fields = [
             *BookListSerializer.Meta.fields,
-            "school", "vendor_name", "donor_name", "remarks", "copies", "updated_at", *AUDIT_FIELDS,
+            "school", "purchase_order", "donation", "vendor_name", "donor_name", "remarks", "copies", "updated_at", *AUDIT_FIELDS,
         ]
         read_only_fields = fields
 
@@ -158,8 +158,8 @@ class BookWriteSerializer(LibraryModelSerializer):
         fields = [
             "id", "title", "author", "isbn", "publisher", "publication_year", "language", "category",
             "age_band", "for_students", "for_teachers", "for_staff", "format", "is_reference_only",
-            "cost_per_copy", "edition", "part_label", "source", "vendor_name", "donor_name", "rack",
-            "remarks", "call_number", "copies_count", "condition",
+            "cost_per_copy", "edition", "part_label", "source", "purchase_order", "donation", "vendor_name",
+            "donor_name", "rack", "remarks", "call_number", "copies_count", "condition",
         ]
         read_only_fields = ["id"]
         extra_kwargs = {
@@ -168,6 +168,8 @@ class BookWriteSerializer(LibraryModelSerializer):
             "part_label": {"required": False},
             "category": {"required": False, "allow_null": True},
             "call_number": {"required": False},
+            "purchase_order": {"required": False, "allow_null": True},
+            "donation": {"required": False, "allow_null": True},
         }
 
     def to_internal_value(self, data):
@@ -178,6 +180,16 @@ class BookWriteSerializer(LibraryModelSerializer):
     def validate_category(self, value):
         if value is not None and value.school_id != self.request_school_id():
             raise serializers.ValidationError("Selected category does not belong to your school.")
+        return value
+
+    def validate_purchase_order(self, value):
+        if value is not None and value.school_id != self.request_school_id():
+            raise serializers.ValidationError("Selected purchase order does not belong to your school.")
+        return value
+
+    def validate_donation(self, value):
+        if value is not None and value.school_id != self.request_school_id():
+            raise serializers.ValidationError("Selected donation does not belong to your school.")
         return value
 
     def validate_publication_year(self, value):

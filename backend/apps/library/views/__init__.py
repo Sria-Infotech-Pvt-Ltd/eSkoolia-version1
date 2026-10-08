@@ -1,3 +1,10 @@
+from .acquisitions import (
+    AcquisitionsSummaryView,
+    BookRequestViewSet,
+    BudgetView,
+    DonationViewSet,
+    PurchaseOrderViewSet,
+)
 from .base import LibraryViewSet
 from .catalogue import BookCategoryViewSet, BookCopyViewSet, BookViewSet
 from .console import ConsoleSummaryView
@@ -8,6 +15,11 @@ from .members import ChargeViewSet, LibraryMemberViewSet
 from .settings import LibrarySettingsView
 
 __all__ = [
+    "AcquisitionsSummaryView",
+    "BookRequestViewSet",
+    "BudgetView",
+    "DonationViewSet",
+    "PurchaseOrderViewSet",
     "BookCategoryViewSet",
     "BookCopyViewSet",
     "BookIssueViewSet",

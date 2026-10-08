@@ -61,7 +61,7 @@ plus the untracked library planning documents, staged in prompt 1.
 | 5 | Circulation backend | Done (2026-10-07). 424 backend tests pass, 2 Postgres-only tests skipped and UNVERIFIED (last-copy race, concurrent accession). tsc has no library errors. The legacy Issues page no longer works until prompt 6. |
 | 6 | Issue Desk and exceptions screens | Done (2026-10-07). 436 backend tests pass (2 Postgres-only skipped, unverified), 44 Jest tests pass. tsc and lint show only the baseline errors. Nothing was checked in a browser. |
 | 7 | Console, reminders and push | Done (2026-10-08). 494 backend tests pass (2 Postgres-only skipped, unverified), 49 Jest tests pass. tsc and lint show only the baseline errors. No Celery worker, Redis or dev server was started; nothing was checked in a browser. |
-| 8 | Acquisitions and requests | Not started |
+| 8 | Acquisitions and requests | Done (2026-10-08). 558 backend tests pass (3 Postgres-only skipped, unverified), 58 Jest tests pass in `__tests__/library`. `makemigrations --check` clean. tsc and eslint report nothing in the library files. No dev server, Celery worker or Redis was started; nothing was checked in a browser. |
 | 9 | Periods, occupancy and stock check | Not started |
 | 10 | Oversight: logs and reports | Not started |
 | 11 | Teacher portal | Not started |
@@ -128,6 +128,17 @@ plus the untracked library planning documents, staged in prompt 1.
 - `GET console/summary/` (`views/console.py`, code `library.console.view`).
 - Wiring: `return_loan` queues `hold_ready` for the first waiting hold when the copy is back on the shelf, and `replacement_fee` when a report with a borrower is created (at return or through `lost-damaged/`).
 - Frontend: `PortalNotification` is now a union of `PortalMessageNotification` and `PortalLibraryNotification` (with `isLibraryNotification`); the two existing pages that use the hook already ignore non-message kinds. `/library/console` (`components/library/console/`), `getConsoleSummary` and `remindLoans` in the hook, Console as the first Library sub item and the module landing page. Jest: `__tests__/library/console.test.ts`.
+
+## What prompt 8 built (for the next prompt)
+
+- Models in `models/acquisitions.py`: `PurchaseOrder`, `Donation`, `Budget`, `BookRequest`. `Book` gained nullable `purchase_order` and `donation` links (SET_NULL). Migration `0012_acquisitions` (tables are new, so one step is enough).
+- `services/numbering.py`: `next_po_number` (`PO-0001`) and `next_receipt_number` (`DR-0001`) lock the school's `LibrarySettings` row, advance `po_sequence` or `donation_receipt_sequence` and skip a number already taken.
+- `services/acquisitions.py`: create, update and delete for purchase orders, create and update for donations, `set_budget`, `budget_summary`, `review_book_request`. Each write logs one activity row in the same transaction.
+- Endpoints under `/api/v1/library/`: `purchase-orders/`, `donations/` (plus `donations/{id}/receipt/`), `budgets/` (GET with `?academic_year=`, PUT upsert), `acquisitions/summary/`, `book-requests/` and `book-requests/{id}/review/`. Permission codes are the ones already seeded in `seed_permissions`.
+- Notifications: `request_reviewed` is now in `EVENTS`, `NOTIFICATION_TYPE` and `deliver_event`. The recipient is `BookRequest.requested_by`, the link is `/teacher/library/recommend`. `builder["recipient"]` may now be supplied instead of a member.
+- Book serializer and accession service accept `purchase_order` and `donation` (same school); `BookDetailSerializer` returns their ids.
+- Frontend: `/library/acquisitions` (`components/library/acquisitions/`), sub item after Catalogue, hook functions in `useLibraryApi.ts`, types in `types/library.ts`, source-step selects in the accession wizard. Jest: `__tests__/library/acquisitions.test.ts`.
+- For prompt 11 (teacher portal): `BookRequest` rows are created there. The model needs `requested_by`, `title`, optional `school_class`, `section` and `notes`; this prompt only reads and reviews them.
 
 ## Decisions made
 
@@ -201,6 +212,16 @@ plus the untracked library planning documents, staged in prompt 1.
 68. **Console summary** is a fixed 10 queries plus the permission lookup, whatever the data volume (a test checks it with 3 and with 41 titles). `collection_value` adds the cost of every copy that is not lost or withdrawn; `copies_total` leaves out withdrawn copies only. `attention` is the 8 oldest overdue or due-today loans, `holds` the 8 oldest waiting, `activity` the latest 10 events of any type. `period` is an empty object until prompt 9. The console polls every 30 seconds with `silent401` and pauses while the tab is hidden.
 69. **Remind buttons** (all overdue, per loan) need `library.book_issues.remind`; "Remind all overdue" asks for confirmation first.
 
+70. **(Prompt 8) Numbering.** Purchase orders are `PO-0001` and receipts `DR-0001`, padded to four digits and never reset (not per year). The client cannot set the number, the status or the payment status on create; a typed value is ignored.
+71. **Purchase order moves.** `ordered` goes to `received` or `cancelled`; both are final. Payment goes `pending` to `paid` once and never back, and a cancelled order cannot be paid. Any other move is a 409 `library_invalid_state_transition`. Vendor, date, count, cost and academic year can change only while the order is `ordered`; invoice number and notes stay editable. Delete needs `ordered` and no linked titles (409 `library_has_history` when titles are linked).
+72. **Budget maths.** `committed` is the total cost of every order of the academic year that is not cancelled (ordered and received). `paid` is the part of that marked paid. `remaining` is budget minus committed and can go negative. A year with no budget row reads budget 0 and `has_budget` false. The year is the PO's own `academic_year`, stamped from the school's current year when the order is made (or chosen on create).
+73. **Academic year from another school** is a 400 `field_errors.academic_year` on create and on the budget PUT, and a 404 on the summary and budget GET (a lookup, not an input). No current year and none requested is also a 404.
+74. **Donor data.** `contact` is returned only to a caller holding `library.donations.view`, so a create-only user's create and patch responses omit it. The contact is not searchable. Activity rows, metadata and the notification path carry the receipt number and counts only. The printed receipt shows the donor name but not the contact. Donations cannot be deleted.
+75. **Acknowledgement.** `acknowledgement_sent_at` follows the flag: set when turned on, cleared when turned off. The library does not send anything itself (no email or SMS to donors).
+76. **Book requests** move forward only: `pending` to `approved` or `rejected`; `approved` to `ordered` or `fulfilled`; `ordered` to `fulfilled`; `rejected` and `fulfilled` are final. Rejecting an approved request is refused as a reversal. A review may link a same-school title (`linked_book`). Each valid review writes one `request` activity row and queues exactly one `request_reviewed` notification; a refused move writes and queues nothing. Idempotency key is the request id and the status. The notification names the title the teacher typed and the librarian's note, nothing else.
+77. **Sub nav.** The Acquisitions item has no single permission code (it spans budgets, purchase orders, donations and requests), like Catalogue and Members; each section hides itself by its own code and the page shows a no-access state when none apply.
+78. **Source links in the wizard.** The purchase order and donation selects appear only for a caller with the matching view code and only for the matching source. Editing a title without those codes keeps its existing links. Choosing a link fills an empty vendor or donor name.
+
 ## Migrations to apply
 
 Not applied by the build. Apply in this order on each environment.
@@ -217,6 +238,7 @@ Not applied by the build. Apply in this order on each environment.
 | `library.0009_circulation` | Schema: loan `copy`, `renew_count`, `last_renewed_on`, `returned_at`, `returned_by` and indexes; tables `library_holds` and `library_lost_damaged_reports`; `Charge.report` with its unique constraint. |
 | `library.0010_circulation_backfill` | Data: binds every open and lost loan to a copy (decision 51). **Stops with an error listing library_book_issues ids** if a loan's due or return date is before its issue date; fix those dates by hand and run it again. Take a snapshot first. |
 | `library.0011_circulation_constraints` | `uq_library_book_issues_open_copy` (one open loan per copy), `ck_library_book_issues_due_after_issue`, `ck_library_book_issues_return_after_issue`. |
+| `library.0012_acquisitions` | New tables `library_purchase_orders`, `library_donations`, `library_budgets`, `library_book_requests` with their unique, check and index definitions; nullable `library_books.purchase_order` and `library_books.donation`. No data step: the tables are new. |
 
 **After `0011`:** run `python manage.py library_reconcile` again. Its Loans section must read "no mismatches". Anything listed there is an open loan without a copy, an issued copy with no open loan, or an open loan on a copy not marked issued.
 
@@ -225,6 +247,13 @@ Not applied by the build. Apply in this order on each environment.
 After migrating, in this order: `seed_permissions`, `seed_module_tiers`, `seed_role_templates` (re-syncs role tiers), then `library_role_report` and review the output. The full release list is written in prompt 13.
 
 ## Known gaps
+
+- **(Prompt 8) Teacher requests cannot be created yet.** The admin queue reads `library_book_requests`, but the teacher portal form that fills it is prompt 11. Until then the list is empty.
+- **(Prompt 8) `request_reviewed` is untested end to end.** It was exercised through the task function and `deliver_event` with an eager Celery config and a patched push. It needs the same worker and Redis as the other events.
+- **(Prompt 8) The numbering concurrency test is Postgres-only** and was skipped on SQLite, so concurrent numbering is unverified. The row lock is the same pattern as accession numbering.
+- **(Prompt 8) Nothing was checked in a browser.** The acquisitions screens, the print receipt and the wizard selects were type-checked, linted and covered by helper tests only.
+- **(Prompt 8) No "mark received" stock link.** Receiving an order does not create titles; the librarian accessions them and picks the order in the wizard.
+- **(Prompt 8) Test environment trap.** Running pytest without `DATABASE_URL_TEST` set to a SQLite URL makes the suite connect to the Postgres URL in `backend/.env` and try to create `neondb_test_local`. One run did start doing that before it was killed. See "Things to check" in the prompt 8 report.
 
 - **Role templates (D12) are not changed.** `seed_role_templates.py` gives Teaching Staff and Class Teacher `library: view` and Staff Coordinator `library: operate`; D12 says teacher and parent templates get none. That file was outside prompt 1's file list and no later prompt lists it. Decide and assign it (prompt 13 or a follow-up).
 - **Roles that held library `.view` codes could previously write.** After the split they can only read. Run `library_role_report` on each environment and grant the new codes where the write access was intended.

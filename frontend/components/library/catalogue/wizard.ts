@@ -21,6 +21,8 @@ export interface WizardData {
   part_label: string;
   condition: CopyCondition;
   source: BookSource;
+  purchase_order: string; // purchase order id, "" when none
+  donation: string; // donation id, "" when none
   vendor_name: string;
   donor_name: string;
   call_number: string;
@@ -68,6 +70,8 @@ export function emptyWizard(): WizardData {
     part_label: "",
     condition: "new",
     source: "purchased",
+    purchase_order: "",
+    donation: "",
     vendor_name: "",
     donor_name: "",
     call_number: "",
@@ -83,7 +87,7 @@ export const FIELD_STEP: Record<keyof WizardData | "audience", number> = {
   title: 0, author: 0, isbn: 0, publisher: 0, publication_year: 0, language: 0,
   category: 1, age_band: 1, for_students: 1, for_teachers: 1, for_staff: 1, audience: 1, format: 1, is_reference_only: 1,
   copies_count: 2, cost_per_copy: 2, edition: 2, part_label: 2, condition: 2,
-  source: 3, vendor_name: 3, donor_name: 3, call_number: 3, rack: 3, remarks: 3,
+  source: 3, purchase_order: 3, donation: 3, vendor_name: 3, donor_name: 3, call_number: 3, rack: 3, remarks: 3,
 };
 
 export function stepForField(field: string): number | null {
@@ -152,6 +156,8 @@ export function toBookInput(data: WizardData): BookInput {
     edition: data.edition.trim(),
     part_label: data.part_label.trim(),
     source: data.source,
+    purchase_order: data.source === "purchased" && data.purchase_order ? Number(data.purchase_order) : null,
+    donation: data.source === "donated" && data.donation ? Number(data.donation) : null,
     vendor_name: data.source === "purchased" ? data.vendor_name.trim() : "",
     donor_name: data.source === "donated" ? data.donor_name.trim() : "",
     call_number: data.call_number.trim(),

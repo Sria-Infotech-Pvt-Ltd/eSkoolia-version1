@@ -22,6 +22,7 @@ from apps.communication.realtime import push_portal_event
 from apps.core.services.parent_notifications import send_email_sendgrid, send_sms_twilio
 from apps.library.models import (
     BookIssue,
+    BookRequest,
     Hold,
     LibraryActivityLog,
     LibraryMember,
@@ -39,16 +40,19 @@ logger = logging.getLogger(__name__)
 EVENT_HOLD_READY = "hold_ready"
 EVENT_OVERDUE_REMINDER = "overdue_reminder"
 EVENT_REPLACEMENT_FEE = "replacement_fee"
-EVENTS = (EVENT_HOLD_READY, EVENT_OVERDUE_REMINDER, EVENT_REPLACEMENT_FEE)
+EVENT_REQUEST_REVIEWED = "request_reviewed"
+EVENTS = (EVENT_HOLD_READY, EVENT_OVERDUE_REMINDER, EVENT_REPLACEMENT_FEE, EVENT_REQUEST_REVIEWED)
 
 LINK_STAFF = "/teacher/library/my-books"
 LINK_GUARDIAN = "/parent/library"
+LINK_REQUESTS = "/teacher/library/recommend"
 
 # Notification type per event (blueprint 6.2): reminders and fees are "reminder", the rest "system".
 NOTIFICATION_TYPE = {
     EVENT_HOLD_READY: CommunicationNotification.TYPE_SYSTEM,
     EVENT_OVERDUE_REMINDER: CommunicationNotification.TYPE_REMINDER,
     EVENT_REPLACEMENT_FEE: CommunicationNotification.TYPE_REMINDER,
+    EVENT_REQUEST_REVIEWED: CommunicationNotification.TYPE_SYSTEM,
 }
 
 
@@ -166,6 +170,28 @@ def _build_replacement_fee(school, ids):
     }
 
 
+def _build_request_reviewed(school, ids):
+    """Tell the teacher who asked. Only the title they typed and the librarian's note are used: no donor or contact data."""
+    book_request = (
+        BookRequest.objects.select_related("requested_by")
+        .filter(pk=ids["request_id"], school=school)
+        .exclude(status=BookRequest.STATUS_PENDING)
+        .first()
+    )
+    if book_request is None:
+        return None
+    body = f'Your book request "{book_request.title}" is now {book_request.get_status_display().lower()}.'
+    if book_request.review_note:
+        body += f" Librarian's note: {book_request.review_note}"
+    return {
+        "member": None,
+        "recipient": Recipient(book_request.requested_by, link_url=LINK_REQUESTS),
+        "title": "Your library book request was reviewed",
+        "body": body,
+        "key": {"request_id": book_request.pk, "status": book_request.status},
+    }
+
+
 # ---- delivery ---------------------------------------------------------------------------------------------------------
 
 
@@ -207,17 +233,20 @@ def deliver_event(school_id, event, ids):
         built = _build_overdue(school, ids, settings)
     elif event == EVENT_REPLACEMENT_FEE:
         built = _build_replacement_fee(school, ids)
+    elif event == EVENT_REQUEST_REVIEWED:
+        built = _build_request_reviewed(school, ids)
     else:
         raise ValueError(f"Unknown library notification event: {event!r}")
     if built is None:
         return {"status": "stale"}
 
     member = built["member"]
-    recipient = resolve_recipient(member)
+    recipient = built.get("recipient") or resolve_recipient(member)
     if recipient.user is None:
+        who = person_name(member) if member is not None else "a book request"
         log_event(
             school, None, LibraryActivityLog.EVENT_REMINDER,
-            f"No one to notify for {person_name(member)}: {recipient.reason}",
+            f"No one to notify for {who}: {recipient.reason}",
             member=member, metadata={"event": event, "skipped": "no_recipient", **built["key"]},
         )
         return {"status": "no_recipient"}

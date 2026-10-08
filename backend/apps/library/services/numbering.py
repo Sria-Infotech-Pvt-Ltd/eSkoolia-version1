@@ -28,3 +28,36 @@ def next_accession_code(school, category_id):
             break
     category.save(update_fields=["next_sequence", "updated_at"])
     return category, code
+
+
+def _next_counter_number(school, field, prefix, model, number_field):
+    """Lock the school's settings row, advance `field` and return the next unused "<prefix>-<n:04d>".
+
+    Must run inside the caller's ``transaction.atomic()`` so the lock lasts until the row that uses
+    the number is committed. A number that is somehow taken already (typed in by hand) is skipped.
+    """
+    from apps.library.models import LibrarySettings
+
+    from .settings import get_settings
+
+    get_settings(school)  # make sure the row exists before locking it
+    row = LibrarySettings.objects.select_for_update().get(school=school)
+    while True:
+        setattr(row, field, getattr(row, field) + 1)
+        number = f"{prefix}-{getattr(row, field):04d}"
+        if not model.objects.filter(school=school, **{number_field: number}).exists():
+            break
+    row.save(update_fields=[field, "updated_at"])
+    return number
+
+
+def next_po_number(school):
+    from apps.library.models import PurchaseOrder
+
+    return _next_counter_number(school, "po_sequence", "PO", PurchaseOrder, "po_number")
+
+
+def next_receipt_number(school):
+    from apps.library.models import Donation
+
+    return _next_counter_number(school, "donation_receipt_sequence", "DR", Donation, "receipt_no")

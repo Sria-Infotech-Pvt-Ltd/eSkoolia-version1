@@ -164,6 +164,8 @@ export interface Book {
 /** /books/{id}/ also carries copies and the fields not shown in list rows. */
 export interface BookDetail extends Book, LibraryAudit {
   school: number;
+  purchase_order: number | null;
+  donation: number | null;
   vendor_name: string;
   donor_name: string;
   remarks: string;
@@ -195,6 +197,8 @@ export interface BookInput {
   edition?: string;
   part_label?: string;
   source?: BookSource;
+  purchase_order?: number | null;
+  donation?: number | null;
   vendor_name?: string;
   donor_name?: string;
   rack?: string;
@@ -742,4 +746,129 @@ export interface EligibleMemberParams {
   book?: number;
   page?: number;
   page_size?: number;
+}
+
+// ─── Acquisitions ────────────────────────────────────────────────────────────
+
+export type PoStatus = "ordered" | "received" | "cancelled";
+export type PaymentStatus = "pending" | "paid";
+
+export interface PurchaseOrder {
+  id: number;
+  po_number: string;
+  order_date: string;
+  vendor_name: string;
+  invoice_number: string;
+  books_count: number;
+  total_cost: string;
+  status: PoStatus;
+  payment_status: PaymentStatus;
+  academic_year: number | null;
+  academic_year_name: string;
+  notes: string;
+  /** Titles accessioned against this order. */
+  linked_books: number;
+}
+
+export interface PurchaseOrderInput {
+  order_date: string;
+  vendor_name: string;
+  invoice_number?: string;
+  books_count: number;
+  total_cost: string;
+  notes?: string;
+}
+
+export interface PurchaseOrderPatch extends Partial<PurchaseOrderInput> {
+  status?: PoStatus;
+  payment_status?: PaymentStatus;
+}
+
+export interface PurchaseOrderListParams {
+  page?: number;
+  page_size?: number;
+  status?: PoStatus;
+  payment_status?: PaymentStatus;
+  search?: string;
+}
+
+export type DonorType = "parent" | "alumni" | "staff" | "publisher" | "ngo_trust";
+
+export interface Donation {
+  id: number;
+  donor_name: string;
+  donor_type: DonorType;
+  /** Present only when the caller holds library.donations.view. */
+  contact?: string;
+  donation_date: string;
+  books_count: number;
+  estimated_value: string;
+  receipt_no: string;
+  acknowledgement_sent: boolean;
+  acknowledgement_sent_at: string | null;
+  notes: string;
+  linked_books: number;
+}
+
+export interface DonationReceipt extends Donation {
+  school_name: string;
+}
+
+export interface DonationInput {
+  donor_name: string;
+  donor_type: DonorType;
+  contact?: string;
+  donation_date: string;
+  books_count: number;
+  estimated_value: string;
+  notes?: string;
+}
+
+export interface DonationListParams {
+  page?: number;
+  page_size?: number;
+  donor_type?: DonorType;
+  search?: string;
+}
+
+export interface AcquisitionsSummary {
+  academic_year: number;
+  academic_year_name: string;
+  has_budget: boolean;
+  budget: string;
+  committed: string;
+  paid: string;
+  remaining: string;
+}
+
+export type BookRequestStatus = "pending" | "approved" | "rejected" | "ordered" | "fulfilled";
+
+export interface BookRequest {
+  id: number;
+  title: string;
+  notes: string;
+  status: BookRequestStatus;
+  requested_by: number;
+  requested_by_name: string;
+  class_name: string;
+  section_name: string;
+  reviewed_by_name: string;
+  reviewed_at: string | null;
+  review_note: string;
+  linked_book: number | null;
+  linked_book_title: string;
+  created_at: string;
+}
+
+export interface BookRequestListParams {
+  page?: number;
+  page_size?: number;
+  status?: BookRequestStatus;
+  search?: string;
+}
+
+export interface BookRequestReviewInput {
+  status: Exclude<BookRequestStatus, "pending">;
+  note?: string;
+  linked_book?: number | null;
 }

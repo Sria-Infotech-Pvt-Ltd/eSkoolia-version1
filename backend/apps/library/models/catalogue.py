@@ -93,6 +93,10 @@ class Book(LibraryAuditModel):
     part_label = models.CharField(max_length=80, blank=True, default="")
     source = models.CharField(max_length=12, choices=SOURCE_CHOICES, default=SOURCE_PURCHASED)
     # Donor name is personal data: never copy it into logs.
+    purchase_order = models.ForeignKey(
+        "library.PurchaseOrder", on_delete=models.SET_NULL, null=True, blank=True, related_name="books"
+    )
+    donation = models.ForeignKey("library.Donation", on_delete=models.SET_NULL, null=True, blank=True, related_name="books")
     vendor_name = models.CharField(max_length=180, blank=True)
     donor_name = models.CharField(max_length=180, blank=True)
     rack = models.CharField(max_length=50, blank=True)

@@ -1,3 +1,4 @@
+from .acquisitions import BookRequest, Budget, Donation, PurchaseOrder
 from .activity import LibraryActivityLog
 from .base import LibraryAuditModel
 from .catalogue import Book, BookCategory, BookCopy
@@ -10,11 +11,15 @@ __all__ = [
     "BookCategory",
     "BookCopy",
     "BookIssue",
+    "BookRequest",
+    "Budget",
     "Charge",
+    "Donation",
     "Hold",
     "LibraryActivityLog",
     "LibraryAuditModel",
     "LibraryMember",
     "LibrarySettings",
     "LostDamagedReport",
+    "PurchaseOrder",
 ]

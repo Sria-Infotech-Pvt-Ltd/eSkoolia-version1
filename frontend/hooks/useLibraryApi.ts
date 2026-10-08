@@ -8,6 +8,18 @@
  */
 import { apiRequestWithRefresh, type RequestOptions } from "@/lib/api-auth";
 import type {
+  AcquisitionsSummary,
+  BookRequest,
+  BookRequestListParams,
+  BookRequestReviewInput,
+  Donation,
+  DonationInput,
+  DonationListParams,
+  DonationReceipt,
+  PurchaseOrder,
+  PurchaseOrderInput,
+  PurchaseOrderListParams,
+  PurchaseOrderPatch,
   AddCopiesInput,
   AddCopiesResult,
   BulkIssueInput,
@@ -552,5 +564,74 @@ export async function getReportBill(id: number, options?: ReadOptions): Promise<
     method: "GET",
     silent401: options?.silent401,
   });
+  return res.data;
+}
+
+// ─── Acquisitions ────────────────────────────────────────────────────────────
+
+export function listPurchaseOrders(params?: PurchaseOrderListParams, options?: ReadOptions): Promise<LibraryPage<PurchaseOrder>> {
+  return libraryRequest(`${BASE}/purchase-orders/${query(params)}`, { method: "GET", silent401: options?.silent401 });
+}
+
+export async function createPurchaseOrder(body: PurchaseOrderInput): Promise<PurchaseOrder> {
+  const res = await libraryRequest<LibraryEnvelope<PurchaseOrder>>(`${BASE}/purchase-orders/`, json("POST", body));
+  return res.data;
+}
+
+/** Status only moves forward (ordered to received or cancelled) and payment only pending to paid. */
+export async function updatePurchaseOrder(id: number, body: PurchaseOrderPatch): Promise<PurchaseOrder> {
+  const res = await libraryRequest<LibraryEnvelope<PurchaseOrder>>(`${BASE}/purchase-orders/${id}/`, json("PATCH", body));
+  return res.data;
+}
+
+export async function deletePurchaseOrder(id: number): Promise<void> {
+  await libraryRequest(`${BASE}/purchase-orders/${id}/`, { method: "DELETE" });
+}
+
+export function listDonations(params?: DonationListParams, options?: ReadOptions): Promise<LibraryPage<Donation>> {
+  return libraryRequest(`${BASE}/donations/${query(params)}`, { method: "GET", silent401: options?.silent401 });
+}
+
+export async function createDonation(body: DonationInput): Promise<Donation> {
+  const res = await libraryRequest<LibraryEnvelope<Donation>>(`${BASE}/donations/`, json("POST", body));
+  return res.data;
+}
+
+export async function updateDonation(id: number, body: Partial<DonationInput> & { acknowledgement_sent?: boolean }): Promise<Donation> {
+  const res = await libraryRequest<LibraryEnvelope<Donation>>(`${BASE}/donations/${id}/`, json("PATCH", body));
+  return res.data;
+}
+
+export async function getDonationReceipt(id: number, options?: ReadOptions): Promise<DonationReceipt> {
+  const res = await libraryRequest<LibraryEnvelope<DonationReceipt>>(`${BASE}/donations/${id}/receipt/`, {
+    method: "GET",
+    silent401: options?.silent401,
+  });
+  return res.data;
+}
+
+/** Defaults to the current academic year. 404 when the school has none (or the id is not its own). */
+export async function getAcquisitionsSummary(academicYear?: number, options?: ReadOptions): Promise<AcquisitionsSummary> {
+  const res = await libraryRequest<LibraryEnvelope<AcquisitionsSummary>>(
+    `${BASE}/acquisitions/summary/${query({ academic_year: academicYear })}`,
+    { method: "GET", silent401: options?.silent401 },
+  );
+  return res.data;
+}
+
+export async function setBudget(academicYear: number, amount: string): Promise<{ academic_year: number; amount: string }> {
+  const res = await libraryRequest<LibraryEnvelope<{ academic_year: number; amount: string }>>(
+    `${BASE}/budgets/`,
+    json("PUT", { academic_year: academicYear, amount }),
+  );
+  return res.data;
+}
+
+export function listBookRequests(params?: BookRequestListParams, options?: ReadOptions): Promise<LibraryPage<BookRequest>> {
+  return libraryRequest(`${BASE}/book-requests/${query(params)}`, { method: "GET", silent401: options?.silent401 });
+}
+
+export async function reviewBookRequest(id: number, body: BookRequestReviewInput): Promise<BookRequest> {
+  const res = await libraryRequest<LibraryEnvelope<BookRequest>>(`${BASE}/book-requests/${id}/review/`, json("POST", body));
   return res.data;
 }
