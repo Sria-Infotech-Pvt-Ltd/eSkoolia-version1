@@ -10,9 +10,12 @@ def add_district_column_if_missing(apps, schema_editor):
     genuinely absent.
     """
     table_name = "students"
-    with schema_editor.connection.cursor() as cursor:
-        cursor.execute(f"PRAGMA table_info({table_name})")
-        columns = {row[1] for row in cursor.fetchall()}
+    connection = schema_editor.connection
+    with connection.cursor() as cursor:
+        columns = {
+            field.name
+            for field in connection.introspection.get_table_description(cursor, table_name)
+        }
 
     if "district" not in columns:
         schema_editor.execute(

@@ -520,15 +520,18 @@ class StaffViewSet(SchoolScopedModelViewSet):
         role_id = parse_fk_id("role")
         department_id = parse_fk_id("department")
         designation_id = parse_fk_id("designation")
+        reporting_manager_id = parse_fk_id("reporting_manager")
 
         role_qs = Role.objects.all()
         dept_qs = Department.objects.all()
         desg_qs = Designation.objects.all()
+        manager_qs = Staff.objects.all()
 
         if school_id:
             role_qs = role_qs.filter(school_id=school_id)
             dept_qs = dept_qs.filter(school_id=school_id)
             desg_qs = desg_qs.filter(school_id=school_id)
+            manager_qs = manager_qs.filter(school_id=school_id)
 
         if role_id and not role_qs.filter(id=role_id).exists():
             raise NotFound("Role not found")
@@ -536,6 +539,8 @@ class StaffViewSet(SchoolScopedModelViewSet):
             raise NotFound("Department not found")
         if designation_id and not desg_qs.filter(id=designation_id).exists():
             raise NotFound("Designation not found")
+        if reporting_manager_id and not manager_qs.filter(id=reporting_manager_id).exists():
+            raise NotFound("Reporting manager not found")
 
     def _normalize_staff_request_data(self, request):
         data = {}

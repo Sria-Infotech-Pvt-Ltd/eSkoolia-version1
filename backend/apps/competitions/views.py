@@ -5,6 +5,7 @@ from rest_framework.response import Response
 from rest_framework.throttling import UserRateThrottle
 from rest_framework.views import APIView
 
+from apps.access_control.permission_classes import IsSchoolAdminOrSuperuser
 from .ai import ReviewItem, get_or_generate_review
 from .models import AIRequestLog, Competition, Result
 from .serializers import (
@@ -92,4 +93,10 @@ class AIReviewView(APIView):
 class AIRequestLogViewSet(viewsets.ReadOnlyModelViewSet):
     queryset = AIRequestLog.objects.all()
     serializer_class = AIRequestLogSerializer
-    permission_classes = [IsAdminUser]
+    permission_classes = [IsSchoolAdminOrSuperuser]
+
+    def get_queryset(self):
+        # Scoped like any other per-school page — including for superusers,
+        # who are provisioned with their own school (see CLAUDE.md tenancy policy).
+        qs = super().get_queryset()
+        return qs.filter(user__school_id=self.request.user.school_id)
