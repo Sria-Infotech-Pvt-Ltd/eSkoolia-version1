@@ -1,7 +1,12 @@
 "use client";
 
-import { TransportRoutePanel } from "@/components/transport/TransportRoutePanel";
+import { Suspense } from "react";
+import { RoutesPage } from "@/components/transport/routes/RoutesPage";
 
 export default function TransportRoutesPage() {
-  return <TransportRoutePanel />;
+  return (
+    <Suspense fallback={null}>
+      <RoutesPage />
+    </Suspense>
+  );
 }

@@ -55,6 +55,9 @@ import {
   List,
   Navigation,
   UserX,
+  IdCard,
+  Wrench,
+  Fuel,
   type LucideIcon,
 } from 'lucide-react';
 
@@ -296,8 +299,7 @@ export const MODULES: ModuleRoute[] = [
       { label: 'Book Issues', path: '/library/issues', icon: BookmarkCheck },
     ],
   }, */
-  // HIDDEN - no backend yet
-  /* {
+  {
     id: 'transport',
     name: 'Transport',
     path: '/transport',
@@ -305,17 +307,27 @@ export const MODULES: ModuleRoute[] = [
     bg: '#EFF6FF',
     ic: '#1D4ED8',
     permission: 'transport',
+    // 14-tab Transport module (docs: Transport Module Master Prompt §3.2). The
+    // earlier pages (assign-vehicles, bus-tracking, tracking, tracking/buses,
+    // tracking/route-builder, student-report) are untouched and still reachable
+    // directly; the placeholder screens link to them until their phase lands.
     sub: [
+      { label: 'Dashboard', path: '/transport', icon: LayoutDashboard },
       { label: 'Vehicles', path: '/transport/vehicles', icon: Car },
+      { label: 'Drivers', path: '/transport/drivers', icon: IdCard },
+      { label: 'Attendants', path: '/transport/attendants', icon: UserCheck },
       { label: 'Routes', path: '/transport/routes', icon: Route },
-      { label: 'Assign Vehicles', path: '/transport/assign-vehicles', icon: Truck },
-      { label: 'Bus Tracking', path: '/transport/bus-tracking', icon: MapPin },
-      { label: 'Live Tracking', path: '/transport/tracking', icon: Navigation },
-      { label: 'Tracked Buses', path: '/transport/tracking/buses', icon: Bus },
-      { label: 'Route Builder', path: '/transport/tracking/route-builder', icon: Route },
-      { label: 'Student Report', path: '/transport/student-report', icon: FileBarChart },
+      { label: 'Pickup Points', path: '/transport/pickup-points', icon: MapPin },
+      { label: 'Student Allocation', path: '/transport/allocation', icon: Users },
+      { label: 'Attendance', path: '/transport/attendance', icon: ClipboardCheck },
+      { label: 'Live Tracking', path: '/transport/live', icon: Navigation },
+      { label: 'Alerts', path: '/transport/alerts', icon: AlertTriangle },
+      { label: 'Maintenance', path: '/transport/maintenance', icon: Wrench },
+      { label: 'Fuel Management', path: '/transport/fuel', icon: Fuel },
+      { label: 'Reports', path: '/transport/reports', icon: FileBarChart },
+      { label: 'Settings', path: '/transport/settings', icon: Settings },
     ],
-  }, */
+  },
   // HIDDEN - no backend yet
   /* {
     id: 'inventory',
