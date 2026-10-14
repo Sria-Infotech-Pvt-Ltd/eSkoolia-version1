@@ -1,13 +1,15 @@
 "use client";
 /**
  * Drivers (§7.3) and Attendants (§7.4) — one list-template screen driven by a
- * per-kind config, so both stay identical in layout and behaviour.
+ * per-kind config, so both stay identical in layout and behaviour. Every driver /
+ * attendant is an existing HR staff member with a transport profile
+ * (transport-staff/); name and phone come from HR, the licence number is HR's.
  */
 import { useCallback, useMemo, useState } from "react";
 import { Eye, FileText, Pencil } from "lucide-react";
-import { nextId, useTransport, useVehicles } from "@/lib/transport/store";
-import { SHIFT_LABELS } from "@/lib/transport/mock";
-import { daysLeft, fmtDate, initials, last3, maskPhone, plural } from "@/lib/transport/format";
+import { useTransport, useVehicles } from "@/lib/transport/store";
+import { SHIFT_LABELS } from "@/lib/transport/catalog";
+import { daysLeft, fmtDate, initials, plural } from "@/lib/transport/format";
 import { downloadCsv, type CsvColumn } from "@/lib/transport/csv";
 import type { Attendant, Driver, ShiftGroup, StaffStatus } from "@/lib/transport/types";
 import {
@@ -27,19 +29,21 @@ const ALL = "all";
 /** Common row shape for both kinds. */
 interface Row {
   id: string; name: string; shift: ShiftGroup; status: StaffStatus; online: boolean; phone: string; experience: number;
-  docNo: string; docValid: string; plate: string; route: string; trips: number; rating?: number; studentsOnBus?: number;
+  docNo: string; docValid: string; plate: string; route: string; trips: number | null; rating?: number; studentsOnBus?: number;
+  emergency: string;
 }
 
 function toRow(kind: StaffKind, x: Driver | Attendant): Row {
   if (kind === "driver") {
     const d = x as Driver;
     return { id: d.id, name: d.name, shift: d.shift, status: d.status, online: d.online, phone: d.phone, experience: d.experience,
-      docNo: d.licenceNo, docValid: d.licenceValidTill, plate: d.vehicleReg, route: d.routeLabel, trips: d.tripsThisMonth, rating: d.rating };
+      docNo: d.licenceNo, docValid: d.licenceValidTill, plate: d.vehicleReg, route: d.routeLabel, trips: d.tripsThisMonth, rating: d.rating,
+      emergency: d.emergencyContact };
   }
   const a = x as Attendant;
   return { id: a.id, name: a.name, shift: a.shift, status: a.status, online: a.status === "On route" || a.status === "On duty",
     phone: a.phone, experience: a.experience, docNo: a.certificateNo, docValid: a.firstAidValidTill, plate: a.busReg,
-    route: a.routeLabel, trips: a.trips, studentsOnBus: a.studentsOnBus };
+    route: a.routeLabel, trips: a.trips, studentsOnBus: a.studentsOnBus, emergency: a.emergencyContact };
 }
 
 const CFG = {
@@ -53,8 +57,8 @@ const CFG = {
     search: "Search by name, staff ID, licence or vehicle…",
     listHelper: "Grouped by shift · donut shows drivers on duty right now",
     docToast: "Showing licence & documents",
-    formSub: "Contact, licence and assignment", namePh: "e.g. Ravi Kumar",
-    docField: "Licence number", docPh: "TS00 0000 0000000", validField: "Licence valid till", validDefault: "2028-01-01",
+    formSub: "Pick an HR staff member, then licence and assignment",
+    docField: "Licence number", docPh: "TS00 0000 0000000", validField: "Licence valid till",
     assignTitle: "Assign vehicle", assignSub: "Assign the selected drivers to one vehicle", assignField: "Vehicle",
     addedAs: "added as a driver",
   },
@@ -68,30 +72,24 @@ const CFG = {
     search: "Search by name, staff ID, certificate or bus…",
     listHelper: "Grouped by shift · donut shows attendants on duty right now",
     docToast: "Showing first-aid certificate & documents",
-    formSub: "Contact, certification and assignment", namePh: "e.g. Asha Kumari",
-    docField: "First-aid certificate no.", docPh: "FA-0000-00000", validField: "Certificate valid till", validDefault: "2027-12-01",
+    formSub: "Pick an HR staff member, then certification and assignment",
+    docField: "First-aid certificate no.", docPh: "FA-0000-00000", validField: "Certificate valid till",
     assignTitle: "Assign bus", assignSub: "Assign the selected attendants to one bus", assignField: "Bus",
     addedAs: "added as an attendant",
   },
 } as const;
 
 function docState(iso: string, window = 60): { tone: Tone; text: string } {
+  if (!iso) return { tone: "grey", text: "Not recorded" };
   const dl = daysLeft(iso);
   if (dl < 0) return { tone: "red", text: "Expired" };
   if (dl <= window) return { tone: "amber", text: `Expires in ${dl}d` };
   return { tone: "green", text: `Valid · ${fmtDate(iso)}` };
 }
 
-/** "+91 98765 43210" → "+91 98••• ••210" */
-function maskInput(raw: string): string {
-  let digits = raw.replace(/\D/g, "");
-  if (digits.length > 10 && digits.startsWith("91")) digits = digits.slice(2);
-  if (digits.length < 5) return raw.trim();
-  return maskPhone(digits.slice(0, 2), last3(Number(digits.slice(-3))));
-}
-
 interface FormValues {
-  name: string; phone: string; docNo: string; docValid: string; shift: ShiftGroup; status: StaffStatus; plate: string; experience: string;
+  /** hr.Staff pk (add only). */
+  staffPk: string; docNo: string; docValid: string; shift: ShiftGroup; status: StaffStatus; plate: string; experience: string;
 }
 
 type ConfirmState = { kind: "deactivate"; id: string } | { kind: "bulkArchive" };
@@ -183,27 +181,31 @@ export function StaffDirectory({ kind }: { kind: StaffKind }) {
   const runSearch = () => { const q = query.trim(); setApplied(q); if (q) groups.expandAll([...SHIFTS]); };
   const resetFilters = () => { setFShift(ALL); setFStatus(ALL); setFDoc(ALL); setFExp(ALL); setQuery(""); setApplied(""); };
 
-  const markOnLeave = (r: Row) => {
-    if (kind === "driver") dispatch({ type: "driver/update", id: r.id, patch: { status: "On leave" } });
-    else dispatch({ type: "attendant/update", id: r.id, patch: { status: "On leave" } });
-    toast(`${r.name} marked on leave`);
+  const markOnLeave = async (r: Row) => {
+    const ok = kind === "driver"
+      ? await dispatch({ type: "driver/update", id: r.id, patch: { status: "On leave" } })
+      : await dispatch({ type: "attendant/update", id: r.id, patch: { status: "On leave" } });
+    if (ok) toast(`${r.name} marked on leave`);
   };
 
-  const submitForm = (v: FormValues) => {
+  const submitForm = async (v: FormValues) => {
     if (!form) return;
-    const prev = form.mode === "edit" ? byId(form.id) : null;
-    const phone = prev && v.phone === prev.phone ? prev.phone : maskInput(v.phone);
     const exp = Math.max(0, Number(v.experience) || 0);
+    const name = form.mode === "edit" ? byId(form.id)?.name ?? "" : state.staffPool.find((s) => String(s.pk) === v.staffPk)?.name ?? "";
+    let ok: boolean;
     if (kind === "driver") {
-      const input = { name: v.name, phone, licenceNo: v.docNo, licenceValidTill: v.docValid, shift: v.shift, status: v.status, vehicleReg: v.plate, experience: exp };
-      if (form.mode === "add") dispatch({ type: "driver/add", id: nextId(state.drivers.map((d) => d.id), c.idPrefix, 3), input });
-      else dispatch({ type: "driver/update", id: form.id, patch: input });
+      const input = { licenceNo: v.docNo, licenceValidTill: v.docValid, shift: v.shift, status: v.status, vehicleReg: v.plate, experience: exp };
+      ok = form.mode === "add"
+        ? await dispatch({ type: "driver/add", staffPk: Number(v.staffPk), input })
+        : await dispatch({ type: "driver/update", id: form.id, patch: input });
     } else {
-      const input = { name: v.name, phone, certificateNo: v.docNo, firstAidValidTill: v.docValid, shift: v.shift, status: v.status, busReg: v.plate, experience: exp };
-      if (form.mode === "add") dispatch({ type: "attendant/add", id: nextId(state.attendants.map((a) => a.id), c.idPrefix, 3), input });
-      else dispatch({ type: "attendant/update", id: form.id, patch: input });
+      const input = { certificateNo: v.docNo, firstAidValidTill: v.docValid, shift: v.shift, status: v.status, busReg: v.plate, experience: exp };
+      ok = form.mode === "add"
+        ? await dispatch({ type: "attendant/add", staffPk: Number(v.staffPk), input })
+        : await dispatch({ type: "attendant/update", id: form.id, patch: input });
     }
-    toast(form.mode === "add" ? `${v.name} ${c.addedAs}` : `${v.name} updated`);
+    if (!ok) { toast("Not saved — see the message above", "error"); return; }
+    toast(form.mode === "add" ? `${name} ${c.addedAs}` : `${name} updated`);
     groups.openOnly(v.shift);
     setForm(null);
   };
@@ -229,7 +231,7 @@ export function StaffDirectory({ kind }: { kind: StaffKind }) {
   const confirmText = (() => {
     if (!confirm) return null;
     if (confirm.kind === "bulkArchive") {
-      return { title: `Archive ${plural(selection.count, c.noun)}?`, message: `Archived ${c.noun}s are removed from the duty roster and vehicle assignments.`, label: "Archive all" };
+      return { title: `Archive ${plural(selection.count, c.noun)}?`, message: `Their transport profiles are removed from the duty roster and vehicle assignments. Their HR staff records are kept.`, label: "Archive all" };
     }
     const r = byId(confirm.id);
     if (!r) return null;
@@ -361,7 +363,6 @@ export function StaffDirectory({ kind }: { kind: StaffKind }) {
 
       <BulkBar count={selection.count} onClear={selection.clear} actions={[
         { label: c.assignTitle, onClick: () => setAssignOpen(true) },
-        { label: "Message", onClick: () => { toast(`Message sent to ${plural(selection.count, c.noun)}`, "info"); selection.clear(); } },
         { label: "Export", onClick: () => {
           const list = rows.filter((r) => selection.isSelected(r.id));
           exportRows(list); toast(`Exported ${plural(list.length, c.noun)}`); selection.clear();
@@ -375,30 +376,27 @@ export function StaffDirectory({ kind }: { kind: StaffKind }) {
             badges={<>
               <StatusBadge status={drawerRow.status} />
               {kind === "driver"
-                ? <Badge tone="purple">★ {drawerRow.rating?.toFixed(1)} rating</Badge>
-                : daysLeft(drawerRow.docValid) < 0 ? <Badge tone="red">First-aid expired</Badge> : <Badge tone="green">First-aid certified</Badge>}
+                ? (drawerRow.rating ? <Badge tone="purple">★ {drawerRow.rating.toFixed(1)} rating</Badge> : null)
+                : !drawerRow.docValid ? <Badge tone="grey">First-aid not recorded</Badge>
+                  : daysLeft(drawerRow.docValid) < 0 ? <Badge tone="red">First-aid expired</Badge> : <Badge tone="green">First-aid certified</Badge>}
             </>} />
           <DrawerHighlight items={kind === "driver"
-            ? [{ label: "Trips this month", value: String(drawerRow.trips) }, { label: "Parent rating", value: `${drawerRow.rating?.toFixed(1)} / 5` }]
-            : [{ label: "Trips this month", value: String(drawerRow.trips) }, { label: "Students on bus", value: String(drawerRow.studentsOnBus ?? 0) }]} />
-          <DrawerSection title="Contact">
-            <InfoRow label="Mobile">{drawerRow.phone}</InfoRow>
-            <InfoRow label="Emergency contact">{kind === "driver" ? "+91 97••• ••208" : "+91 96••• ••714"}</InfoRow>
-            <InfoRow label="Address">[Address on file]</InfoRow>
+            ? [{ label: "Experience", value: plural(drawerRow.experience, "year") }, { label: "Rating", value: drawerRow.rating ? `${drawerRow.rating.toFixed(1)} / 5` : "—" }]
+            : [{ label: "Experience", value: plural(drawerRow.experience, "year") }, { label: "Students on bus", value: String(drawerRow.studentsOnBus ?? 0) }]} />
+          <DrawerSection title="Contact (from HR)">
+            <InfoRow label="Mobile">{drawerRow.phone || "—"}</InfoRow>
+            <InfoRow label="Emergency contact">{drawerRow.emergency || "—"}</InfoRow>
           </DrawerSection>
           {kind === "driver" ? (
             <DrawerSection title="Licence">
-              <InfoRow label="Licence no."><span className="tp-mono">{drawerRow.docNo}</span></InfoRow>
-              <InfoRow label="Class">HMV · Transport</InfoRow>
+              <InfoRow label="Licence no."><span className="tp-mono">{drawerRow.docNo || "—"}</span></InfoRow>
               <InfoRow label="Valid till">{fmtDate(drawerRow.docValid)} <Badge tone={docState(drawerRow.docValid, docWindow).tone}>{docState(drawerRow.docValid, docWindow).tone === "green" ? "Valid" : docState(drawerRow.docValid, docWindow).text}</Badge></InfoRow>
-              <InfoRow label="Badge no.">{(state.drivers.find((d) => d.id === drawerRow.id)?.badgeNo) ?? "—"}</InfoRow>
+              <InfoRow label="Badge no.">{state.drivers.find((d) => d.id === drawerRow.id)?.badgeNo || "—"}</InfoRow>
             </DrawerSection>
           ) : (
             <DrawerSection title="First-aid certification">
-              <InfoRow label="Certificate no."><span className="tp-mono">{drawerRow.docNo}</span></InfoRow>
-              <InfoRow label="Issued by">[Certifying body]</InfoRow>
+              <InfoRow label="Certificate no."><span className="tp-mono">{drawerRow.docNo || "—"}</span></InfoRow>
               <InfoRow label="Valid till">{fmtDate(drawerRow.docValid)} <Badge tone={docState(drawerRow.docValid, docWindow).tone}>{docState(drawerRow.docValid, docWindow).tone === "green" ? "Valid" : docState(drawerRow.docValid, docWindow).text}</Badge></InfoRow>
-              <InfoRow label="Police verification">Completed</InfoRow>
             </DrawerSection>
           )}
           <DrawerSection title="Assignment">
@@ -409,7 +407,7 @@ export function StaffDirectory({ kind }: { kind: StaffKind }) {
           </DrawerSection>
           <DrawerActions>
             <Button type="button" variant="soft" size="sm" onClick={() => setForm({ mode: "edit", id: drawerRow.id })}>Edit profile</Button>
-            <Button type="button" variant="soft" size="sm" onClick={() => toast(`Message sent to ${drawerRow.name}`, "info")}>Message</Button>
+            {drawerRow.phone && <a className="tp-btn-outline" href={`tel:${drawerRow.phone.replace(/\s/g, "")}`}>Call</a>}
             <Button type="button" variant="red" size="sm" onClick={() => setConfirm({ kind: "deactivate", id: drawerRow.id })}>Deactivate</Button>
           </DrawerActions>
         </Drawer>
@@ -417,11 +415,11 @@ export function StaffDirectory({ kind }: { kind: StaffKind }) {
 
       {form && (
         <StaffForm key={form.mode === "edit" ? form.id : `add-${form.shift}`} kind={kind} plates={plates}
-          mode={form.mode}
+          mode={form.mode} candidates={state.staffPool} editing={form.mode === "edit" ? byId(form.id) : null}
           initial={form.mode === "edit"
-            ? (() => { const r = byId(form.id)!; return { name: r.name, phone: r.phone, docNo: r.docNo, docValid: r.docValid, shift: r.shift, status: r.status, plate: r.plate, experience: String(r.experience) }; })()
-            : { name: "", phone: "", docNo: "", docValid: c.validDefault, shift: form.shift, status: "On duty", plate: "Unassigned", experience: "1" }}
-          onClose={() => setForm(null)} onSubmit={submitForm} />
+            ? (() => { const r = byId(form.id)!; return { staffPk: "", docNo: r.docNo, docValid: r.docValid, shift: r.shift, status: r.status, plate: r.plate, experience: String(r.experience) }; })()
+            : { staffPk: "", docNo: "", docValid: "", shift: form.shift, status: "On duty", plate: "Unassigned", experience: "0" }}
+          onClose={() => setForm(null)} onSubmit={(values) => { void submitForm(values); }} />
       )}
 
       {assignOpen && (
@@ -442,9 +440,11 @@ export function StaffDirectory({ kind }: { kind: StaffKind }) {
 }
 
 function StaffForm({
-  kind, mode, initial, plates, onClose, onSubmit,
+  kind, mode, initial, plates, candidates, editing, onClose, onSubmit,
 }: {
-  kind: StaffKind; mode: "add" | "edit"; initial: FormValues; plates: string[]; onClose: () => void; onSubmit: (v: FormValues) => void;
+  kind: StaffKind; mode: "add" | "edit"; initial: FormValues; plates: string[];
+  candidates: { pk: number; name: string; staffNo: string; role: string | null; licence: string }[]; editing: Row | null;
+  onClose: () => void; onSubmit: (v: FormValues) => void;
 }) {
   const c = CFG[kind];
   const { toast } = useTpToast();
@@ -456,12 +456,11 @@ function StaffForm({
   };
   const submit = () => {
     const next: typeof errors = {};
-    if (!v.name.trim()) next.name = "This field is required.";
-    if (!v.phone.trim()) next.phone = "This field is required.";
+    if (mode === "add" && !v.staffPk) next.staffPk = "This field is required.";
     if (!v.docNo.trim()) next.docNo = "This field is required.";
     setErrors(next);
     if (Object.keys(next).length) { toast("Fill in the required fields", "error"); return; }
-    onSubmit({ ...v, name: v.name.trim(), docNo: v.docNo.trim() });
+    onSubmit({ ...v, docNo: v.docNo.trim() });
   };
   return (
     <Modal open onClose={onClose} size="lg" title={mode === "add" ? `Add ${c.noun}` : `Edit ${c.noun}`} subtitle={c.formSub}
@@ -470,8 +469,23 @@ function StaffForm({
         <Button type="button" variant="primary" onClick={submit}>{mode === "add" ? `Add ${c.noun}` : "Save changes"}</Button>
       </>}>
       <div className="tp-form-grid">
-        <Field label="Full name" required error={errors.name}><Input value={v.name} onChange={(e) => set("name", e.target.value)} placeholder={c.namePh} /></Field>
-        <Field label="Mobile number" required error={errors.phone}><Input value={v.phone} onChange={(e) => set("phone", e.target.value)} placeholder="+91" inputMode="tel" /></Field>
+        {mode === "add" ? (
+          <Field label="HR staff member" required error={errors.staffPk}
+            hint={candidates.length ? "Name and phone come from the HR record" : "Everyone in HR already has a transport profile - add staff in HR first"}>
+            <Select value={v.staffPk} onChange={(e) => {
+              const pick = candidates.find((s) => String(s.pk) === e.target.value);
+              setV((p) => ({ ...p, staffPk: e.target.value, docNo: kind === "driver" && pick?.licence && !p.docNo ? pick.licence : p.docNo }));
+              if (errors.staffPk) setErrors((er) => ({ ...er, staffPk: undefined }));
+            }}>
+              <option value="">Choose a staff member</option>
+              {candidates.map((s) => <option key={s.pk} value={s.pk}>{s.name}{s.staffNo ? ` · ${s.staffNo}` : ""}{s.role ? ` · ${s.role}` : ""}</option>)}
+            </Select>
+          </Field>
+        ) : (
+          <Field label="Staff member" hint="Name and phone are edited in HR">
+            <Input value={`${editing?.name ?? ""}${editing?.phone ? ` · ${editing.phone}` : ""}`} disabled readOnly />
+          </Field>
+        )}
         <Field label={c.docField} required error={errors.docNo}><Input value={v.docNo} onChange={(e) => set("docNo", e.target.value)} placeholder={c.docPh} className="tp-mono" /></Field>
         <Field label={c.validField}><Input type="date" value={v.docValid} onChange={(e) => set("docValid", e.target.value)} /></Field>
         <Field label="Shift">

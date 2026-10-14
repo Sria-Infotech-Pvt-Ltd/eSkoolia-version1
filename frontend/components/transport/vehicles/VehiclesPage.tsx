@@ -9,7 +9,7 @@ import { usePathname, useRouter, useSearchParams } from "next/navigation";
 import { Bus, Car, Eye, FileText, Pencil } from "lucide-react";
 import { usePermissions } from "@/hooks/usePermissions";
 import { useTransport, useVehicles } from "@/lib/transport/store";
-import { VEHICLE_STATUSES, VEHICLE_TYPES, capacityOf, routeLabel } from "@/lib/transport/mock";
+import { VEHICLE_STATUSES, VEHICLE_TYPES, capacityOf, routeLabel } from "@/lib/transport/catalog";
 import { fmtDate, plural } from "@/lib/transport/format";
 import { downloadCsv, type CsvColumn } from "@/lib/transport/csv";
 import type { Vehicle, VehicleType } from "@/lib/transport/types";
@@ -143,22 +143,20 @@ export function VehiclesPage() {
       const v = byId(f.id)!;
       return { reg: v.reg, model: v.model, type: v.type, status: v.status, routeCode: v.routeCode ?? "", driverId: v.driverId ?? "", fitness: v.fitness, insurance: v.insurance };
     }
-    return { reg: "", model: "", type: f.presetType, status: "Active", routeCode: "", driverId: "", fitness: "2027-04-01", insurance: "2027-04-01" };
+    return { reg: "", model: "", type: f.presetType, status: "Active", routeCode: "", driverId: "", fitness: "", insurance: "" };
   };
 
-  const submitForm = (values: VehicleFormValues) => {
+  const submitForm = async (values: VehicleFormValues) => {
     if (!form) return;
     const payload = {
       reg: values.reg, model: values.model, type: values.type, status: values.status,
       routeCode: values.routeCode || null, driverId: values.driverId || null, fitness: values.fitness, insurance: values.insurance,
     };
-    if (form.mode === "add") {
-      dispatch({ type: "vehicle/add", vehicle: payload });
-      toast(`${values.reg} added to the fleet`);
-    } else {
-      dispatch({ type: "vehicle/update", id: form.id, patch: payload });
-      toast(`${values.reg} updated`);
-    }
+    const ok = form.mode === "add"
+      ? await dispatch({ type: "vehicle/add", vehicle: payload })
+      : await dispatch({ type: "vehicle/update", id: form.id, patch: payload });
+    if (!ok) { toast("Not saved — see the message above", "error"); return; }
+    toast(form.mode === "add" ? `${values.reg} added to the fleet` : `${values.reg} updated`);
     groups.openOnly(values.type);
     setForm(null);
   };
@@ -326,7 +324,6 @@ export function VehiclesPage() {
 
       <BulkBar count={selection.count} onClear={selection.clear} actions={[
         { label: "Assign route", onClick: () => setAssignOpen(true) },
-        { label: "Message drivers", onClick: () => { toast(`Message sent to ${plural(selection.count, "driver")}`, "info"); selection.clear(); } },
         { label: "Export", onClick: () => {
           const rows = vehicles.filter((v) => selection.isSelected(v.id));
           exportRows(rows);
@@ -343,13 +340,13 @@ export function VehiclesPage() {
 
       {form && (
         <VehicleFormModal key={form.mode === "edit" ? form.id : `add-${form.presetType}`} mode={form.mode} initial={formInitial(form)}
-          routes={routes} drivers={drivers.filter((d) => !d.archived)} onClose={() => setForm(null)} onSubmit={submitForm} />
+          routes={routes} drivers={drivers.filter((d) => !d.archived)} onClose={() => setForm(null)} onSubmit={(values) => { void submitForm(values); }} />
       )}
 
       {uploadVehicle && (
         <UploadDocModal key={uploadVehicle.id} vehicle={uploadVehicle} onClose={() => setUploadId(null)}
-          onSubmit={(doc, validTill) => {
-            dispatch({ type: "vehicle/renewDoc", id: uploadVehicle.id, doc, validTill, owner: ownerName });
+          onSubmit={async (doc, validTill) => {
+            if (!(await dispatch({ type: "vehicle/renewDoc", id: uploadVehicle.id, doc, validTill, owner: ownerName }))) return;
             toast(`${doc} for ${uploadVehicle.reg} updated · valid till ${fmtDate(validTill)}`);
             setUploadId(null);
           }} />

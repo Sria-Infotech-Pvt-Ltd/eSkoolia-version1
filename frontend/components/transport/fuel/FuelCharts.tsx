@@ -20,13 +20,13 @@ function ChartCard({ title, sub, label, children }: { title: string; sub: string
 
 const axisTick = { fill: T.exInk3 };
 
-export function SpendByVehicleChart({ data }: { data: { plate: string; amount: number }[] }) {
+export function SpendByVehicleChart({ data, period }: { data: { plate: string; amount: number }[]; period: string }) {
   const [active, setActive] = useState<number | null>(null);
   const total = data.reduce((s, d) => s + d.amount, 0);
   const max = Math.max(5000, Math.ceil(Math.max(0, ...data.map((d) => d.amount)) / 5000) * 5000);
   const hovered = active !== null ? data[active] : null;
   return (
-    <ChartCard title="Spend by vehicle · MTD" sub="October 2026 · hover a bar for detail"
+    <ChartCard title="Spend by vehicle · MTD" sub={`${period} · hover a bar for detail`}
       label={hovered ? `${hovered.plate} · ${inr(hovered.amount)}` : `Total ${inr(total)}`}>
       <div style={{ height: 230 }}>
         <ResponsiveContainer width="100%" height="100%">
@@ -49,13 +49,14 @@ export function SpendByVehicleChart({ data }: { data: { plate: string; amount: n
   );
 }
 
-export function EfficiencyTrendChart({ data }: { data: { week: string; kml: number }[] }) {
+export function EfficiencyTrendChart({ data, sub }: { data: { week: string; kml: number | null }[]; sub: string }) {
   const [active, setActive] = useState<number | null>(null);
   const hovered = active !== null ? data[active] : null;
-  const last = data[data.length - 1];
+  const last = [...data].reverse().find((d) => d.kml !== null);
+  const fmt = (v: number | null | undefined) => (v === null || v === undefined ? "—" : v.toFixed(1));
   return (
-    <ChartCard title="Fleet efficiency trend" sub="Average km per litre · last 8 weeks"
-      label={hovered ? `${hovered.week} · ${hovered.kml.toFixed(1)} km/L` : `Now ${last?.kml.toFixed(1) ?? "—"} km/L`}>
+    <ChartCard title="Fleet efficiency trend" sub={sub}
+      label={hovered ? `${hovered.week} · ${fmt(hovered.kml)} km/L` : `Latest ${fmt(last?.kml)} km/L`}>
       <div style={{ height: 230 }}>
         <ResponsiveContainer width="100%" height="100%">
           <LineChart data={data} margin={{ top: 6, right: 8, bottom: 0, left: -18 }}
@@ -63,9 +64,9 @@ export function EfficiencyTrendChart({ data }: { data: { week: string; kml: numb
             onMouseLeave={() => setActive(null)}>
             <CartesianGrid vertical={false} stroke={T.track} />
             <XAxis dataKey="week" tick={{ ...axisTick, fontSize: 9.5 }} axisLine={false} tickLine={false} />
-            <YAxis domain={[5, 7]} ticks={[5, 6, 7]} tick={{ ...axisTick, fontSize: 9.5 }} axisLine={false} tickLine={false} />
+            <YAxis domain={["auto", "auto"]} tickFormatter={(v: number) => v.toFixed(1)} tick={{ ...axisTick, fontSize: 9.5 }} axisLine={false} tickLine={false} />
             <Tooltip content={() => null} cursor={false} />
-            <Line type="monotone" dataKey="kml" stroke={T.pu} strokeWidth={2.2} isAnimationActive={false}
+            <Line type="monotone" dataKey="kml" stroke={T.pu} strokeWidth={2.2} isAnimationActive={false} connectNulls
               dot={{ r: 3.5, fill: "#fff", stroke: T.pu, strokeWidth: 2 }} activeDot={{ r: 5, fill: "#fff", stroke: T.pu, strokeWidth: 2 }} />
           </LineChart>
         </ResponsiveContainer>

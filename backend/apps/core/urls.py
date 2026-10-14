@@ -11,16 +11,6 @@ from .views import (
     SectionBulkDeleteView,
     StreamViewSet,
     SubjectViewSet,
-    VehicleViewSet,
-    TransportRouteViewSet,
-    AssignVehicleViewSet,
-    BusStopViewSet,
-    BusLocationViewSet,
-    TransportAlertViewSet,
-    BusRoutePickupUpdateViewSet,
-    VehicleDriverAssignmentViewSet,
-    TransportNotificationLogViewSet,
-    RoutePerformanceLogViewSet,
     ItemCategoryViewSet,
     ItemStoreViewSet,
     SupplierViewSet,
@@ -42,19 +32,7 @@ router.register("class-periods", ClassPeriodViewSet, basename="class-period")
 router.register("class-rooms", ClassRoomViewSet, basename="class-room")
 router.register("level-schedule-configs", LevelScheduleConfigViewSet, basename="level-schedule-config")
 
-# Transport Module Routes
-router.register("vehicles", VehicleViewSet, basename="vehicle")
-router.register("transport-routes", TransportRouteViewSet, basename="transport-route")
-router.register("assign-vehicles", AssignVehicleViewSet, basename="assign-vehicle")
-
-# Bus Tracking Module Routes
-router.register("bus-stops", BusStopViewSet, basename="bus-stop")
-router.register("bus-locations", BusLocationViewSet, basename="bus-location")
-router.register("transport-alerts", TransportAlertViewSet, basename="transport-alert")
-router.register("bus-pickups", BusRoutePickupUpdateViewSet, basename="bus-pickup")
-router.register("vehicle-driver-assignments", VehicleDriverAssignmentViewSet, basename="vehicle-driver-assignment")
-router.register("transport-notification-logs", TransportNotificationLogViewSet, basename="transport-notification-log")
-router.register("route-performance-logs", RoutePerformanceLogViewSet, basename="route-performance-log")
+# Transport routes moved to apps.transport.urls (still served at /api/v1/core/ - see config/urls.py)
 
 # Inventory Module Routes
 router.register("item-categories", ItemCategoryViewSet, basename="item-category")

@@ -57,3 +57,39 @@ def safe_guardian_phone(raw_phone: Optional[str]) -> str:
     if not phone:
         return ""
     return phone
+
+
+def notify_guardians(vehicle, students, message, subject):
+    """
+    SMS + email each student's guardian and log every attempt in
+    TransportNotificationLog. Uses the existing Twilio/SendGrid senders above,
+    which return "skipped" (never raise) when credentials aren't configured.
+    Returns the number of log rows written.
+    """
+    from apps.transport.models import TransportNotificationLog
+
+    written = 0
+    for student in students:
+        guardian = getattr(student, "guardian", None)
+        if not guardian:
+            continue
+
+        phone = safe_guardian_phone(getattr(guardian, "phone", ""))
+        email = (getattr(guardian, "email", "") or "").strip()
+
+        if phone:
+            sms_status, sms_provider, sms_error = send_sms_twilio(phone, message)
+            TransportNotificationLog.objects.create(
+                vehicle=vehicle, student=student, channel="sms", provider=sms_provider,
+                recipient=phone, message=message, status=sms_status, error_message=sms_error,
+            )
+            written += 1
+
+        if email:
+            email_status, email_provider, email_error = send_email_sendgrid(email, subject, message)
+            TransportNotificationLog.objects.create(
+                vehicle=vehicle, student=student, channel="email", provider=email_provider,
+                recipient=email, message=message, status=email_status, error_message=email_error,
+            )
+            written += 1
+    return written

@@ -12,6 +12,7 @@ export function useVehicleDocWindow(): number {
 
 /** Compliance badge value: green date, amber "Due in Nd" (within the reminder window), red "Expired". */
 export function complianceState(iso: string, window = 30): { tone: Tone; text: string } {
+  if (!iso) return { tone: "grey", text: "Not recorded" };
   const dl = daysLeft(iso);
   if (dl < 0) return { tone: "red", text: "Expired" };
   if (dl <= window) return { tone: "amber", text: `Due in ${dl}d` };
@@ -26,6 +27,7 @@ export function ComplianceBadge({ label, iso }: { label: string; iso: string }) 
 /** Drawer variant: date plus a status badge. */
 export function ComplianceValue({ iso }: { iso: string }) {
   const window = useVehicleDocWindow();
+  if (!iso) return <Badge tone="grey">Not recorded</Badge>;
   const dl = daysLeft(iso);
   const badge = dl < 0 ? <Badge tone="red">Expired</Badge> : dl <= window ? <Badge tone="amber">Due in {dl}d</Badge> : <Badge tone="green">Valid</Badge>;
   return <>{fmtDate(iso)} {badge}</>;

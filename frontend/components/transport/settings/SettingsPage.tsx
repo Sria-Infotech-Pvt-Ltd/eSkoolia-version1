@@ -1,11 +1,11 @@
 "use client";
 /**
  * Transport Settings — /transport/settings (Master Prompt §7.14). Each section
- * edits a local draft; Save writes it to the shared store, where the saved
- * values drive Live Tracking (overspeed, late threshold), expiry badges
- * (reminder days) and default fares for new stops (fare slabs).
+ * edits a local draft; Save stores it per school (PATCH transport-settings/save/).
+ * Saved values drive Live Tracking (overspeed, geofence), the backend's overspeed
+ * alerts and expiry windows (reminder days), and default fares for new stops.
  */
-import { useMemo, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import { AlertTriangle, Bell, Coins, Settings as SettingsIcon, ShieldCheck, X } from "lucide-react";
 import { useTransport } from "@/lib/transport/store";
 import type { FareSlab, TransportSettings } from "@/lib/transport/types";
@@ -43,6 +43,21 @@ export function SettingsPage() {
   const loading = useMountSkeleton();
 
   const [draft, setDraft] = useState<TransportSettings>(() => structuredClone(saved));
+  // When saved settings change (first load, or after a save), sections the user
+  // hasn't edited follow the new saved values; edited sections keep the draft.
+  const prevSaved = useRef(saved);
+  useEffect(() => {
+    const before = prevSaved.current;
+    prevSaved.current = saved;
+    if (before === saved) return;
+    setDraft((d) => {
+      const next = { ...d };
+      (Object.keys(saved) as (keyof TransportSettings)[]).forEach((k) => {
+        if (JSON.stringify(d[k]) === JSON.stringify(before[k])) (next as Record<string, unknown>)[k] = structuredClone(saved[k]);
+      });
+      return next;
+    });
+  }, [saved]);
   const [open, setOpen] = useState<Set<SectionKey>>(new Set(["general"]));
   const [fCat, setFCat] = useState(ALL);
   const [fShow, setFShow] = useState(ALL);
@@ -74,22 +89,25 @@ export function SettingsPage() {
 
   const validate = (keys: SectionKey[]) => {
     if (keys.includes("alerts") && draft.thresholds.overspeed > 60) { toast("Overspeed limit can't exceed 60 km/h", "error"); return false; }
+    if (keys.includes("general") && (draft.geofence.lat === null) !== (draft.geofence.lng === null)) {
+      toast("Enter both the school latitude and longitude", "error"); return false;
+    }
     return true;
   };
-  const saveSection = (key: SectionKey, title: string) => {
+  const saveSection = async (key: SectionKey, title: string) => {
     if (!validate([key])) return;
-    dispatch({ type: "settings/save", patch: pick(draft, key) });
-    toast(`${title} saved`);
+    if (await dispatch({ type: "settings/save", patch: pick(draft, key) })) toast(`${title} saved`);
+    else toast("Not saved — see the message above", "error");
   };
   const discardSection = (key: SectionKey, title: string) => {
     setDraft((d) => ({ ...d, ...structuredClone(pick(saved, key)) }));
     toast(`${title} changes discarded`, "info");
   };
-  const saveAll = () => {
+  const saveAll = async () => {
     if (dirtyKeys.length === 0) { toast("Nothing to save", "info"); return; }
     if (!validate(dirtyKeys)) return;
-    dispatch({ type: "settings/save", patch: Object.assign({}, ...dirtyKeys.map((k) => pick(draft, k))) });
-    toast("All changes saved", "info");
+    if (await dispatch({ type: "settings/save", patch: Object.assign({}, ...dirtyKeys.map((k) => pick(draft, k))) })) toast("All changes saved", "info");
+    else toast("Not saved — see the message above", "error");
   };
   const exportJson = () => {
     const blob = new Blob([JSON.stringify(saved, null, 2)], { type: "application/json" });
@@ -122,11 +140,13 @@ export function SettingsPage() {
       case "general":
         return (
           <div className="tp-form-grid">
-            <Field label="School latitude" hint="Centre of the school geofence">
-              <Input value={String(draft.geofence.lat)} onChange={(e) => patch("geofence", { ...draft.geofence, lat: Number(e.target.value) || 0 })} className="tp-mono" />
+            <Field label="School latitude" hint={draft.geofence.lat === null ? "Not set yet · centre of the school geofence" : "Centre of the school geofence"}>
+              <Input type="number" step="0.000001" value={draft.geofence.lat ?? ""} placeholder="e.g. 17.4935"
+                onChange={(e) => patch("geofence", { ...draft.geofence, lat: e.target.value === "" ? null : Number(e.target.value) })} className="tp-mono" />
             </Field>
             <Field label="School longitude">
-              <Input value={String(draft.geofence.lng)} onChange={(e) => patch("geofence", { ...draft.geofence, lng: Number(e.target.value) || 0 })} className="tp-mono" />
+              <Input type="number" step="0.000001" value={draft.geofence.lng ?? ""} placeholder="e.g. 78.3812"
+                onChange={(e) => patch("geofence", { ...draft.geofence, lng: e.target.value === "" ? null : Number(e.target.value) })} className="tp-mono" />
             </Field>
             <Field label="Geofence radius (m)" hint="Buses inside this radius count as arrived">
               <Input type="number" min={0} value={draft.geofence.radius} onChange={(e) => patch("geofence", { ...draft.geofence, radius: Number(e.target.value) || 0 })} />
@@ -255,7 +275,7 @@ export function SettingsPage() {
         sub="Geofence, shift timings, safety thresholds, parent notifications, fare slabs and document reminders for this campus."
         actions={<>
           <HeroSecondary onClick={exportJson}>Export CSV</HeroSecondary>
-          <HeroPrimary icon={false} onClick={saveAll}>Save all changes</HeroPrimary>
+          <HeroPrimary icon={false} onClick={() => { void saveAll(); }}>Save all changes</HeroPrimary>
         </>} />
 
       <KpiGrid>

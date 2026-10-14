@@ -1,9 +1,12 @@
 "use client";
-/** Fuel Management — /transport/fuel (Master Prompt §7.12). */
+/**
+ * Fuel Management — /transport/fuel (Master Prompt §7.12). Entries come from
+ * transport-fuel/; amount, km/L (full-tank method), the vehicle baseline and the
+ * anomaly flag are calculated by the backend from the odometer readings.
+ */
 import { useCallback, useMemo, useState } from "react";
 import { Eye, Pencil, X } from "lucide-react";
 import { useTransport, useVehicles } from "@/lib/transport/store";
-import { FLEET_KML_TREND } from "@/lib/transport/mock";
 import { fmtDate, inr, num, plural, toISO, TODAY } from "@/lib/transport/format";
 import { downloadCsv, type CsvColumn } from "@/lib/transport/csv";
 import type { FuelEntry, Vehicle } from "@/lib/transport/types";
@@ -16,12 +19,14 @@ import { EfficiencyTrendChart, SpendByVehicleChart } from "./FuelCharts";
 
 const ALL = "all";
 const PAGE = 20;
-const STATIONS = ["[Fuel Station A]", "[Fuel Station B]", "[Fuel Station C]"];
-const isOctober = (iso: string) => iso.startsWith("2026-10");
-const deviation = (f: FuelEntry) => Math.round((f.kml / f.baseKml - 1) * 100);
-const isAnomaly = (f: FuelEntry) => f.kml < f.baseKml * 0.8;
-/** "−28%" (typographic minus, §7.12). */
-const devLabel = (f: FuelEntry) => { const d = deviation(f); return `${d > 0 ? "+" : d < 0 ? "−" : ""}${Math.abs(d)}%`; };
+const MONTH = toISO(TODAY).slice(0, 7);
+const MONTH_LABEL = TODAY.toLocaleDateString("en-IN", { month: "long", year: "numeric" });
+const isThisMonth = (iso: string) => iso.startsWith(MONTH);
+const deviation = (f: FuelEntry) => (f.kml !== null && f.baseKml ? Math.round((f.kml / f.baseKml - 1) * 100) : null);
+const isAnomaly = (f: FuelEntry) => f.anomaly;
+const kmlText = (v: number | null) => (v === null ? "—" : v.toFixed(1));
+/** "−28%" (typographic minus, §7.12); "—" without a baseline. */
+const devLabel = (f: FuelEntry) => { const d = deviation(f); return d === null ? "—" : `${d > 0 ? "+" : d < 0 ? "−" : ""}${Math.abs(d)}%`; };
 
 type ConfirmState = { kind: "delete"; id: string } | { kind: "bulkDelete" };
 interface FormValues { vehicleId: string; date: string; litres: string; rate: string; odometer: string; station: string }
@@ -48,6 +53,7 @@ export function FuelPage() {
   const reg = useCallback((id: string) => state.vehicles.find((v) => v.id === id)?.reg ?? "—", [state.vehicles]);
   const sorted = useMemo(() => [...state.fuel].sort((a, b) => b.date.localeCompare(a.date) || b.id.localeCompare(a.id)), [state.fuel]);
   const byId = useCallback((id: string | null) => state.fuel.find((f) => f.id === id) ?? null, [state.fuel]);
+  const stations = useMemo(() => [...new Set(state.fuel.map((f) => f.station).filter(Boolean))].sort(), [state.fuel]);
 
   const visible = useMemo(() => {
     const q = applied.toLowerCase();
@@ -55,7 +61,7 @@ export function FuelPage() {
       if (fVehicle !== ALL && f.vehicleId !== fVehicle) return false;
       if (fCheck === "anomaly" && !isAnomaly(f)) return false;
       if (fCheck === "normal" && isAnomaly(f)) return false;
-      if (fPeriod === "month" && !isOctober(f.date)) return false;
+      if (fPeriod === "month" && !isThisMonth(f.date)) return false;
       if (fStation !== ALL && f.station !== fStation) return false;
       if (q && ![reg(f.vehicleId), f.id, f.station].join(" ").toLowerCase().includes(q)) return false;
       return true;
@@ -76,17 +82,27 @@ export function FuelPage() {
   ];
 
   // KPIs (month to date)
-  const mtd = state.fuel.filter((f) => isOctober(f.date));
+  const mtd = state.fuel.filter((f) => isThisMonth(f.date));
   const litres = mtd.reduce((s, f) => s + f.litres, 0);
   const spend = mtd.reduce((s, f) => s + f.amount, 0);
-  const avgKml = state.fuel.length ? state.fuel.reduce((s, f) => s + f.kml, 0) / state.fuel.length : 0;
+  const measured = state.fuel.filter((f) => f.kml !== null);
+  const avgKml = state.fuelSummary?.avgKml ?? (measured.length ? measured.reduce((s, f) => s + (f.kml ?? 0), 0) / measured.length : null);
   const anomalies = state.fuel.filter(isAnomaly).length;
   const spendByVehicle = vehicles.map((v) => ({ plate: v.reg, amount: mtd.filter((f) => f.vehicleId === v.id).reduce((s, f) => s + f.amount, 0) }));
+  // Fleet km/L per month (last 6 months) from the entries that have a reading.
+  const kmlTrend = useMemo(() => {
+    const months = Array.from({ length: 6 }, (_, i) => toISO(new Date(TODAY.getFullYear(), TODAY.getMonth() - 5 + i, 1)).slice(0, 7));
+    return months.map((m) => {
+      const rows = state.fuel.filter((f) => f.date.startsWith(m) && f.kml !== null);
+      const label = new Date(Number(m.slice(0, 4)), Number(m.slice(5, 7)) - 1, 1).toLocaleDateString("en-IN", { month: "short" });
+      return { week: label, kml: rows.length ? rows.reduce((s, f) => s + (f.kml ?? 0), 0) / rows.length : null };
+    });
+  }, [state.fuel]);
 
   const csv: CsvColumn<FuelEntry>[] = [
     { header: "Entry ID", value: (f) => f.id }, { header: "Date", value: (f) => fmtDate(f.date) }, { header: "Vehicle", value: (f) => reg(f.vehicleId) },
     { header: "Station", value: (f) => f.station }, { header: "Litres", value: (f) => f.litres }, { header: "Rate", value: (f) => f.rate.toFixed(2) },
-    { header: "Amount", value: (f) => f.amount }, { header: "Odometer (km)", value: (f) => f.odometer }, { header: "km/L", value: (f) => f.kml.toFixed(2) },
+    { header: "Amount", value: (f) => f.amount }, { header: "Odometer (km)", value: (f) => f.odometer }, { header: "km/L", value: (f) => (f.kml === null ? "" : f.kml.toFixed(2)) },
     { header: "Check", value: (f) => (isAnomaly(f) ? `Anomaly ${devLabel(f)}` : "Normal") }, { header: "Verified", value: (f) => (f.verified ? "Yes" : "No") },
   ];
   const exportVisible = () => { downloadCsv("transport-fuel-log.csv", csv, visible); toast(`Exported ${plural(visible.length, "fuel entry", "fuel entries")} to CSV`); };
@@ -98,11 +114,14 @@ export function FuelPage() {
 
   const resetFilters = () => { setFVehicle(ALL); setFCheck(ALL); setFPeriod("month"); setFStation(ALL); setQuery(""); setApplied(""); setLimit(PAGE); };
 
-  const submitForm = (v: FormValues) => {
+  const submitForm = async (v: FormValues) => {
     if (!form) return;
-    const input = { vehicleId: v.vehicleId, date: v.date, litres: Number(v.litres), rate: Number(v.rate), odometer: Number(v.odometer), station: v.station };
-    if (form.mode === "add") { dispatch({ type: "fuel/add", input }); toast(`Fuel logged for ${reg(v.vehicleId)}`); }
-    else { dispatch({ type: "fuel/update", id: form.id, input }); toast("Fuel entry updated"); }
+    const input = { vehicleId: v.vehicleId, date: v.date, litres: Number(v.litres), rate: Number(v.rate), odometer: Number(v.odometer), station: v.station.trim() };
+    const ok = form.mode === "add"
+      ? await dispatch({ type: "fuel/add", input })
+      : await dispatch({ type: "fuel/update", id: form.id, input });
+    if (!ok) { toast("Not saved — see the message above", "error"); return; }
+    toast(form.mode === "add" ? `Fuel logged for ${reg(v.vehicleId)}` : "Fuel entry updated");
     setForm(null);
   };
 
@@ -130,9 +149,9 @@ export function FuelPage() {
         </>} />
 
       <KpiGrid>
-        <KpiCard loading={loading} label="Litres MTD" value={num(litres)} sub={`${plural(mtd.length, "fill-up")} in October`} />
+        <KpiCard loading={loading} label="Litres MTD" value={num(litres)} sub={`${plural(mtd.length, "fill-up")} in ${MONTH_LABEL}`} />
         <KpiCard loading={loading} label="Spend MTD" value={inr(spend)} sub={`Avg ₹${litres ? (spend / litres).toFixed(2) : "0.00"} per litre`} color={T.pu} />
-        <KpiCard loading={loading} label="Avg km/L" value={avgKml.toFixed(1)} sub="Fleet-wide, all vehicle types" color={T.green} />
+        <KpiCard loading={loading} label="Avg km/L" value={kmlText(avgKml)} sub="Fleet-wide, from odometer readings" color={T.green} />
         <KpiCard loading={loading} label="Anomalies" value={anomalies} sub="km/L more than 20% below normal" color={T.red} />
       </KpiGrid>
 
@@ -140,15 +159,15 @@ export function FuelPage() {
         { key: "vehicle", label: "Vehicle", value: fVehicle, onChange: setFVehicle, options: [{ value: ALL, label: "All vehicles" }, ...vehicles.map((v) => ({ value: v.id, label: v.reg }))] },
         { key: "check", label: "Check", value: fCheck, onChange: setFCheck, options: [{ value: ALL, label: "Any check" }, { value: "anomaly", label: "Anomalies only" }, { value: "normal", label: "Normal only" }] },
         { key: "period", label: "Period", value: fPeriod, onChange: setFPeriod, options: [{ value: "month", label: "This month" }, { value: ALL, label: "Any date" }] },
-        { key: "station", label: "Station", value: fStation, onChange: setFStation, options: [{ value: ALL, label: "All stations" }, ...STATIONS.map((s) => ({ value: s, label: s }))] },
+        { key: "station", label: "Station", value: fStation, onChange: setFStation, options: [{ value: ALL, label: "All stations" }, ...stations.map((s) => ({ value: s, label: s }))] },
       ]} />
 
       <SearchRow value={query} onChange={setQuery} onSubmit={() => setApplied(query.trim())} placeholder="Search by vehicle, entry ID or station…"
         allSelected={allSelected} onToggleAll={() => selection.toggleAll(visibleIds)} onExport={exportVisible} />
 
       <div className="tp-split tp-split--charts" style={{ marginBottom: 12 }}>
-        <SpendByVehicleChart data={spendByVehicle} />
-        <EfficiencyTrendChart data={FLEET_KML_TREND} />
+        <SpendByVehicleChart data={spendByVehicle} period={MONTH_LABEL} />
+        <EfficiencyTrendChart data={kmlTrend} sub="Average km per litre · last 6 months" />
       </div>
 
       <div className="tp-card" style={{ overflow: "hidden" }}>
@@ -181,14 +200,14 @@ export function FuelPage() {
                       <td style={{ whiteSpace: "nowrap" }}>{fmtDate(f.date)}</td>
                       <td>
                         <div className="tp-mono" style={{ fontSize: 12.5, fontWeight: 700, color: T.ink }}>{reg(f.vehicleId)}</div>
-                        <div style={{ fontSize: 11.5, color: T.muted, marginTop: 2 }}>{f.id} · {f.station}</div>
+                        <div style={{ fontSize: 11.5, color: T.muted, marginTop: 2 }}>{f.id}{f.station ? ` · ${f.station}` : ""}{f.verified ? " · verified" : ""}</div>
                       </td>
                       <td>{f.litres} L</td>
                       <td>₹{f.rate.toFixed(2)}</td>
                       <td style={{ fontWeight: 700 }}>{inr(f.amount)}</td>
                       <td className="tp-mono" style={{ fontSize: 12.5 }}>{num(f.odometer)}</td>
-                      <td style={{ fontWeight: 700, color: bad ? T.danger : T.ink }}>{f.kml.toFixed(1)}</td>
-                      <td>{bad ? <Badge tone="red">Anomaly {devLabel(f)}</Badge> : <Badge tone="green">Normal</Badge>}</td>
+                      <td style={{ fontWeight: 700, color: bad ? T.danger : T.ink }}>{kmlText(f.kml)}</td>
+                      <td>{bad ? <Badge tone="red">Anomaly {devLabel(f)}</Badge> : f.kml === null ? <Badge tone="grey">First reading</Badge> : <Badge tone="green">Normal</Badge>}</td>
                       <td style={{ textAlign: "right", whiteSpace: "nowrap" }}>
                         <RowIconButton label={`View ${f.id}`} onClick={() => setDrawerId(f.id)}><Eye size={15} strokeWidth={1.8} /></RowIconButton>
                         <RowIconButton label={`Edit ${f.id}`} onClick={() => setForm({ mode: "edit", id: f.id })}><Pencil size={14} strokeWidth={1.8} /></RowIconButton>
@@ -210,7 +229,6 @@ export function FuelPage() {
 
       <BulkBar count={selection.count} onClear={selection.clear} actions={[
         { label: "Mark verified", onClick: () => { const n = selection.count; dispatch({ type: "fuel/verify", ids: selection.ids }); selection.clear(); toast(`${plural(n, "entry", "entries")} marked verified`); } },
-        { label: "Message", onClick: () => { toast(`Drivers of ${plural(selection.count, "entry", "entries")} asked to explain`, "info"); selection.clear(); } },
         { label: "Export", onClick: () => {
           const list = state.fuel.filter((f) => selection.isSelected(f.id));
           downloadCsv("transport-fuel-selected.csv", csv, list); toast(`Exported ${plural(list.length, "entry", "entries")}`); selection.clear();
@@ -220,22 +238,20 @@ export function FuelPage() {
 
       {drawer && (
         <Drawer open onClose={() => setDrawerId(null)} label={`Fuel entry ${drawer.id}`}>
-          <DrawerHeader avatar="FL" title={reg(drawer.vehicleId)} titleMono sub={`${fmtDate(drawer.date)} · ${drawer.station}`} idLabel={drawer.id}
+          <DrawerHeader avatar="FL" title={reg(drawer.vehicleId)} titleMono sub={`${fmtDate(drawer.date)}${drawer.station ? ` · ${drawer.station}` : ""}`} idLabel={drawer.id}
             badges={<>{isAnomaly(drawer) ? <Badge tone="red">Anomaly</Badge> : <Badge tone="green">Normal</Badge>}{drawer.verified && <Badge tone="purple">Verified</Badge>}</>} />
-          <DrawerHighlight items={[{ label: "Amount", value: inr(drawer.amount) }, { label: "Efficiency", value: `${drawer.kml.toFixed(1)} km/L` }]} />
+          <DrawerHighlight items={[{ label: "Amount", value: inr(drawer.amount) }, { label: "Efficiency", value: drawer.kml === null ? "—" : `${drawer.kml.toFixed(1)} km/L` }]} />
           <DrawerSection title="Fill-up">
             <InfoRow label="Litres">{drawer.litres} L</InfoRow>
             <InfoRow label="Rate">₹{drawer.rate.toFixed(2)} / L</InfoRow>
             <InfoRow label="Odometer"><span className="tp-mono">{num(drawer.odometer)} km</span></InfoRow>
-            <InfoRow label="Receipt">[Receipt ref]</InfoRow>
           </DrawerSection>
           <DrawerSection title="Benchmark">
-            <InfoRow label="Vehicle average">{drawer.baseKml.toFixed(1)} km/L</InfoRow>
+            <InfoRow label="Vehicle average">{drawer.baseKml === null ? "Not enough history yet" : `${drawer.baseKml.toFixed(1)} km/L`}</InfoRow>
             <InfoRow label="Deviation">{devLabel(drawer)}</InfoRow>
           </DrawerSection>
           <DrawerActions>
             <Button type="button" variant="soft" size="sm" onClick={() => setForm({ mode: "edit", id: drawer.id })}>Edit entry</Button>
-            <Button type="button" variant="soft" size="sm" onClick={() => toast("Driver asked to explain the reading", "info")}>Ask driver</Button>
             <Button type="button" variant="red" size="sm" onClick={() => setConfirm({ kind: "delete", id: drawer.id })}>Delete entry</Button>
           </DrawerActions>
         </Drawer>
@@ -245,8 +261,8 @@ export function FuelPage() {
         <FuelForm key={form.mode === "edit" ? form.id : "add"} mode={form.mode} vehicles={vehicles}
           initial={formEntry
             ? { vehicleId: formEntry.vehicleId, date: formEntry.date, litres: String(formEntry.litres), rate: formEntry.rate.toFixed(2), odometer: String(formEntry.odometer), station: formEntry.station }
-            : { vehicleId: vehicles[0]?.id ?? "", date: toISO(TODAY), litres: "", rate: "94.90", odometer: "", station: STATIONS[0] }}
-          onClose={() => setForm(null)} onSubmit={submitForm} />
+            : { vehicleId: vehicles[0]?.id ?? "", date: toISO(TODAY), litres: "", rate: "", odometer: "", station: "" }}
+          stations={stations} onClose={() => setForm(null)} onSubmit={(values) => { void submitForm(values); }} />
       )}
 
       <ConfirmDialog open={!!confirmText} onClose={() => setConfirm(null)} onConfirm={runConfirm} tone="danger"
@@ -255,8 +271,8 @@ export function FuelPage() {
   );
 }
 
-function FuelForm({ mode, vehicles, initial, onClose, onSubmit }: {
-  mode: "add" | "edit"; vehicles: Vehicle[]; initial: FormValues; onClose: () => void; onSubmit: (v: FormValues) => void;
+function FuelForm({ mode, vehicles, stations, initial, onClose, onSubmit }: {
+  mode: "add" | "edit"; vehicles: Vehicle[]; stations: string[]; initial: FormValues; onClose: () => void; onSubmit: (v: FormValues) => void;
 }) {
   const { toast } = useTpToast();
   const [v, setV] = useState(initial);
@@ -275,7 +291,7 @@ function FuelForm({ mode, vehicles, initial, onClose, onSubmit }: {
     onSubmit(v);
   };
   return (
-    <Modal open onClose={onClose} size="md" title={mode === "add" ? "Log fuel" : "Edit fuel entry"} subtitle="Litres, rate and odometer reading"
+    <Modal open onClose={onClose} size="md" title={mode === "add" ? "Log fuel" : "Edit fuel entry"} subtitle="Litres, rate and odometer reading · km/L is worked out from the previous reading"
       footer={<>
         <Button type="button" variant="ghost" onClick={onClose}>Cancel</Button>
         <Button type="button" variant="primary" onClick={submit}>{mode === "add" ? "Log fuel" : "Save changes"}</Button>
@@ -289,7 +305,8 @@ function FuelForm({ mode, vehicles, initial, onClose, onSubmit }: {
         <Field label="Rate (₹ / L)" required error={errors.rate}><Input type="number" min={0} step="0.01" value={v.rate} onChange={(e) => set("rate", e.target.value)} /></Field>
         <Field label="Odometer (km)" required error={errors.odometer}><Input type="number" min={0} value={v.odometer} onChange={(e) => set("odometer", e.target.value)} /></Field>
         <Field label="Station">
-          <Select value={v.station} onChange={(e) => set("station", e.target.value)}>{STATIONS.map((s) => <option key={s} value={s}>{s}</option>)}</Select>
+          <Input list="tp-fuel-stations" value={v.station} onChange={(e) => set("station", e.target.value)} placeholder="Fuel station name" />
+          <datalist id="tp-fuel-stations">{stations.map((s) => <option key={s} value={s} />)}</datalist>
         </Field>
       </div>
     </Modal>

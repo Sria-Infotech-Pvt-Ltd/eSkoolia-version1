@@ -2,6 +2,7 @@
 /** Student Allocation — /transport/allocation (Master Prompt §7.7). */
 import { useCallback, useMemo, useState } from "react";
 import { Eye, Pencil, Users, X } from "lucide-react";
+import { classLabel, classLine, sortClasses } from "@/lib/transport/catalog";
 import { useTransport, useVehicles } from "@/lib/transport/store";
 import { fmtTime, initials, inr, plural } from "@/lib/transport/format";
 import { downloadCsv, type CsvColumn } from "@/lib/transport/csv";
@@ -16,7 +17,6 @@ import { MoveStopsModal } from "../routes/RouteModals";
 import { BulkAllocateWizard, EditAllocationModal } from "./AllocationModals";
 
 const ALL = "all";
-const CLASSES = Array.from({ length: 10 }, (_, i) => i + 1);
 const PAGE = 40;
 
 type ConfirmState = { kind: "remove"; id: string } | { kind: "bulkRemove" };
@@ -24,9 +24,12 @@ type ConfirmState = { kind: "remove"; id: string } | { kind: "bulkRemove" };
 export function AllocationPage() {
   const { state, dispatch } = useTransport();
   const vehicles = useVehicles();
-  const { routes, students } = state;
+  const { routes, students, studentPool } = state;
   const { toast } = useTpToast();
   const loading = useMountSkeleton();
+  // Class / section groups come from the school's own class names (Students module).
+  const CLASSES = useMemo(() => sortClasses([...new Set(students.map((s) => s.cls))]), [students]);
+  const SECTIONS = useMemo(() => sortClasses([...new Set([...students, ...studentPool].map((s) => s.section).filter(Boolean))]), [students, studentPool]);
 
   const [ctxClass, setCtxClass] = useState(ALL);
   const [ctxSection, setCtxSection] = useState(ALL);
@@ -91,29 +94,31 @@ export function AllocationPage() {
   const waitlisted = students.filter((s) => s.status === "Waitlisted").length;
   const fees = allocated.reduce((s, x) => s + x.fare, 0);
   const unallocated = students.filter((s) => s.status !== "Allocated");
+  // Bulk Allocate offers pending / waitlisted students plus school students not on transport yet.
+  const candidates = useMemo(() => [...unallocated, ...studentPool], [unallocated, studentPool]);
 
   const csv: CsvColumn<Student>[] = [
     { header: "Student ID", value: (s) => s.id }, { header: "Admission no.", value: (s) => s.admission }, { header: "Name", value: (s) => s.name },
-    { header: "Class", value: (s) => `${s.cls}-${s.section}` }, { header: "Roll", value: (s) => s.roll }, { header: "Route", value: (s) => routeName(s.routeCode) },
+    { header: "Class", value: (s) => `${s.cls}${s.section ? `-${s.section}` : ""}` }, { header: "Roll", value: (s) => s.roll }, { header: "Route", value: (s) => routeName(s.routeCode) },
     { header: "Pickup point", value: (s) => stopOf(s)?.name ?? "—" }, { header: "Bus", value: (s) => s.busReg ?? "—" },
     { header: "Fare / month", value: (s) => s.fare }, { header: "Status", value: (s) => s.status },
   ];
   const exportVisible = () => { downloadCsv("transport-allocation.csv", csv, visible); toast(`Exported ${plural(visible.length, "student")} to CSV`); };
 
-  const openWizard = (cls?: number) => {
-    const pool = cls ? unallocated.filter((s) => s.cls === cls) : [];
+  const openWizard = (cls?: string) => {
+    const pool = cls !== undefined ? unallocated.filter((s) => s.cls === cls) : [];
     setWizard({ preselect: (pool.length ? pool : unallocated).map((s) => s.id) });
   };
 
   useDeepLink(({ id, isNew }) => {
     if (id) {
       const s = students.find((x) => x.id === id || x.admission === id);
-      if (s) { setDrawerId(s.id); groups.openOnly(String(s.cls)); }
+      if (s) { setDrawerId(s.id); groups.openOnly(s.cls); }
     }
     if (isNew) setWizard({ preselect: [] });
   });
 
-  const runSearch = () => { const q = query.trim(); setApplied(q); if (q) groups.expandAll(CLASSES.map(String)); };
+  const runSearch = () => { const q = query.trim(); setApplied(q); if (q) groups.expandAll(CLASSES); };
   const resetFilters = () => {
     setCtxClass(ALL); setCtxSection(ALL); setFStatus(ALL); setFRoute(ALL); setFBus(ALL); setFFare(ALL); setQuery(""); setApplied("");
   };
@@ -153,11 +158,11 @@ export function AllocationPage() {
 
   return (
     <TransportPage>
-      <ContextBar icon={Users} note="Academic year 2026–27 · Term 1 allocations" selects={[
+      <ContextBar icon={Users} note="Current academic year allocations" selects={[
         { label: "Class", value: ctxClass, onChange: (v) => { setCtxClass(v); if (v !== ALL) groups.openOnly(v); },
-          options: [{ value: ALL, label: "All classes" }, ...CLASSES.map((c) => ({ value: String(c), label: `Class ${c}` }))] },
+          options: [{ value: ALL, label: "All classes" }, ...CLASSES.map((c) => ({ value: c, label: classLabel(c) }))] },
         { label: "Section", value: ctxSection, onChange: setCtxSection,
-          options: [{ value: ALL, label: "All sections" }, ...["A", "B", "C"].map((s) => ({ value: s, label: `Section ${s}` }))] },
+          options: [{ value: ALL, label: "All sections" }, ...SECTIONS.map((s) => ({ value: s, label: `Section ${s}` }))] },
       ]} />
 
       <PageHero eyebrow="Transport · Students" title="Student" accent="allocation"
@@ -190,7 +195,7 @@ export function AllocationPage() {
 
       <GroupedList title="All students on transport" helper="Grouped by class · donut shows the share of each class that is allocated"
         actions={<SoftButton onClick={() => openWizard()}>Bulk Allocate</SoftButton>}
-        onCollapseAll={groups.collapseAll} onExpandAll={() => groups.expandAll(CLASSES.map(String))}
+        onCollapseAll={groups.collapseAll} onExpandAll={() => groups.expandAll(CLASSES)}
         footer={visible.length > 0 && (
           <ListFooter summary={`Showing ${visible.length} of ${students.length} students`} counts={`across ${plural(groupsWithRows, "class", "classes")}`}
             onCollapseAll={groups.collapseAll} onExportView={() => { downloadCsv("transport-allocation-view.csv", csv, visible); toast("Current view exported"); }} />
@@ -198,12 +203,12 @@ export function AllocationPage() {
         {visible.length === 0 && filtersActive ? (
           <EmptyLine>No students match these filters. Try clearing the search or resetting filters.</EmptyLine>
         ) : groupsShown.map((cls) => {
-          const key = String(cls);
+          const key = cls;
           const rows = visible.filter((s) => s.cls === cls);
           const alloc = rows.filter((s) => s.status === "Allocated").length;
           const limit = limits[key] ?? PAGE;
           return (
-            <GroupCard key={key} name={`Class ${cls}`} open={groups.isOpen(key)} onToggle={() => groups.toggle(key)}
+            <GroupCard key={key} name={classLabel(cls)} open={groups.isOpen(key)} onToggle={() => groups.toggle(key)}
               pct={rows.length ? (alloc / rows.length) * 100 : 0}
               chips={<>
                 <Chip tone="slate">{plural(rows.length, "student")}</Chip>
@@ -228,7 +233,7 @@ export function AllocationPage() {
                         return (
                           <tr key={s.id} className={sel ? "is-selected" : undefined}>
                             <td style={{ width: 42 }}><input type="checkbox" className="tp-check" checked={sel} onChange={() => selection.toggle(s.id)} aria-label={`Select ${s.name}`} /></td>
-                            <td><IdentityCell lead={<Avatar name={s.name} initials={initials(s.name)} />} title={s.name} sub={`Class ${s.cls}-${s.section} · Roll ${s.roll}`} /></td>
+                            <td><IdentityCell lead={<Avatar name={s.name} initials={initials(s.name)} />} title={s.name} sub={classLine(s)} /></td>
                             <td><IdPill mono>{s.admission}</IdPill></td>
                             <td>{routeName(s.routeCode)}</td>
                             <td>{stopOf(s)?.name ?? "—"}</td>
@@ -256,7 +261,6 @@ export function AllocationPage() {
 
       <BulkBar count={selection.count} onClear={selection.clear} actions={[
         { label: "Assign route", onClick: () => setAssignOpen(true) },
-        { label: "Message", onClick: () => { toast(`Message sent to parents of ${plural(selection.count, "student")}`, "info"); selection.clear(); } },
         { label: "Export", onClick: () => {
           const list = students.filter((s) => selection.isSelected(s.id));
           downloadCsv("transport-allocation-selected.csv", csv, list); toast(`Exported ${plural(list.length, "student")}`); selection.clear();
@@ -268,9 +272,9 @@ export function AllocationPage() {
         const st = stopOf(drawer);
         return (
           <Drawer open onClose={() => setDrawerId(null)} label={`Student ${drawer.name}`}>
-            <DrawerHeader avatar={initials(drawer.name)} title={drawer.name} sub={`Class ${drawer.cls}-${drawer.section} · Roll ${drawer.roll}`} idLabel={drawer.admission}
+            <DrawerHeader avatar={initials(drawer.name)} title={drawer.name} sub={classLine(drawer)} idLabel={drawer.admission}
               badges={<><StatusBadge status={drawer.status} /><Badge tone="purple">{drawer.routeCode ?? "No route"}</Badge></>} />
-            <DrawerHighlight items={[{ label: "Monthly fare", value: drawer.fare ? inr(drawer.fare) : "—" }, { label: "Attendance (30d)", value: `${drawer.attendance30d}%` }]} />
+            <DrawerHighlight items={[{ label: "Monthly fare", value: drawer.fare ? inr(drawer.fare) : "—" }, { label: "Boarded (30d)", value: drawer.attendance30d === null ? "—" : `${drawer.attendance30d}%` }]} />
             <DrawerSection title="Allocation">
               <InfoRow label="Route">{routeName(drawer.routeCode)}</InfoRow>
               <InfoRow label="Pickup point">{st?.name ?? "—"}</InfoRow>
@@ -280,11 +284,12 @@ export function AllocationPage() {
             <DrawerSection title="Parent / guardian">
               <InfoRow label="Name">{drawer.parentName}</InfoRow>
               <InfoRow label="Mobile">{drawer.mobile}</InfoRow>
-              <InfoRow label="App notifications">On</InfoRow>
             </DrawerSection>
             <DrawerActions>
               <Button type="button" variant="soft" size="sm" onClick={() => setEditId(drawer.id)}>Edit allocation</Button>
-              <Button type="button" variant="soft" size="sm" onClick={() => toast(`Message sent to the parent of ${drawer.name}`, "info")}>Message parent</Button>
+              {drawer.mobile && drawer.mobile !== "—" && (
+                <a className="tp-btn-outline" href={`tel:${drawer.mobile.replace(/\s/g, "")}`}>Call parent</a>
+              )}
               <Button type="button" variant="red" size="sm" onClick={() => setConfirm({ kind: "remove", id: drawer.id })}>Remove from transport</Button>
             </DrawerActions>
           </Drawer>
@@ -296,13 +301,13 @@ export function AllocationPage() {
           onSubmit={(routeCode, stopId, status) => {
             dispatch({ type: "student/update", id: editStudent.id, routeCode, stopId, status });
             setEditId(null);
-            groups.openOnly(String(editStudent.cls));
+            groups.openOnly(editStudent.cls);
             toast("Allocation updated");
           }} />
       )}
 
       {wizard && (
-        <BulkAllocateWizard candidates={unallocated} preselect={wizard.preselect} routes={routes} vehicles={vehicles}
+        <BulkAllocateWizard candidates={candidates} preselect={wizard.preselect} routes={routes} vehicles={vehicles}
           onClose={() => setWizard(null)}
           onAllocate={(ids, routeCode, stopId) => {
             const r = routes.find((x) => x.code === routeCode);

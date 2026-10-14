@@ -6,26 +6,24 @@
 import { useCallback, useMemo, useState } from "react";
 import { Eye, Pencil, X } from "lucide-react";
 import { useTransport } from "@/lib/transport/store";
-import { defaultStopFare } from "@/lib/transport/ops";
+import { defaultStopFare } from "@/lib/transport/fares";
 import { addMinutes, fmtTime, inr, num, plural } from "@/lib/transport/format";
 import { downloadCsv, type CsvColumn } from "@/lib/transport/csv";
-import type { RouteStop, TransportRoute, Zone } from "@/lib/transport/types";
+import type { RouteStop, TransportRoute } from "@/lib/transport/types";
 import {
   Badge, BulkBar, Button, Chip, ConfirmDialog, Drawer, DrawerActions, DrawerHeader, DrawerHighlight, DrawerSection, Field,
   HeroPrimary, HeroSecondary, InfoRow, Input, KpiCard, KpiGrid, MapLegend, Modal, OutlineButton, PageHero, RouteMap,
   RowIconButton, SearchRow, Select, SmartFilter, T, TransportPage, useDeepLink, useMountSkeleton, useSelection, useTpToast,
   type FilterChip,
 } from "@/components/transport/ui";
-import { MoveStopsModal } from "../routes/RouteModals";
+import { MoveStopsModal, coord } from "../routes/RouteModals";
 
 const ALL = "all";
-const DEFAULT_LAT = 17.4935;
-const DEFAULT_LNG = 78.3812;
 
 interface Point { stop: RouteStop; route: TransportRoute }
 type ConfirmState = { kind: "delete"; id: string } | { kind: "bulkDelete" };
 
-interface FormValues { name: string; landmark: string; routeCode: string; students: string; lat: string; lng: string; fare: string }
+interface FormValues { name: string; landmark: string; routeCode: string; lat: string; lng: string; fare: string; pickupTime: string; dropTime: string }
 
 export function PickupPointsPage() {
   const { state, dispatch } = useTransport();
@@ -112,23 +110,18 @@ export function PickupPointsPage() {
   const runSearch = () => setApplied(query.trim());
   const resetFilters = () => { setFRoute(ALL); setFZone(ALL); setFStrength(ALL); setFFare(ALL); setQuery(""); setApplied(""); };
 
-  const submitForm = (v: FormValues) => {
+  const submitForm = async (v: FormValues) => {
     if (!form) return;
-    const lat = Number(v.lat);
-    const lng = Number(v.lng);
-    const coordsGiven = Number.isFinite(lat) && Number.isFinite(lng) && (lat !== DEFAULT_LAT || lng !== DEFAULT_LNG);
     const input = {
-      name: v.name, landmark: v.landmark.trim(), students: Math.max(0, Number(v.students) || 0), fare: Math.max(0, Number(v.fare) || 0),
-      ...(coordsGiven ? { lat, lng } : {}),
+      name: v.name, landmark: v.landmark.trim(), fare: Math.max(0, Number(v.fare) || 0),
+      lat: Number(v.lat), lng: Number(v.lng), pickupTime: v.pickupTime, dropTime: v.dropTime,
     };
     if (form.mode === "add") {
-      const newId = `S${state.stopCounter + 1}`;
-      dispatch({ type: "stop/add", routeCode: v.routeCode, input });
-      focus(newId, true);
+      if (!(await dispatch({ type: "stop/add", routeCode: v.routeCode, input }))) { toast("Not saved — see the message above", "error"); return; }
       toast(`${v.name} added to ${v.routeCode}`);
     } else {
       const prev = byId(form.id);
-      dispatch({ type: "stop/update", id: form.id, patch: { ...input, ...(Number.isFinite(lat) && Number.isFinite(lng) ? { lat, lng } : {}), routeCode: v.routeCode } });
+      if (!(await dispatch({ type: "stop/update", id: form.id, patch: { ...input, routeCode: v.routeCode } }))) { toast("Not saved — see the message above", "error"); return; }
       if (prev) focus(prev.stop.id, true);
       toast(`${v.name} updated`);
     }
@@ -190,7 +183,7 @@ export function PickupPointsPage() {
         { key: "route", label: "Route", value: fRoute, onChange: setFRoute,
           options: [{ value: ALL, label: "All routes" }, ...routes.map((r) => ({ value: r.code, label: `${r.code} · ${r.name}` }))] },
         { key: "zone", label: "Zone", value: fZone, onChange: setFZone,
-          options: [{ value: ALL, label: "All zones" }, ...(["West", "North", "South"] as Zone[]).map((z) => ({ value: z, label: z }))] },
+          options: [{ value: ALL, label: "All zones" }, ...[...new Set(routes.map((r) => r.zone).filter(Boolean))].sort().map((z) => ({ value: z, label: z }))] },
         { key: "strength", label: "Strength", value: fStrength, onChange: setFStrength,
           options: [{ value: ALL, label: "Any strength" }, { value: "6plus", label: "6+ students" }, { value: "under6", label: "Under 6 students" }] },
         { key: "fare", label: "Monthly fare", value: fFare, onChange: setFFare,
@@ -280,7 +273,6 @@ export function PickupPointsPage() {
 
       <BulkBar count={selection.count} onClear={selection.clear} actions={[
         { label: "Move to route", onClick: () => setMoveOpen(true) },
-        { label: "Message", onClick: () => { toast(`Message queued for parents at ${plural(selection.count, "point")}`, "info"); selection.clear(); } },
         { label: "Export", onClick: () => {
           const list = points.filter((p) => selection.isSelected(p.stop.id));
           downloadCsv("transport-pickup-points-selected.csv", csv, list); toast(`Exported ${plural(list.length, "pickup point")}`); selection.clear();
@@ -305,7 +297,6 @@ export function PickupPointsPage() {
           </DrawerSection>
           <DrawerActions>
             <Button type="button" variant="soft" size="sm" onClick={() => setForm({ mode: "edit", id: drawer.stop.id })}>Edit point</Button>
-            <Button type="button" variant="soft" size="sm" onClick={() => toast(`Message queued for ${drawer.stop.students} parents`, "info")}>Message parents</Button>
             <Button type="button" variant="red" size="sm" onClick={() => setConfirm({ kind: "delete", id: drawer.stop.id })}>Delete point</Button>
           </DrawerActions>
         </Drawer>
@@ -314,9 +305,10 @@ export function PickupPointsPage() {
       {form && (
         <PointForm key={form.mode === "edit" ? form.id : "add"} mode={form.mode} routes={routes}
           initial={formPoint
-            ? { name: formPoint.stop.name, landmark: formPoint.stop.landmark, routeCode: formPoint.route.code, students: String(formPoint.stop.students),
-                lat: formPoint.stop.lat.toFixed(4), lng: formPoint.stop.lng.toFixed(4), fare: String(formPoint.stop.fare) }
-            : { name: "", landmark: "", routeCode: highlight ?? routes[0]?.code ?? "", students: "0", lat: String(DEFAULT_LAT), lng: String(DEFAULT_LNG), fare: String(defaultStopFare(state.settings.fareSlabs)) }}
+            ? { name: formPoint.stop.name, landmark: formPoint.stop.landmark, routeCode: formPoint.route.code,
+                lat: String(formPoint.stop.lat), lng: String(formPoint.stop.lng), fare: String(formPoint.stop.fare),
+                pickupTime: formPoint.stop.pickupTime, dropTime: formPoint.stop.dropTime }
+            : { name: "", landmark: "", routeCode: highlight ?? routes[0]?.code ?? "", lat: "", lng: "", fare: String(defaultStopFare(state.settings.fareSlabs)), pickupTime: "", dropTime: "" }}
           onClose={() => setForm(null)} onSubmit={submitForm} />
       )}
 
@@ -343,10 +335,16 @@ function PointForm({
 }: { mode: "add" | "edit"; routes: TransportRoute[]; initial: FormValues; onClose: () => void; onSubmit: (v: FormValues) => void }) {
   const { toast } = useTpToast();
   const [v, setV] = useState(initial);
-  const [error, setError] = useState<string | undefined>();
-  const set = (k: keyof FormValues, val: string) => setV((p) => ({ ...p, [k]: val }));
+  const [errors, setErrors] = useState<{ name?: string; lat?: string; lng?: string; routeCode?: string }>({});
+  const set = (k: keyof FormValues, val: string) => { setV((p) => ({ ...p, [k]: val })); setErrors((e) => ({ ...e, [k]: undefined })); };
   const submit = () => {
-    if (!v.name.trim()) { setError("This field is required."); toast("Fill in the required fields", "error"); return; }
+    const e: typeof errors = {};
+    if (!v.name.trim()) e.name = "This field is required.";
+    if (!v.routeCode) e.routeCode = "This field is required.";
+    if (coord(v.lat, 90) === null) e.lat = "Enter a latitude between -90 and 90.";
+    if (coord(v.lng, 180) === null) e.lng = "Enter a longitude between -180 and 180.";
+    setErrors(e);
+    if (Object.keys(e).length) { toast("Fill in the required fields", "error"); return; }
     onSubmit({ ...v, name: v.name.trim() });
   };
   return (
@@ -356,18 +354,20 @@ function PointForm({
         <Button type="button" variant="primary" onClick={submit}>{mode === "add" ? "Add pickup point" : "Save changes"}</Button>
       </>}>
       <div className="tp-form-grid">
-        <Field label="Stop name" required error={error}>
-          <Input value={v.name} onChange={(e) => { set("name", e.target.value); setError(undefined); }} placeholder="e.g. Kothaguda X Rd" />
+        <Field label="Stop name" required error={errors.name}>
+          <Input value={v.name} onChange={(e) => set("name", e.target.value)} placeholder="e.g. Kothaguda X Rd" />
         </Field>
         <Field label="Landmark"><Input value={v.landmark} onChange={(e) => set("landmark", e.target.value)} placeholder="e.g. opp. petrol bunk" /></Field>
-        <Field label="Route">
+        <Field label="Route" required error={errors.routeCode}>
           <Select value={v.routeCode} onChange={(e) => set("routeCode", e.target.value)}>
+            {!v.routeCode && <option value="">Choose a route</option>}
             {routes.map((r) => <option key={r.code} value={r.code}>{r.code} · {r.name}</option>)}
           </Select>
         </Field>
-        <Field label="Students boarding"><Input type="number" min={0} value={v.students} onChange={(e) => set("students", e.target.value)} /></Field>
-        <Field label="Latitude"><Input type="number" step="0.0001" value={v.lat} onChange={(e) => set("lat", e.target.value)} className="tp-mono" /></Field>
-        <Field label="Longitude"><Input type="number" step="0.0001" value={v.lng} onChange={(e) => set("lng", e.target.value)} className="tp-mono" /></Field>
+        <Field label="Latitude" required error={errors.lat}><Input type="number" step="0.000001" value={v.lat} onChange={(e) => set("lat", e.target.value)} className="tp-mono" placeholder="e.g. 17.4486" /></Field>
+        <Field label="Longitude" required error={errors.lng}><Input type="number" step="0.000001" value={v.lng} onChange={(e) => set("lng", e.target.value)} className="tp-mono" placeholder="e.g. 78.3908" /></Field>
+        <Field label="Pickup time"><Input type="time" value={v.pickupTime} onChange={(e) => set("pickupTime", e.target.value)} /></Field>
+        <Field label="Drop time"><Input type="time" value={v.dropTime} onChange={(e) => set("dropTime", e.target.value)} /></Field>
         <Field label="Monthly fare (₹)" hint="Per student per month"><Input type="number" min={0} value={v.fare} onChange={(e) => set("fare", e.target.value)} /></Field>
       </div>
     </Modal>
