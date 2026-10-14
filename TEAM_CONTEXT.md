@@ -6410,3 +6410,4 @@ Date: 2026-09-30
 ### Impact
 - All 6 report card templates shown in the UI can now be saved.
 - Only the allowed template values were extended. No other Examination feature, module, API contract or database column was modified.
+
