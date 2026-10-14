@@ -1,15 +1,16 @@
 "use client";
 /**
  * Transport Attendance — /transport/attendance (Master Prompt §7.8). One
- * register per (shift, date): untouched lines are generated deterministically,
- * edits are stored in the shared store so switching back keeps them. The
- * register is built from the students currently allocated in the store.
+ * boarding register per (shift, date), loaded from GET transport-attendance/register/
+ * for the students allocated to transport. Lines nobody has marked yet show as
+ * unmarked; GPS geofence arrivals and manual marks are saved by the backend.
  */
-import { useCallback, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useState } from "react";
 import { ClipboardCheck, Clock, Eye, FileText } from "lucide-react";
+import { tsend, registerKey } from "@/lib/transport/api";
+import { classLabel, classLine, sortClasses } from "@/lib/transport/catalog";
 import { useTransport } from "@/lib/transport/store";
-import { REGISTER_DATES, entryFor } from "@/lib/transport/ops3";
-import { fmtTime, initials, plural } from "@/lib/transport/format";
+import { TODAY, clockOf, fmtTime, initials, plural, toISO } from "@/lib/transport/format";
 import { downloadCsv, type CsvColumn } from "@/lib/transport/csv";
 import type { AttendanceEntry, AttendanceShift, RouteStop, Student, TransportRoute } from "@/lib/transport/types";
 import {
@@ -22,6 +23,14 @@ import {
 const ALL = "all";
 const PAGE = 25;
 const REASONS = ["Parent informed", "Sick", "Picked up early", "Other"];
+const DAY_MS = 24 * 60 * 60 * 1000;
+/** Today and the six days before it. */
+const REGISTER_DATES = Array.from({ length: 7 }, (_, i) => {
+  const d = new Date(TODAY.getTime() - i * DAY_MS);
+  const label = d.toLocaleDateString("en-IN", { day: "2-digit", month: "short", year: "numeric" });
+  return { iso: toISO(d), date: label, label: i === 0 ? `${label} · Today` : `${label} · ${d.toLocaleDateString("en-IN", { weekday: "short" })}` };
+});
+const UNMARKED: AttendanceEntry = { boarded: false, late: false, marked: false };
 
 interface Line { student: Student; route: TransportRoute; stop: RouteStop | null; entry: AttendanceEntry }
 
@@ -34,13 +43,13 @@ function Tag({ color, bg, children, title }: { color: string; bg: string; childr
 }
 
 export function AttendancePage() {
-  const { state, dispatch } = useTransport();
+  const { state, dispatch, loadRegister, status } = useTransport();
   const { routes, students } = state;
   const { toast } = useTpToast();
   const loading = useMountSkeleton();
 
   const [shift, setShift] = useState<AttendanceShift>("morning");
-  const [dateIdx, setDateIdx] = useState(0);
+  const [date, setDate] = useState(REGISTER_DATES[0].iso);
   const [fClass, setFClass] = useState(ALL);
   const [fBoard, setFBoard] = useState(ALL);
   const [fFlag, setFFlag] = useState(ALL);
@@ -48,33 +57,39 @@ export function AttendancePage() {
   const [query, setQuery] = useState("");
   const [applied, setApplied] = useState("");
 
-  const groups = useGroupOpen("R3");
+  const groups = useGroupOpen(routes[0]?.code ?? "");
   const selection = useSelection();
   const [limits, setLimits] = useState<Record<string, number>>({});
   const [drawerId, setDrawerId] = useState<string | null>(null);
   const [noteId, setNoteId] = useState<string | null>(null);
   const [notifyOpen, setNotifyOpen] = useState(false);
 
-  // Register lines from the students allocated right now.
+  // Load the register for this date / shift (and again once the store has loaded).
+  useEffect(() => { if (status === "ready") void loadRegister(date, shift); }, [date, shift, status, loadRegister]);
+  const register = state.attendance[registerKey(shift, date)];
+
+  // Register lines for the students allocated right now.
   const lines: Line[] = useMemo(() => {
     const out: Line[] = [];
     routes.forEach((route) => {
       students.forEach((s) => {
         if (s.status !== "Allocated" || s.routeCode !== route.code) return;
-        out.push({ student: s, route, stop: route.stops.find((x) => x.id === s.stopId) ?? null, entry: entryFor(state, s, shift, dateIdx) });
+        out.push({ student: s, route, stop: route.stops.find((x) => x.id === s.stopId) ?? null, entry: register?.[s.id] ?? UNMARKED });
       });
     });
     return out;
-  }, [routes, students, state, shift, dateIdx]);
+  }, [routes, students, register]);
+  const classes = useMemo(() => sortClasses([...new Set(lines.map((l) => l.student.cls))]), [lines]);
 
   const byId = useCallback((id: string | null) => lines.find((l) => l.student.id === id) ?? null, [lines]);
 
   const visible = useMemo(() => {
     const q = applied.toLowerCase();
     return lines.filter(({ student: s, stop, route, entry }) => {
-      if (fClass !== ALL && String(s.cls) !== fClass) return false;
+      if (fClass !== ALL && s.cls !== fClass) return false;
       if (fBoard === "boarded" && !entry.boarded) return false;
-      if (fBoard === "not" && entry.boarded) return false;
+      if (fBoard === "not" && (entry.boarded || entry.marked === false)) return false;
+      if (fBoard === "unmarked" && entry.marked !== false) return false;
       if (fFlag === "late" && !entry.late) return false;
       if (fFlag === "note" && !entry.note) return false;
       if (fStop !== ALL && stop?.id !== fStop) return false;
@@ -87,10 +102,10 @@ export function AttendancePage() {
   const visibleIds = visible.map((l) => l.student.id);
   const allSelected = visibleIds.length > 0 && visibleIds.every((id) => selection.isSelected(id));
   const allStops = routes.flatMap((r) => r.stops.map((s) => ({ s, r })));
-  const BOARD: Record<string, string> = { boarded: "Boarded", not: "Not boarded" };
+  const BOARD: Record<string, string> = { boarded: "Boarded", not: "Not boarded", unmarked: "Unmarked" };
   const FLAG: Record<string, string> = { late: "Late", note: "Has note" };
   const chips: FilterChip[] = [
-    ...(fClass !== ALL ? [{ label: `Class ${fClass}`, tone: "purple" as const }] : []),
+    ...(fClass !== ALL ? [{ label: classLabel(fClass), tone: "purple" as const }] : []),
     ...(fBoard !== ALL ? [{ label: `Status: ${BOARD[fBoard]}`, tone: "purple" as const }] : []),
     ...(fFlag !== ALL ? [{ label: `Flag: ${FLAG[fFlag]}`, tone: "purple" as const }] : []),
     ...(fStop !== ALL ? [{ label: `Stop: ${allStops.find((x) => x.s.id === fStop)?.s.name ?? ""}`, tone: "purple" as const }] : []),
@@ -99,36 +114,43 @@ export function AttendancePage() {
 
   // KPIs over the whole register for this shift/date.
   const boarded = lines.filter((l) => l.entry.boarded).length;
-  const noShow = lines.length - boarded;
+  const unmarked = lines.filter((l) => l.entry.marked === false).length;
+  const noShow = lines.filter((l) => l.entry.marked !== false && !l.entry.boarded).length;
   const late = lines.filter((l) => l.entry.boarded && l.entry.late).length;
   const dropped = shift === "afternoon" ? boarded : 0;
 
-  const isToday = dateIdx === 0;
-  const dateLabel = REGISTER_DATES[dateIdx].date;
+  const isToday = date === REGISTER_DATES[0].iso;
+  const dateLabel = REGISTER_DATES.find((d) => d.iso === date)?.date ?? date;
   const shiftLabel = shift === "morning" ? "Morning pickup" : "Afternoon drop";
-  const note = !isToday ? "Read-only history — edits are logged" : shift === "morning" ? "Live · buses still arriving, register auto-fills from RFID scans" : "Afternoon drop starts 3:20 PM";
+  const note = !isToday
+    ? "Past register — corrections are saved with your name"
+    : "GPS stop arrivals fill boarded lines automatically; mark the rest here";
 
   const write = (ids: string[], patch: (e: AttendanceEntry) => AttendanceEntry, change: string) => {
     const entries: Record<string, AttendanceEntry> = {};
     ids.forEach((id) => { const l = byId(id); if (l) entries[id] = patch(l.entry); });
-    dispatch({ type: "attendance/set", shift, dateIdx, entries, change });
+    void dispatch({ type: "attendance/set", shift, date, entries, change });
   };
 
   const scheduled = (l: Line) => (l.stop ? fmtTime(shift === "morning" ? l.stop.pickupTime : l.stop.dropTime) : "—");
-  const scan = (l: Line) => (!l.entry.boarded ? { text: "—", color: T.ink3 } : l.entry.late ? { text: `+${4 + (l.student.roll % 9)} min`, color: "#B4721B" } : { text: "On time", color: T.ok });
+  const scan = (l: Line) => {
+    if (!l.entry.boarded) return { text: "—", color: T.ink3 };
+    const at = l.entry.scannedAt ? clockOf(l.entry.scannedAt) : l.entry.source === "manual" ? "Marked" : "—";
+    return l.entry.late ? { text: `${at} · late`, color: T.warn } : { text: at, color: T.ok };
+  };
 
   const csv: CsvColumn<Line>[] = [
     { header: "Bus", value: (l) => l.route.busReg }, { header: "Route", value: (l) => `${l.route.code} · ${l.route.name}` },
     { header: "Admission no.", value: (l) => l.student.admission }, { header: "Student", value: (l) => l.student.name },
-    { header: "Class", value: (l) => `${l.student.cls}-${l.student.section}` }, { header: "Pickup point", value: (l) => l.stop?.name ?? "—" },
+    { header: "Class", value: (l) => `${l.student.cls}${l.student.section ? `-${l.student.section}` : ""}` }, { header: "Pickup point", value: (l) => l.stop?.name ?? "—" },
     { header: "Scheduled", value: scheduled }, { header: "Scanned at", value: (l) => scan(l).text },
-    { header: shift === "morning" ? "Boarded" : "Dropped", value: (l) => (l.entry.boarded ? "Yes" : "No") },
+    { header: shift === "morning" ? "Boarded" : "Dropped", value: (l) => (l.entry.marked === false ? "Unmarked" : l.entry.boarded ? "Yes" : "No") },
     { header: "Late", value: (l) => (l.entry.late ? "Yes" : "No") }, { header: "Note", value: (l) => l.entry.note ?? "" },
   ];
-  const exportRegister = () => { downloadCsv(`boarding-register-${shift}-${dateIdx}.csv`, csv, visible); toast("Boarding register exported"); };
+  const exportRegister = () => { downloadCsv(`boarding-register-${shift}-${date}.csv`, csv, visible); toast("Boarding register exported"); };
 
-  const changeContext = (nextShift: AttendanceShift, nextDate: number) => {
-    setShift(nextShift); setDateIdx(nextDate); selection.clear(); setLimits({});
+  const changeContext = (nextShift: AttendanceShift, nextDate: string) => {
+    setShift(nextShift); setDate(nextDate); selection.clear(); setLimits({});
   };
 
   useDeepLink(({ id }) => {
@@ -152,6 +174,15 @@ export function AttendancePage() {
   };
 
   const notBoardedNow = lines.filter((l) => !l.entry.boarded).length;
+  const notifyAbsent = async () => {
+    setNotifyOpen(false); setDrawerId(null);
+    try {
+      const res = await tsend<{ absent: number; notifications_logged: number }>("/transport-attendance/notify-absent/", "POST", { date, shift });
+      toast(`${plural(res.absent, "student")} not boarded · ${plural(res.notifications_logged, "message")} sent to guardians`, "info");
+    } catch (e) {
+      toast(e instanceof Error ? e.message : "Couldn't send notifications", "error");
+    }
+  };
   const drawer = byId(drawerId);
   const noteLine = byId(noteId);
   const groupsShown = routes.filter((r) => (filtersActive ? visible.some((l) => l.route.code === r.code) : true));
@@ -159,32 +190,33 @@ export function AttendancePage() {
   return (
     <TransportPage>
       <ContextBar icon={ClipboardCheck} note={note} selects={[
-        { label: "Shift", value: shift, onChange: (v) => changeContext(v as AttendanceShift, dateIdx),
+        { label: "Shift", value: shift, onChange: (v) => changeContext(v as AttendanceShift, date),
           options: [{ value: "morning", label: "Morning pickup" }, { value: "afternoon", label: "Afternoon drop" }] },
-        { label: "Date", value: String(dateIdx), onChange: (v) => changeContext(shift, Number(v)),
-          options: REGISTER_DATES.map((d) => ({ value: String(d.idx), label: d.label })) },
+        { label: "Date", value: date, onChange: (v) => changeContext(shift, v),
+          options: REGISTER_DATES.map((d) => ({ value: d.iso, label: d.label })) },
       ]} />
 
       <PageHero eyebrow="Transport · Daily" title="Transport" accent="attendance"
-        sub="The boarding register for every bus. RFID scans fill it automatically; attendants correct it here and parents of absent children can be notified in one step."
+        sub="The boarding register for every bus. GPS stop arrivals fill it automatically; attendants correct it here and guardians of absent children can be notified in one step."
         actions={<>
           <HeroSecondary onClick={exportRegister}>Export CSV</HeroSecondary>
           <HeroPrimary icon={false} onClick={() => setNotifyOpen(true)}>Notify absent parents</HeroPrimary>
         </>} />
 
       <KpiGrid>
-        <AttendanceKpi loading={loading} code="BD" label="Boarded" value={boarded} trend="+3 vs yesterday" trendColor="#16A34A" />
+        <AttendanceKpi loading={loading} code="BD" label="Boarded" value={boarded} trend={`of ${plural(lines.length, "allocated student")}`} trendColor={T.dotOk} />
         <AttendanceKpi loading={loading} code="NS" label="No-show" value={noShow}
-          trend={noShow > 20 ? "+4 vs yesterday" : "−2 vs yesterday"} trendColor={noShow > 20 ? "#E11D48" : "#16A34A"} />
-        <AttendanceKpi loading={loading} code="LT" label="Late" value={late} trend="Avg +6 min" trendColor="#D97706" />
-        <AttendanceKpi loading={loading} code="DR" label="Dropped" value={dropped} trend={shift === "afternoon" ? "Afternoon drop" : "Starts 3:20 PM"} trendColor="#2563EB" />
+          trend={unmarked ? `${unmarked} not marked yet` : "All lines marked"} trendColor={noShow > 0 ? T.danger : T.dotOk} />
+        <AttendanceKpi loading={loading} code="LT" label="Late" value={late} trend="Boarded late" trendColor={T.dotWarn} />
+        <AttendanceKpi loading={loading} code="DR" label="Dropped" value={dropped}
+          trend={shift === "afternoon" ? "Afternoon drop" : `Drop starts ${fmtTime(state.settings.shifts.afternoonDrop)}`} trendColor={T.info} />
       </KpiGrid>
 
       <SmartFilter chips={chips} groupingChip="Grouped by bus" onReset={resetFilters} fields={[
         { key: "class", label: "Class", value: fClass, onChange: setFClass,
-          options: [{ value: ALL, label: "All classes" }, ...Array.from({ length: 10 }, (_, i) => ({ value: String(i + 1), label: `Class ${i + 1}` }))] },
+          options: [{ value: ALL, label: "All classes" }, ...classes.map((c) => ({ value: c, label: classLabel(c) }))] },
         { key: "board", label: "Boarding status", value: fBoard, onChange: setFBoard,
-          options: [{ value: ALL, label: "All" }, { value: "boarded", label: "Boarded" }, { value: "not", label: "Not boarded" }] },
+          options: [{ value: ALL, label: "All" }, { value: "boarded", label: "Boarded" }, { value: "not", label: "Not boarded" }, { value: "unmarked", label: "Unmarked" }] },
         { key: "flag", label: "Flag", value: fFlag, onChange: setFFlag,
           options: [{ value: ALL, label: "Any flag" }, { value: "late", label: "Late" }, { value: "note", label: "Has note" }] },
         { key: "stop", label: "Pickup point", value: fStop, onChange: setFStop,
@@ -242,7 +274,7 @@ export function AttendancePage() {
                         return (
                           <tr key={s.id} className={cls || undefined}>
                             <td style={{ width: 42 }}><input type="checkbox" className="tp-check" checked={sel} onChange={() => selection.toggle(s.id)} aria-label={`Select ${s.name}`} /></td>
-                            <td><IdentityCell lead={<Avatar name={s.name} initials={initials(s.name)} />} title={s.name} sub={`Class ${s.cls}-${s.section} · ${s.admission}`} /></td>
+                            <td><IdentityCell lead={<Avatar name={s.name} initials={initials(s.name)} />} title={s.name} sub={`${classLine({ cls: s.cls, section: s.section })} · ${s.admission}`} /></td>
                             <td>{l.stop?.name ?? "—"}</td>
                             <td className="tp-mono" style={{ fontSize: 12.5 }}>{scheduled(l)}</td>
                             <td className="tp-mono" style={{ fontSize: 12.5, color: sc.color }}>{sc.text}</td>
@@ -251,7 +283,9 @@ export function AttendancePage() {
                               <div style={{ display: "flex", gap: 4, flexWrap: "wrap" }}>
                                 {l.entry.late && <Tag color="#B4721B" bg="#FDF1DC">LATE</Tag>}
                                 {l.entry.note && <Tag color={T.pu} bg={T.puSoft} title={l.entry.note}>NOTE</Tag>}
-                                {!l.entry.boarded && <Tag color="#C2264E" bg="#FFF1F2">NO-SHOW</Tag>}
+                                {l.entry.marked === false ? <Tag color={T.ink2} bg={T.surface2}>UNMARKED</Tag>
+                                  : !l.entry.boarded && <Tag color="#C2264E" bg="#FFF1F2">NO-SHOW</Tag>}
+                                {l.entry.source === "gps" && <Tag color={T.info} bg={T.infoSoft}>GPS</Tag>}
                               </div>
                             </td>
                             <td style={{ textAlign: "right", whiteSpace: "nowrap" }}>
@@ -276,7 +310,6 @@ export function AttendancePage() {
       <BulkBar count={selection.count} onClear={selection.clear} actions={[
         { label: "Mark boarded", onClick: () => { const n = selection.count; write(selection.ids, (e) => ({ ...e, boarded: true }), "bulk marked boarded"); selection.clear(); toast(`${plural(n, "student")} marked boarded`); } },
         { label: "Mark absent", onClick: () => { const n = selection.count; write(selection.ids, (e) => ({ ...e, boarded: false, late: false }), "bulk marked absent"); selection.clear(); toast(`${plural(n, "student")} marked absent`); } },
-        { label: "Notify parents", onClick: () => { toast(`Parents of ${plural(selection.count, "student")} notified`, "info"); selection.clear(); } },
         { label: "Export", onClick: () => {
           const list = lines.filter((l) => selection.isSelected(l.student.id));
           downloadCsv("boarding-register-selected.csv", csv, list); toast(`Exported ${plural(list.length, "student")}`); selection.clear();
@@ -288,17 +321,20 @@ export function AttendancePage() {
         const sc = scan(drawer);
         return (
           <Drawer open onClose={() => setDrawerId(null)} label={`Attendance for ${s.name}`}>
-            <DrawerHeader avatar={initials(s.name)} title={s.name} sub={`Class ${s.cls}-${s.section} · ${drawer.route.busReg}`} idLabel={s.admission}
+            <DrawerHeader avatar={initials(s.name)} title={s.name} sub={`${classLine({ cls: s.cls, section: s.section })} · ${drawer.route.busReg || "No bus"}`} idLabel={s.admission}
               badges={<>
-                {drawer.entry.boarded ? <Badge tone="green">Boarded</Badge> : <Badge tone="red">Not boarded</Badge>}
+                {drawer.entry.marked === false ? <Badge tone="grey">Unmarked</Badge> : drawer.entry.boarded ? <Badge tone="green">Boarded</Badge> : <Badge tone="red">Not boarded</Badge>}
                 {drawer.entry.late && <Badge tone="amber">Late</Badge>}
               </>} />
-            <DrawerHighlight items={[{ label: "This month", value: `${18 + (s.roll % 3)} / 20 days` }, { label: "Late arrivals", value: String(s.roll % 4) }]} />
-            <DrawerSection title="Today">
+            <DrawerHighlight items={[
+              { label: "Boarded (30d)", value: s.attendance30d === null ? "—" : `${s.attendance30d}%` },
+              { label: "Marked by", value: drawer.entry.source === "gps" ? "GPS" : drawer.entry.source === "manual" ? "Staff" : "—" },
+            ]} />
+            <DrawerSection title={isToday ? "Today" : dateLabel}>
               <InfoRow label="Shift">{shiftLabel}</InfoRow>
               <InfoRow label="Pickup point">{drawer.stop?.name ?? "—"}</InfoRow>
               <InfoRow label="Scheduled"><span className="tp-mono">{scheduled(drawer)}</span></InfoRow>
-              <InfoRow label="Scan">{!drawer.entry.boarded ? "No scan" : drawer.entry.late ? `Late (${sc.text})` : "On time"}</InfoRow>
+              <InfoRow label="Boarded at">{!drawer.entry.boarded ? "—" : drawer.entry.late ? `Late (${sc.text})` : sc.text}</InfoRow>
               <InfoRow label="Note">{drawer.entry.note ?? "—"}</InfoRow>
             </DrawerSection>
             <DrawerSection title="Parent">
@@ -307,7 +343,7 @@ export function AttendancePage() {
             </DrawerSection>
             <DrawerActions>
               <Button type="button" variant="soft" size="sm" onClick={() => toggleBoarded(drawer)}>{drawer.entry.boarded ? "Mark not boarded" : "Mark boarded"}</Button>
-              <Button type="button" variant="soft" size="sm" onClick={() => toast(`Parent of ${s.name} notified`, "info")}>Notify parent</Button>
+              {s.mobile && s.mobile !== "—" && <a className="tp-btn-outline" href={`tel:${s.mobile.replace(/\s/g, "")}`}>Call parent</a>}
               <Button type="button" variant="red" size="sm" onClick={() => toggleLate(drawer)}>Flag late</Button>
             </DrawerActions>
           </Drawer>
@@ -325,9 +361,9 @@ export function AttendancePage() {
 
       <ConfirmDialog open={notifyOpen} onClose={() => setNotifyOpen(false)} tone="safe"
         title={`Notify ${plural(notBoardedNow, "parent")}?`}
-        message={`Parents of children not boarded on the ${shift === "morning" ? "morning pickup" : "afternoon drop"} get an app notification and SMS.`}
+        message={`Guardians of allocated children not boarded on the ${dateLabel} ${shift === "morning" ? "morning pickup" : "afternoon drop"} (including unmarked lines) get an SMS / email through the school's messaging settings.`}
         confirmLabel="Send notifications"
-        onConfirm={() => { setNotifyOpen(false); setDrawerId(null); toast(`Notifications sent to ${plural(notBoardedNow, "parent")}`, "info"); }} />
+        onConfirm={() => { void notifyAbsent(); }} />
     </TransportPage>
   );
 }

@@ -1,12 +1,17 @@
 "use client";
-/** Reports — /transport/reports (Master Prompt §7.13). Preview tables are computed from the shared store. */
-import { useMemo, useState } from "react";
+/**
+ * Reports — /transport/reports (Master Prompt §7.13). Every preview is calculated
+ * by the backend from stored records (GET transport-reports/<key>/) for the chosen
+ * month / day, shift and route; downloads are logged as "Recently generated".
+ */
+import { useEffect, useMemo, useState } from "react";
 import { Car, ClipboardCheck, Download, Eye, FileBarChart, FileText, Fuel, IdCard, Users } from "lucide-react";
 import { useTransport } from "@/lib/transport/store";
-import { fmtDate } from "@/lib/transport/format";
+import { fetchReport } from "@/lib/transport/api";
+import { TODAY, fmtDate, toISO } from "@/lib/transport/format";
 import { downloadCsv } from "@/lib/transport/csv";
-import { buildPreview, downloadPdf, downloadXlsx, type ReportPreview, type ReportScope } from "@/lib/transport/reports";
-import type { ReportDef } from "@/lib/transport/types";
+import { downloadPdf, downloadXlsx, toPreview, type ReportPreview } from "@/lib/transport/reports";
+import type { AttendanceShift, ReportDef } from "@/lib/transport/types";
 import {
   Badge, Button, Field, HeroPrimary, HeroSecondary, Input, KpiCard, KpiGrid, LAYER, Modal, PageHero, RhythmPill, SearchRow, Select,
   SimpleAccordion, SmartFilter, T, TransportPage, useDeepLink, useMountSkeleton, useTpToast, type FilterChip,
@@ -15,11 +20,15 @@ import {
 const ALL = "all";
 const ICONS: Record<ReportDef["icon"], React.ElementType> = { Users, Car, FileBarChart, IdCard, ClipboardCheck, Fuel };
 const DOT: Record<ReportDef["dot"], string> = { ok: T.dotOk, warn: T.dotWarn, danger: T.dotDanger };
-const SCHEDULED_REPORT = "Daily boarding register";
+const BOARDING = "boarding-register";
 
-interface GenValues { from: string; to: string; route: string; shift: string; format: "PDF" | "Excel" }
-type GenState = { report: string; schedule: boolean; initial: GenValues };
-type PreviewState = { report: string; scope: ReportScope; time: string };
+/** Report scope: a month (monthly reports) or a day + shift (boarding register), optionally one route. */
+interface Scope { month: string; date: string; shift: AttendanceShift; route: string }
+interface GenValues extends Scope { format: "PDF" | "Excel" }
+type GenState = { report: string; initial: GenValues };
+type PreviewState = { report: string; scope: Scope; time: string };
+
+const DEFAULT_SCOPE: Scope = { month: toISO(TODAY).slice(0, 7), date: toISO(TODAY), shift: "morning", route: ALL };
 
 function nowLabel(): string {
   return new Date().toLocaleTimeString("en-IN", { hour: "numeric", minute: "2-digit", hour12: true }).replace(/\s?(am|pm)$/i, (m) => ` ${m.trim().toUpperCase()}`);
@@ -40,6 +49,8 @@ export function ReportsPage() {
   const [recentOpen, setRecentOpen] = useState(true);
   const [gen, setGen] = useState<GenState | null>(null);
   const [preview, setPreview] = useState<PreviewState | null>(null);
+  const [previewData, setPreviewData] = useState<ReportPreview | null>(null);
+  const [previewError, setPreviewError] = useState<string | null>(null);
 
   const defaultFormat: "PDF" | "Excel" = fFormat === "Excel" ? "Excel" : "PDF";
   const visible = useMemo(() => {
@@ -57,43 +68,50 @@ export function ReportsPage() {
   const chips: FilterChip[] = [
     ...(fCat !== ALL ? [{ label: `Category: ${fCat}`, tone: "purple" as const }] : []),
     ...(fFreq !== ALL ? [{ label: `Frequency: ${fFreq}`, tone: "purple" as const }] : []),
-    ...(fStatus !== ALL ? [{ label: `Status: ${fStatus === "attention" ? "Needs attention" : "Up to date"}`, tone: "purple" as const }] : []),
+    ...(fStatus !== ALL ? [{ label: `Status: ${fStatus === "attention" ? "Never generated" : "Generated before"}`, tone: "purple" as const }] : []),
     ...(fFormat !== ALL ? [{ label: `Format: ${fFormat}`, tone: "purple" as const }] : []),
     ...(applied ? [{ label: `Search: "${applied}"`, tone: "blue" as const }] : []),
   ];
 
-  const scheduledRows = recentReports.filter((r) => r.generated.startsWith("Scheduled")).length;
-  const attention = reports.filter((r) => r.dot !== "ok").length;
-  const categories = new Set(reports.map((r) => r.category)).size;
+  const neverGenerated = reports.filter((r) => !r.lastGenerated).length;
+  const categoryList = [...new Set(reports.map((r) => r.category))];
+  const frequencyList = [...new Set(reports.map((r) => r.rhythm))];
+  const keyOf = (name: string) => reports.find((r) => r.name === name)?.key ?? "";
 
   const routeLabel = (code: string) => (code === ALL ? "All routes" : routes.find((r) => r.code === code) ? `${code} · ${routes.find((r) => r.code === code)!.name}` : code);
-  const openGenerate = (report: string) => setGen({ report, schedule: false, initial: { from: "2026-10-01", to: "2026-10-06", route: ALL, shift: "Both shifts", format: defaultFormat } });
-  const openSchedule = () => setGen({ report: SCHEDULED_REPORT, schedule: true, initial: { from: "2026-10-07", to: "2026-12-31", route: ALL, shift: "Morning pickup", format: defaultFormat } });
-  const openPreview = (report: string, scope?: ReportScope) => setPreview({ report, scope: scope ?? { routeCode: null, shift: "Both shifts", label: "All routes" }, time: nowLabel() });
+  const periodLabel = (report: string, s: Scope) => (keyOf(report) === BOARDING
+    ? `${fmtDate(s.date)} · ${s.shift === "morning" ? "Morning pickup" : "Afternoon drop"}`
+    : new Date(Number(s.month.slice(0, 4)), Number(s.month.slice(5, 7)) - 1, 1).toLocaleDateString("en-IN", { month: "long", year: "numeric" }));
+  const openGenerate = (report: string) => setGen({ report, initial: { ...DEFAULT_SCOPE, format: defaultFormat } });
+  const openPreview = (report: string, scope?: Scope) => setPreview({ report, scope: scope ?? DEFAULT_SCOPE, time: nowLabel() });
+
+  // Fetch the preview table whenever a preview is opened.
+  useEffect(() => {
+    if (!preview) { setPreviewData(null); setPreviewError(null); return; }
+    let live = true;
+    setPreviewData(null); setPreviewError(null);
+    const s = preview.scope;
+    const route = s.route === ALL ? null : routes.find((r) => r.code === s.route)?.pk ?? null;
+    fetchReport(keyOf(preview.report), { route, month: s.month, date: s.date, shift: s.shift })
+      .then((data) => { if (live) setPreviewData(toPreview(data)); })
+      .catch((e: unknown) => { if (live) setPreviewError(e instanceof Error ? e.message : "Couldn't load the report"); });
+    return () => { live = false; };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [preview]);
 
   const resetFilters = () => { setFCat(ALL); setFFreq(ALL); setFStatus(ALL); setFFormat(ALL); setQuery(""); setApplied(""); };
 
   useDeepLink(({ id, isNew }) => {
     if (id) { const r = reports.find((x) => x.name.toLowerCase() === id.toLowerCase()); if (r) openPreview(r.name); }
-    if (isNew) openSchedule();
   });
 
   const submitGenerate = (g: GenState, v: GenValues) => {
-    const period = `${fmtDate(v.from)} – ${fmtDate(v.to)}`;
-    const scopeText = `${routeLabel(v.route)} · ${v.shift}`;
-    if (g.schedule) {
-      dispatch({ type: "report/add", scheduled: true, row: { report: g.report, period, scope: scopeText, format: v.format, generated: "Scheduled · daily 8:15 AM" } });
-      setGen(null);
-      toast("Report scheduled · first run tomorrow 8:15 AM");
-      return;
-    }
-    dispatch({ type: "report/add", scheduled: false, row: { report: g.report, period, scope: scopeText, format: v.format, generated: "Just now" } });
     setGen(null);
-    openPreview(g.report, { routeCode: v.route === ALL ? null : v.route, shift: v.shift, label: `${routeLabel(v.route)} · ${fmtDate(v.from)} – ${fmtDate(v.to)}` });
-    toast(`${g.report} generated as ${v.format}`);
+    openPreview(g.report, { month: v.month, date: v.date, shift: v.shift, route: v.route });
   };
 
-  const download = async (report: string, p: ReportPreview, format: "PDF" | "Excel") => {
+  /** Downloads the previewed table and logs it under "Recently generated". */
+  const download = async (report: string, p: ReportPreview, format: "PDF" | "Excel", scope: Scope) => {
     try {
       if (format === "PDF") await downloadPdf(report, p); else await downloadXlsx(report, p);
     } catch {
@@ -101,9 +119,11 @@ export function ReportsPage() {
       downloadCsv(`${report}.csv`, p.columns.map((col, i) => ({ header: col.header, value: (row: string[]) => row[i] })),
         [...p.rows.map((r) => r.map((x) => x.text)), p.totals]);
     }
+    void dispatch({ type: "report/add", scheduled: false, row: {
+      report, period: periodLabel(report, scope), scope: routeLabel(scope.route), format, generated: "Just now",
+    } });
+    toast(`${report} downloaded as ${format}`);
   };
-
-  const previewData = preview ? buildPreview(preview.report, state, preview.scope) : null;
 
   return (
     <TransportPage>
@@ -118,20 +138,20 @@ export function ReportsPage() {
             ], visible);
             toast("Report catalogue exported");
           }}>Export CSV</HeroSecondary>
-          <HeroPrimary icon={false} onClick={openSchedule}>Schedule a report</HeroPrimary>
+          <HeroPrimary icon={false} onClick={() => reports[0] && openGenerate(reports[0].name)}>Generate a report</HeroPrimary>
         </>} />
 
       <KpiGrid>
-        <KpiCard loading={loading} label="Reports available" value={reports.length} sub={`Across ${categories} categories`} />
-        <KpiCard loading={loading} label="Generated this month" value={recentReports.length - scheduledRows + 14} sub="By 3 staff members" color={T.pu} />
-        <KpiCard loading={loading} label="Scheduled" value={2 + scheduledRows} sub="Daily register 8:15 AM · Weekly roster Sat" color={T.green} />
-        <KpiCard loading={loading} label="Needs attention" value={attention} sub="Fee defaulters · today's no-shows" color={T.amber} />
+        <KpiCard loading={loading} label="Reports available" value={reports.length} sub={`Across ${categoryList.length} categories`} />
+        <KpiCard loading={loading} label="Recent downloads" value={recentReports.length} sub="Latest 20 logged" color={T.pu} />
+        <KpiCard loading={loading} label="Categories" value={categoryList.length} sub={categoryList.join(" · ") || "—"} color={T.green} />
+        <KpiCard loading={loading} label="Never generated" value={neverGenerated} sub="Reports not downloaded yet" color={T.amber} />
       </KpiGrid>
 
       <SmartFilter chips={chips} onReset={resetFilters} fields={[
-        { key: "cat", label: "Category", value: fCat, onChange: setFCat, options: [{ value: ALL, label: "All categories" }, ...["Operations", "Fleet", "Staff", "Finance"].map((x) => ({ value: x, label: x }))] },
-        { key: "freq", label: "Frequency", value: fFreq, onChange: setFFreq, options: [{ value: ALL, label: "Any" }, ...["Daily", "Weekly", "Monthly", "Per term"].map((x) => ({ value: x, label: x }))] },
-        { key: "status", label: "Status", value: fStatus, onChange: setFStatus, options: [{ value: ALL, label: "Any status" }, { value: "attention", label: "Needs attention" }, { value: "ok", label: "Up to date" }] },
+        { key: "cat", label: "Category", value: fCat, onChange: setFCat, options: [{ value: ALL, label: "All categories" }, ...categoryList.map((x) => ({ value: x, label: x }))] },
+        { key: "freq", label: "Frequency", value: fFreq, onChange: setFFreq, options: [{ value: ALL, label: "Any" }, ...frequencyList.map((x) => ({ value: x, label: x }))] },
+        { key: "status", label: "Status", value: fStatus, onChange: setFStatus, options: [{ value: ALL, label: "Any status" }, { value: "attention", label: "Never generated" }, { value: "ok", label: "Generated before" }] },
         { key: "format", label: "Default format", value: fFormat, onChange: setFFormat, options: [{ value: ALL, label: "Any format" }, { value: "PDF", label: "PDF" }, { value: "Excel", label: "Excel" }] },
       ]} />
 
@@ -156,7 +176,7 @@ export function ReportsPage() {
               <div>
                 <div style={{ fontSize: 16, fontWeight: 700, color: T.exInk1, marginBottom: 6 }}>{r.name}</div>
                 <div style={{ fontSize: 12.5, lineHeight: 1.5, color: T.exInk2 }}><span aria-hidden style={{ color: DOT[r.dot], marginRight: 6 }}>●</span>{r.description}</div>
-                <div style={{ fontSize: 11.5, color: T.exInk3, marginTop: 8 }}>Last generated {fmtDate(r.lastGenerated)}</div>
+                <div style={{ fontSize: 11.5, color: T.exInk3, marginTop: 8 }}>{r.lastGenerated ? `Last generated ${fmtDate(r.lastGenerated)}` : "Not generated yet"}</div>
               </div>
               <div style={{ display: "flex", gap: 10, marginTop: "auto" }}>
                 <button type="button" className="tp-cta tp-cta--outline" style={{ cursor: "pointer" }} onClick={() => openPreview(r.name)}>Preview</button>
@@ -173,6 +193,9 @@ export function ReportsPage() {
           <table className="tp-table" style={{ minWidth: 760 }}>
             <thead><tr><th>Report</th><th>Period</th><th>Scope</th><th>Format</th><th>Generated</th><th style={{ textAlign: "right" }}>File</th></tr></thead>
             <tbody>
+              {recentReports.length === 0 && (
+                <tr><td colSpan={6} style={{ textAlign: "center", color: T.muted, padding: "18px 0" }}>No reports downloaded yet.</td></tr>
+              )}
               {recentReports.map((row, i) => (
                 <tr key={`${row.report}-${i}`}>
                   <td style={{ fontWeight: 700 }}>{row.report}</td>
@@ -181,9 +204,8 @@ export function ReportsPage() {
                   <td><Badge tone={row.format === "PDF" ? "red" : "green"}>{row.format}</Badge></td>
                   <td style={{ color: T.muted }}>{row.generated}</td>
                   <td style={{ textAlign: "right", whiteSpace: "nowrap" }}>
-                    <button type="button" className="tp-btn-row" aria-label={`Preview ${row.report}`} title="Preview" onClick={() => openPreview(row.report, { routeCode: null, shift: "Both shifts", label: row.scope })}><Eye size={15} strokeWidth={1.8} /></button>
-                    <button type="button" className="tp-btn-row" aria-label={`Download ${row.report}`} title="Download"
-                      onClick={async () => { await download(row.report, buildPreview(row.report, state, { routeCode: null, shift: "Both shifts", label: row.scope }), row.format); toast(`${row.report} (${row.format}) downloaded`); }}>
+                    <button type="button" className="tp-btn-row" aria-label={`Open ${row.report} with current data`} title="Open with current data" onClick={() => openPreview(row.report)}><Eye size={15} strokeWidth={1.8} /></button>
+                    <button type="button" className="tp-btn-row" aria-label={`Generate ${row.report} again`} title="Generate again" onClick={() => openGenerate(row.report)}>
                       <Download size={15} strokeWidth={1.8} />
                     </button>
                   </td>
@@ -195,9 +217,20 @@ export function ReportsPage() {
       </SimpleAccordion>
 
       {gen && (
-        <GenerateModal key={`${gen.report}-${gen.schedule}`} title="Generate report" subtitle={gen.schedule ? `Scheduled: ${gen.report}` : gen.report}
+        <GenerateModal key={gen.report} title="Generate report" subtitle={gen.report} daily={keyOf(gen.report) === BOARDING}
+          reportNames={reports.map((r) => r.name)} onPick={(name) => setGen({ ...gen, report: name })}
           routes={routes.map((r) => ({ value: r.code, label: `${r.code} · ${r.name}` }))} initial={gen.initial}
           onClose={() => setGen(null)} onSubmit={(v) => submitGenerate(gen, v)} />
+      )}
+
+      {preview && !previewData && (
+        <Modal open size="md" priority={LAYER.preview} onClose={() => setPreview(null)} title={preview.report}
+          subtitle={periodLabel(preview.report, preview.scope)}
+          footer={<Button type="button" variant="ghost" onClick={() => setPreview(null)}>Close</Button>}>
+          <div style={{ padding: "18px 0", textAlign: "center", fontSize: 13, color: previewError ? T.danger : T.muted }}>
+            {previewError ?? "Calculating from stored records…"}
+          </div>
+        </Modal>
       )}
 
       {preview && previewData && (
@@ -207,8 +240,8 @@ export function ReportsPage() {
             <Button type="button" variant="ghost" onClick={() => setPreview(null)}>Close</Button>
             <span style={{ flex: 1 }} />
             <Button type="button" variant="ghost" onClick={() => { const r = preview.report; setPreview(null); openGenerate(r); }}>Change filters</Button>
-            <Button type="button" variant="soft" onClick={async () => { await download(preview.report, previewData, "Excel"); toast(`${preview.report} downloaded as Excel`); }}>Download Excel</Button>
-            <Button type="button" variant="primary" onClick={async () => { await download(preview.report, previewData, "PDF"); toast(`${preview.report} downloaded as PDF`); }}>Download PDF</Button>
+            <Button type="button" variant="soft" onClick={() => { void download(preview.report, previewData, "Excel", preview.scope); }}>Download Excel</Button>
+            <Button type="button" variant="primary" onClick={() => { void download(preview.report, previewData, "PDF", preview.scope); }}>Download PDF</Button>
           </>}>
           <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(160px, 1fr))", gap: 12, marginBottom: 16 }}>
             {previewData.stats.map((s) => (
@@ -222,6 +255,9 @@ export function ReportsPage() {
             <table className="tp-table" style={{ minWidth: 720 }}>
               <thead><tr>{previewData.columns.map((col) => <th key={col.header} style={{ textAlign: col.numeric ? "right" : "left" }}>{col.header}</th>)}</tr></thead>
               <tbody>
+                {previewData.rows.length === 0 && (
+                  <tr><td colSpan={previewData.columns.length} style={{ textAlign: "center", color: T.muted, padding: "18px 0" }}>No records for this period and scope.</td></tr>
+                )}
                 {previewData.rows.map((row, ri) => (
                   <tr key={ri}>
                     {row.map((cell, ci) => (
@@ -239,8 +275,11 @@ export function ReportsPage() {
               </tfoot>
             </table>
           </div>
+          {previewData.notes.map((note) => (
+            <p key={note} style={{ margin: "10px 0 0", fontSize: 11.5, color: T.muted }}>{note}</p>
+          ))}
           <p style={{ margin: "12px 0 0", fontSize: 11, color: T.label }}>
-            Figures come from the Transport module&apos;s live records. Download for the full register with student-level rows.
+            Figures are calculated from the Transport module&apos;s stored records.
           </p>
         </Modal>
       )}
@@ -248,17 +287,16 @@ export function ReportsPage() {
   );
 }
 
-function GenerateModal({ title, subtitle, routes, initial, onClose, onSubmit }: {
-  title: string; subtitle: string; routes: { value: string; label: string }[]; initial: GenValues;
+function GenerateModal({ title, subtitle, daily, reportNames, onPick, routes, initial, onClose, onSubmit }: {
+  title: string; subtitle: string; daily: boolean; reportNames: string[]; onPick: (name: string) => void;
+  routes: { value: string; label: string }[]; initial: GenValues;
   onClose: () => void; onSubmit: (v: GenValues) => void;
 }) {
   const { toast } = useTpToast();
   const [v, setV] = useState(initial);
-  const [error, setError] = useState<string | undefined>();
-  const set = <K extends keyof GenValues>(k: K, val: GenValues[K]) => { setV((p) => ({ ...p, [k]: val })); setError(undefined); };
+  const set = <K extends keyof GenValues>(k: K, val: GenValues[K]) => setV((p) => ({ ...p, [k]: val }));
   const submit = () => {
-    if (!v.from || !v.to) { toast("Fill in the required fields", "error"); return; }
-    if (v.to < v.from) { setError("End date is before start date"); toast("End date is before start date", "error"); return; }
+    if (daily ? !v.date : !v.month) { toast("Fill in the required fields", "error"); return; }
     onSubmit(v);
   };
   return (
@@ -268,17 +306,25 @@ function GenerateModal({ title, subtitle, routes, initial, onClose, onSubmit }: 
         <Button type="button" variant="primary" onClick={submit}>Generate</Button>
       </>}>
       <div className="tp-form-grid">
-        <Field label="From" required><Input type="date" value={v.from} onChange={(e) => set("from", e.target.value)} /></Field>
-        <Field label="To" required error={error}><Input type="date" value={v.to} onChange={(e) => set("to", e.target.value)} /></Field>
+        <Field label="Report">
+          <Select value={subtitle} onChange={(e) => onPick(e.target.value)}>{reportNames.map((n) => <option key={n} value={n}>{n}</option>)}</Select>
+        </Field>
+        {daily
+          ? <Field label="Date" required><Input type="date" value={v.date} onChange={(e) => set("date", e.target.value)} /></Field>
+          : <Field label="Month" required><Input type="month" value={v.month} onChange={(e) => set("month", e.target.value)} /></Field>}
         <Field label="Route">
           <Select value={v.route} onChange={(e) => set("route", e.target.value)}>
             <option value={ALL}>All routes</option>
             {routes.map((r) => <option key={r.value} value={r.value}>{r.label}</option>)}
           </Select>
         </Field>
-        <Field label="Shift">
-          <Select value={v.shift} onChange={(e) => set("shift", e.target.value)}>{["Both shifts", "Morning pickup", "Afternoon drop"].map((s) => <option key={s} value={s}>{s}</option>)}</Select>
-        </Field>
+        {daily && (
+          <Field label="Shift">
+            <Select value={v.shift} onChange={(e) => set("shift", e.target.value as AttendanceShift)}>
+              <option value="morning">Morning pickup</option><option value="afternoon">Afternoon drop</option>
+            </Select>
+          </Field>
+        )}
         <Field label="Format">
           <Select value={v.format} onChange={(e) => set("format", e.target.value as GenValues["format"])}><option value="PDF">PDF</option><option value="Excel">Excel</option></Select>
         </Field>

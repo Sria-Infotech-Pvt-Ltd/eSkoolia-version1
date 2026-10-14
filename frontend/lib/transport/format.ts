@@ -1,12 +1,11 @@
 /**
  * Transport module formatting helpers (Master Prompt §0 rule 6, §6).
- * The demo "today" lives in one constant so it can later switch to new Date().
+ * Missing dates / times (not yet recorded in the backend) format as "—".
  */
 
-/** Demo "today" — 06 Oct 2026, local midnight. */
-export const TODAY = new Date(2026, 9, 6);
-/** Demo clock at load. */
-export const DEMO_CLOCK = "08:42 AM";
+/** Today, local midnight (evaluated when the module loads). */
+const NOW = new Date();
+export const TODAY = new Date(NOW.getFullYear(), NOW.getMonth(), NOW.getDate());
 
 const DAY_MS = 24 * 60 * 60 * 1000;
 
@@ -26,8 +25,9 @@ export function isoFromToday(n: number): string {
   return toISO(new Date(TODAY.getTime() + n * DAY_MS));
 }
 
-/** round((date − TODAY) / 1 day) */
-export function daysLeft(iso: string): number {
+/** round((date − TODAY) / 1 day); Infinity when no date is recorded (never "due"). */
+export function daysLeft(iso: string | null | undefined): number {
+  if (!iso) return Number.POSITIVE_INFINITY;
   return Math.round((parseISO(iso).getTime() - TODAY.getTime()) / DAY_MS);
 }
 
@@ -49,16 +49,18 @@ export function fmtDate(iso: string | null | undefined): string {
   return d.toLocaleDateString("en-IN", { day: "2-digit", month: "short", year: "numeric" });
 }
 
-/** "06:40" → "6:40 AM" */
-export function fmtTime(hhmm: string): string {
+/** "06:40" → "6:40 AM"; "" (not scheduled) → "—" */
+export function fmtTime(hhmm: string | null | undefined): string {
+  if (!hhmm || !/^\d{1,2}:\d{2}/.test(hhmm)) return "—";
   const [h, m] = hhmm.split(":").map(Number);
   const suffix = h >= 12 ? "PM" : "AM";
   const h12 = h % 12 === 0 ? 12 : h % 12;
   return `${h12}:${pad(m, 2)} ${suffix}`;
 }
 
-/** Adds minutes to "HH:MM" and returns "HH:MM". */
+/** Adds minutes to "HH:MM" and returns "HH:MM" ("" stays "" - unknown time). */
 export function addMinutes(hhmm: string, mins: number): string {
+  if (!hhmm || !/^\d{1,2}:\d{2}/.test(hhmm)) return "";
   const [h, m] = hhmm.split(":").map(Number);
   const total = h * 60 + m + mins;
   return `${pad(Math.floor(total / 60) % 24, 2)}:${pad(total % 60, 2)}`;
@@ -94,4 +96,18 @@ export function pad(n: number, width: number): string {
 /** "1 vehicle" / "3 vehicles" */
 export function plural(n: number, noun: string, pluralNoun = `${noun}s`): string {
   return `${n} ${n === 1 ? noun : pluralNoun}`;
+}
+
+/** "HH:MM" → minutes after midnight (null when not a time). */
+export function minutesOf(hhmm: string | null | undefined): number | null {
+  if (!hhmm || !/^\d{1,2}:\d{2}/.test(hhmm)) return null;
+  const [h, m] = hhmm.split(":").map(Number);
+  return h * 60 + m;
+}
+
+/** Clock time of an ISO timestamp, e.g. "08:42 AM" ("—" when absent). */
+export function clockOf(iso: string | null | undefined): string {
+  if (!iso) return "—";
+  const d = new Date(iso);
+  return Number.isNaN(d.getTime()) ? "—" : d.toLocaleTimeString("en-IN", { hour: "2-digit", minute: "2-digit" });
 }

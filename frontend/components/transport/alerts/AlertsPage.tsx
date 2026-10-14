@@ -279,8 +279,10 @@ export function AlertsPage() {
 
       {raiseOpen && (
         <RaiseAlertModal routes={routes.map((r) => ({ code: r.code, label: `${r.code} · ${r.name}` }))} onClose={() => setRaiseOpen(false)}
-          onSubmit={(v) => {
-            dispatch({ type: "alert/raise", input: { ...v, state: "acknowledged", owner, detail: `Raised manually by ${owner}` } });
+          onSubmit={async (v) => {
+            if (!(await dispatch({ type: "alert/raise", input: { ...v, state: "acknowledged", owner, detail: `Raised manually by ${owner}` } }))) {
+              toast("Not raised — see the message above", "error"); return;
+            }
             setOpen((o) => new Set(o).add(v.severity));
             setRaiseOpen(false);
             toast("Alert raised");

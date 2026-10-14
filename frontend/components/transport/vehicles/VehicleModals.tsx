@@ -3,7 +3,7 @@
 import { useState } from "react";
 import { docField } from "@/lib/transport/store";
 import { daysLeft, fmtDate } from "@/lib/transport/format";
-import { VEHICLE_STATUSES, VEHICLE_TYPES, routeLabel } from "@/lib/transport/mock";
+import { VEHICLE_STATUSES, VEHICLE_TYPES, routeLabel } from "@/lib/transport/catalog";
 import type { Driver, TransportRoute, Vehicle, VehicleDoc, VehicleStatus, VehicleType } from "@/lib/transport/types";
 import { Button, Field, Input, LAYER, Modal, Select, T, useTpToast } from "@/components/transport/ui";
 import { DOCS, defaultDoc, useVehicleDocWindow } from "./shared";
@@ -90,8 +90,7 @@ export function UploadDocModal({
   const { toast } = useTpToast();
   const docWindow = useVehicleDocWindow();
   const [doc, setDoc] = useState<VehicleDoc>(() => defaultDoc(vehicle, docWindow));
-  const [validTill, setValidTill] = useState("2027-10-06");
-  const [file, setFile] = useState<string | null>(null);
+  const [validTill, setValidTill] = useState("");
   const [error, setError] = useState<string | undefined>();
 
   const valid = !!validTill && daysLeft(validTill) > 0;
@@ -106,11 +105,11 @@ export function UploadDocModal({
 
   const current = vehicle[docField(doc)];
   return (
-    <Modal open onClose={onClose} size="md" priority={LAYER.docModal} title="Upload compliance document"
-      subtitle="Renewing updates the expiry badges and clears related alerts"
+    <Modal open onClose={onClose} size="md" priority={LAYER.docModal} title="Renew compliance document"
+      subtitle="Saving the new valid-till date updates the expiry badges and resolves related expiry alerts"
       footer={<>
         <Button type="button" variant="ghost" onClick={onClose}>Cancel</Button>
-        <Button type="button" variant="primary" onClick={submit}>Upload document</Button>
+        <Button type="button" variant="primary" onClick={submit}>Save renewal</Button>
       </>}>
       <div className="tp-form-grid">
         <Field label="Document" required hint={`${vehicle.reg} · ${vehicle.model}`}>
@@ -121,12 +120,6 @@ export function UploadDocModal({
         <Field label="Valid till" required error={error}>
           <Input type="date" value={validTill} onChange={(e) => { setValidTill(e.target.value); setError(undefined); }} />
         </Field>
-        <div style={{ gridColumn: "1 / -1" }}>
-          <Field label="Scanned copy" hint={file ? `Attached: ${file}` : "PDF, JPG or PNG · up to 5 MB"}>
-            <input type="file" accept=".pdf,.jpg,.jpeg,.png" className="tp-file-input" aria-label="Scanned copy"
-              onChange={(e) => setFile(e.target.files?.[0]?.name ?? null)} />
-          </Field>
-        </div>
       </div>
       <div style={{ display: "flex", gap: 12, background: T.hlBg, border: `1px solid ${T.hlBd}`, borderRadius: 12, padding: 12, marginTop: 16 }}>
         {[{ label: "Currently valid till", value: fmtDate(current) }, { label: "After upload", value: valid ? fmtDate(validTill) : "—" }].map((it) => (
@@ -156,7 +149,7 @@ export function AssignRouteModal({
         <Button type="button" variant="ghost" onClick={onClose}>Cancel</Button>
         <Button type="button" variant="primary" onClick={submit}>Assign route</Button>
       </>}>
-      <Field label="Route" required error={error} hint={`Applies to ${count} selected vehicles. Drivers are notified in the app.`}>
+      <Field label="Route" required error={error} hint={`Applies to ${count} selected vehicles.`}>
         <Select value={route} onChange={(e) => { setRoute(e.target.value); setError(undefined); }}>
           <option value="">Choose a route</option>
           {routes.map((r) => <option key={r.code} value={r.code}>{routeLabel(routes, r.code)}</option>)}

@@ -1,13 +1,14 @@
 "use client";
 /**
  * Maintenance — /transport/maintenance (Master Prompt §7.11). One accordion per
- * vehicle in the store. While any filter or search is active, vehicles with no
- * matching record are hidden and matching groups open automatically.
+ * vehicle. Records come from transport-maintenance/; "Overdue" and "Due soon"
+ * are worked out by the backend from the service date of jobs not yet done.
+ * While any filter or search is active, vehicles with no matching record are
+ * hidden and matching groups open automatically.
  */
 import { useCallback, useEffect, useMemo, useState } from "react";
 import { Check, Eye, Pencil, X } from "lucide-react";
 import { useTransport, useVehicles } from "@/lib/transport/store";
-import { currentOdometer } from "@/lib/transport/mock/upkeep";
 import { daysLeft, fmtDate, inr, num, plural, toISO, TODAY } from "@/lib/transport/format";
 import { downloadCsv, type CsvColumn } from "@/lib/transport/csv";
 import type { ServiceRecord, ServiceStatus, Vehicle } from "@/lib/transport/types";
@@ -20,14 +21,17 @@ import {
 
 const ALL = "all";
 const STATUSES: ServiceStatus[] = ["Completed", "Scheduled", "Due soon", "Overdue", "In workshop"];
+/** Statuses the desk sets; "Overdue" / "Due soon" follow from the date. */
+const SETTABLE: ServiceStatus[] = ["Scheduled", "In workshop", "Completed"];
+/** Common service types offered as suggestions (any type can be typed). */
 const TYPES = [
   "Periodic service (10k km)", "Brake pads & shoes", "Tyre rotation", "Battery replacement", "AC servicing",
   "Clutch overhaul", "Coolant flush", "Speed governor calibration", "GPS & CCTV check",
 ];
-const VENDORS = ["[Authorised Dealer A]", "[Workshop B]", "[Tyre Centre C]", "[Auto Electricals D]", "In-house depot"];
 const WORST: ServiceStatus[] = ["Overdue", "In workshop", "Due soon", "Scheduled"];
 const STATUS_TONE: Record<ServiceStatus, Tone> = { Completed: "green", Scheduled: "blue", "Due soon": "amber", Overdue: "red", "In workshop": "amber" };
-const isOctober = (iso: string) => iso.startsWith("2026-10");
+const MONTH = toISO(TODAY).slice(0, 7);
+const isThisMonth = (iso: string) => iso.startsWith(MONTH);
 
 type ConfirmState = { kind: "delete"; id: string } | { kind: "bulkDelete" };
 interface FormValues { vehicleId: string; date: string; type: string; status: ServiceStatus; odometer: string; cost: string; vendor: string; workDone: string }
@@ -46,7 +50,7 @@ export function MaintenancePage() {
   const [query, setQuery] = useState("");
   const [applied, setApplied] = useState("");
 
-  const groups = useGroupOpen("VH-006");
+  const groups = useGroupOpen(vehicles[0]?.id ?? "");
   const [closedWhileFiltered, setClosedWhileFiltered] = useState<Set<string>>(new Set());
   const selection = useSelection();
   const [drawerId, setDrawerId] = useState<string | null>(null);
@@ -54,7 +58,8 @@ export function MaintenancePage() {
   const [confirm, setConfirm] = useState<ConfirmState | null>(null);
 
   const vehicleOf = useCallback((id: string) => state.vehicles.find((v) => v.id === id) ?? null, [state.vehicles]);
-  const vIndex = useCallback((id: string) => state.vehicles.findIndex((v) => v.id === id), [state.vehicles]);
+  const types = useMemo(() => [...new Set([...records.map((r) => r.type), ...TYPES])].filter(Boolean).sort(), [records]);
+  const vendors = useMemo(() => [...new Set(records.map((r) => r.vendor).filter(Boolean))].sort(), [records]);
   const byId = useCallback((id: string | null) => records.find((r) => r.id === id) ?? null, [records]);
 
   const filtersActive = fStatus !== ALL || fType !== ALL || fVendor !== ALL || fDate !== ALL || applied !== "";
@@ -65,7 +70,7 @@ export function MaintenancePage() {
     if (fStatus !== ALL && r.status !== fStatus) return false;
     if (fType !== ALL && r.type !== fType) return false;
     if (fVendor !== ALL && r.vendor !== fVendor) return false;
-    if (fDate === "month" && !isOctober(r.date)) return false;
+    if (fDate === "month" && !isThisMonth(r.date)) return false;
     if (fDate === "90" && !(daysLeft(r.date) >= -90 && daysLeft(r.date) <= 0)) return false;
     if (q) {
       const v = vehicleOf(r.vehicleId);
@@ -90,7 +95,7 @@ export function MaintenancePage() {
   const dueWeek = records.filter((r) => (r.status === "Due soon" || r.status === "Scheduled") && daysLeft(r.date) >= 0 && daysLeft(r.date) <= 7).length;
   const overdue = records.filter((r) => r.status === "Overdue").length;
   const workshop = records.filter((r) => r.status === "In workshop").length;
-  const spendMtd = records.filter((r) => isOctober(r.date) && r.status !== "Scheduled" && r.status !== "Due soon").reduce((s, r) => s + r.cost, 0);
+  const spendMtd = records.filter((r) => isThisMonth(r.date) && r.status === "Completed").reduce((s, r) => s + r.cost, 0);
 
   const csv: CsvColumn<ServiceRecord>[] = [
     { header: "Record ID", value: (r) => r.id }, { header: "Vehicle", value: (r) => vehicleOf(r.vehicleId)?.reg ?? "" },
@@ -112,21 +117,18 @@ export function MaintenancePage() {
     else groups.toggle(vid);
   };
 
-  const complete = (r: ServiceRecord) => {
-    dispatch({ type: "service/complete", ids: [r.id] });
-    toast(`${r.type} on ${vehicleOf(r.vehicleId)?.reg ?? ""} marked completed`);
+  const complete = async (r: ServiceRecord) => {
+    if (await dispatch({ type: "service/complete", ids: [r.id] })) toast(`${r.type} on ${vehicleOf(r.vehicleId)?.reg ?? ""} marked completed`);
   };
 
-  const submitForm = (v: FormValues) => {
+  const submitForm = async (v: FormValues) => {
     if (!form) return;
-    const input = { vehicleId: v.vehicleId, date: v.date, type: v.type, status: v.status, odometer: Number(v.odometer), cost: Number(v.cost), vendor: v.vendor, workDone: v.workDone.trim() };
-    if (form.mode === "add") {
-      dispatch({ type: "service/add", input });
-      toast(`Service logged for ${vehicleOf(v.vehicleId)?.reg ?? ""}`);
-    } else {
-      dispatch({ type: "service/update", id: form.id, patch: input });
-      toast("Service record updated");
-    }
+    const input = { vehicleId: v.vehicleId, date: v.date, type: v.type.trim(), status: v.status, odometer: Number(v.odometer), cost: Number(v.cost), vendor: v.vendor.trim(), workDone: v.workDone.trim() };
+    const ok = form.mode === "add"
+      ? await dispatch({ type: "service/add", input })
+      : await dispatch({ type: "service/update", id: form.id, patch: input });
+    if (!ok) { toast("Not saved — see the message above", "error"); return; }
+    toast(form.mode === "add" ? `Service logged for ${vehicleOf(v.vehicleId)?.reg ?? ""}` : "Service record updated");
     groups.openOnly(v.vehicleId);
     setForm(null);
   };
@@ -164,8 +166,8 @@ export function MaintenancePage() {
 
       <SmartFilter chips={chips} groupingChip="Grouped by vehicle" onReset={resetFilters} fields={[
         { key: "status", label: "Status", value: fStatus, onChange: setFStatus, options: [{ value: ALL, label: "All" }, ...STATUSES.map((s) => ({ value: s, label: s }))] },
-        { key: "type", label: "Service type", value: fType, onChange: setFType, options: [{ value: ALL, label: "All types" }, ...TYPES.map((t) => ({ value: t, label: t }))] },
-        { key: "vendor", label: "Vendor", value: fVendor, onChange: setFVendor, options: [{ value: ALL, label: "All vendors" }, ...VENDORS.map((t) => ({ value: t, label: t }))] },
+        { key: "type", label: "Service type", value: fType, onChange: setFType, options: [{ value: ALL, label: "All types" }, ...[...new Set(records.map((r) => r.type))].sort().map((t) => ({ value: t, label: t }))] },
+        { key: "vendor", label: "Vendor", value: fVendor, onChange: setFVendor, options: [{ value: ALL, label: "All vendors" }, ...vendors.map((t) => ({ value: t, label: t }))] },
         { key: "date", label: "Date", value: fDate, onChange: setFDate, options: [{ value: ALL, label: "Any date" }, { value: "month", label: "This month" }, { value: "90", label: "Last 90 days" }] },
       ]} />
 
@@ -193,10 +195,10 @@ export function MaintenancePage() {
           const all = records.filter((r) => r.vehicleId === v.id);
           const rows = visible.filter((r) => r.vehicleId === v.id).sort((a, b) => b.date.localeCompare(a.date));
           const worst = WORST.find((s) => all.some((r) => r.status === s));
-          const idx = vIndex(v.id);
-          const odo = currentOdometer(Math.max(0, idx));
-          const lastDone = all.filter((r) => r.status === "Completed").sort((a, b) => b.odometer - a.odometer)[0];
-          const used = lastDone ? Math.min(100, Math.max(0, (odo - lastDone.odometer) / 100)) : 100;
+          // Donut: share of a 10,000 km service interval used since the last completed service.
+          const odo = v.odometer;
+          const lastDone = all.filter((r) => r.status === "Completed" && r.odometer > 0).sort((a, b) => b.odometer - a.odometer)[0];
+          const used = lastDone && odo ? Math.min(100, Math.max(0, (odo - lastDone.odometer) / 100)) : 0;
           const last60 = all.filter((r) => daysLeft(r.date) >= -60 && daysLeft(r.date) <= 0).reduce((s, r) => s + r.cost, 0);
           return (
             <GroupCard key={v.id} name={`${v.reg} · ${v.model}`}
@@ -205,7 +207,7 @@ export function MaintenancePage() {
               chips={<>
                 <Chip tone="slate">{plural(all.length, "record")}</Chip>
                 {worst ? <Chip tone={STATUS_TONE[worst]}>{worst}</Chip> : <Chip tone="green">Up to date</Chip>}
-                <Chip tone="purple">{num(odo)} km</Chip>
+                <Chip tone="purple">{odo ? `${num(odo)} km` : "Odometer not recorded"}</Chip>
                 <Chip tone="blue">{inr(last60)} last 60d</Chip>
               </>}
               extra={<OutlineButton onClick={() => setForm({ mode: "add", vehicleId: v.id })}>+ Log service</OutlineButton>}>
@@ -256,7 +258,6 @@ export function MaintenancePage() {
 
       <BulkBar count={selection.count} onClear={selection.clear} actions={[
         { label: "Mark completed", onClick: () => { const n = selection.count; dispatch({ type: "service/complete", ids: selection.ids }); selection.clear(); toast(`${plural(n, "record")} marked completed`); } },
-        { label: "Message", onClick: () => { toast(`Vendors notified for ${plural(selection.count, "job")}`, "info"); selection.clear(); } },
         { label: "Export", onClick: () => {
           const list = records.filter((r) => selection.isSelected(r.id));
           downloadCsv("transport-maintenance-selected.csv", csv, list); toast(`Exported ${plural(list.length, "record")}`); selection.clear();
@@ -278,14 +279,11 @@ export function MaintenancePage() {
               <InfoRow label="Vendor">{drawer.vendor}</InfoRow>
             </DrawerSection>
             <DrawerSection title="Billing">
-              <InfoRow label="Parts">{inr(drawer.cost * 0.62)}</InfoRow>
-              <InfoRow label="Labour">{inr(drawer.cost * 0.38)}</InfoRow>
-              <InfoRow label="Invoice">[Invoice ref]</InfoRow>
-              <InfoRow label="Next due at"><span className="tp-mono">{num(drawer.odometer + 10000)} km</span></InfoRow>
+              <InfoRow label="Cost">{inr(drawer.cost)}</InfoRow>
+              <InfoRow label="Vendor">{drawer.vendor || "—"}</InfoRow>
             </DrawerSection>
             <DrawerActions>
               <Button type="button" variant="soft" size="sm" onClick={() => setForm({ mode: "edit", id: drawer.id })}>Edit record</Button>
-              <Button type="button" variant="soft" size="sm" onClick={() => toast(`Message sent to ${drawer.vendor}`, "info")}>Message vendor</Button>
               <Button type="button" variant="red" size="sm" onClick={() => setConfirm({ kind: "delete", id: drawer.id })}>Delete record</Button>
             </DrawerActions>
           </Drawer>
@@ -293,11 +291,11 @@ export function MaintenancePage() {
       })()}
 
       {form && (
-        <ServiceForm key={form.mode === "edit" ? form.id : `add-${form.vehicleId}`} mode={form.mode} vehicles={vehicles}
+        <ServiceForm key={form.mode === "edit" ? form.id : `add-${form.vehicleId}`} mode={form.mode} vehicles={vehicles} types={types} vendors={vendors}
           initial={formRecord
-            ? { vehicleId: formRecord.vehicleId, date: formRecord.date, type: formRecord.type, status: formRecord.status, odometer: String(formRecord.odometer), cost: String(formRecord.cost), vendor: formRecord.vendor, workDone: formRecord.workDone }
-            : { vehicleId: form.mode === "add" ? form.vehicleId : "", date: toISO(TODAY), type: TYPES[0], status: "Scheduled", odometer: "", cost: "", vendor: VENDORS[0], workDone: "" }}
-          onClose={() => setForm(null)} onSubmit={submitForm} />
+            ? { vehicleId: formRecord.vehicleId, date: formRecord.date, type: formRecord.type, status: SETTABLE.includes(formRecord.status) ? formRecord.status : "Scheduled", odometer: formRecord.odometer ? String(formRecord.odometer) : "", cost: String(formRecord.cost), vendor: formRecord.vendor, workDone: formRecord.workDone }
+            : { vehicleId: form.mode === "add" ? form.vehicleId : "", date: toISO(TODAY), type: "", status: "Scheduled", odometer: "", cost: "", vendor: "", workDone: "" }}
+          onClose={() => setForm(null)} onSubmit={(values) => { void submitForm(values); }} />
       )}
 
       <ConfirmDialog open={!!confirmText} onClose={() => setConfirm(null)} onConfirm={runConfirm} tone="danger"
@@ -306,8 +304,8 @@ export function MaintenancePage() {
   );
 }
 
-function ServiceForm({ mode, vehicles, initial, onClose, onSubmit }: {
-  mode: "add" | "edit"; vehicles: Vehicle[]; initial: FormValues; onClose: () => void; onSubmit: (v: FormValues) => void;
+function ServiceForm({ mode, vehicles, types, vendors, initial, onClose, onSubmit }: {
+  mode: "add" | "edit"; vehicles: Vehicle[]; types: string[]; vendors: string[]; initial: FormValues; onClose: () => void; onSubmit: (v: FormValues) => void;
 }) {
   const { toast } = useTpToast();
   const [v, setV] = useState(initial);
@@ -317,7 +315,8 @@ function ServiceForm({ mode, vehicles, initial, onClose, onSubmit }: {
     const e: typeof errors = {};
     if (!v.vehicleId) e.vehicleId = "This field is required.";
     if (!v.date) e.date = "This field is required.";
-    if (!v.odometer.trim() || !(Number(v.odometer) >= 0)) e.odometer = "This field is required.";
+    if (!v.type.trim()) e.type = "This field is required.";
+    if (v.odometer.trim() && !(Number(v.odometer) >= 0)) e.odometer = "Enter a valid reading.";
     if (!v.cost.trim() || !(Number(v.cost) >= 0)) e.cost = "This field is required.";
     setErrors(e);
     if (Object.keys(e).length) { toast("Fill in the required fields", "error"); return; }
@@ -334,16 +333,18 @@ function ServiceForm({ mode, vehicles, initial, onClose, onSubmit }: {
           <Select value={v.vehicleId} onChange={(e) => set("vehicleId", e.target.value)}>{vehicles.map((x) => <option key={x.id} value={x.id}>{x.reg}</option>)}</Select>
         </Field>
         <Field label="Service date" required error={errors.date}><Input type="date" value={v.date} onChange={(e) => set("date", e.target.value)} /></Field>
-        <Field label="Service type" required>
-          <Select value={v.type} onChange={(e) => set("type", e.target.value)}>{TYPES.map((t) => <option key={t} value={t}>{t}</option>)}</Select>
+        <Field label="Service type" required error={errors.type}>
+          <Input list="tp-service-types" value={v.type} onChange={(e) => set("type", e.target.value)} placeholder="e.g. Periodic service" />
+          <datalist id="tp-service-types">{types.map((t) => <option key={t} value={t} />)}</datalist>
         </Field>
-        <Field label="Status">
-          <Select value={v.status} onChange={(e) => set("status", e.target.value)}>{STATUSES.map((s) => <option key={s} value={s}>{s}</option>)}</Select>
+        <Field label="Status" hint="Overdue and due-soon follow from the service date">
+          <Select value={v.status} onChange={(e) => set("status", e.target.value)}>{SETTABLE.map((s) => <option key={s} value={s}>{s}</option>)}</Select>
         </Field>
-        <Field label="Odometer (km)" required error={errors.odometer}><Input type="number" min={0} value={v.odometer} onChange={(e) => set("odometer", e.target.value)} placeholder="e.g. 52,400" /></Field>
+        <Field label="Odometer (km)" error={errors.odometer}><Input type="number" min={0} value={v.odometer} onChange={(e) => set("odometer", e.target.value)} placeholder="e.g. 52,400" /></Field>
         <Field label="Cost (₹)" required error={errors.cost}><Input type="number" min={0} value={v.cost} onChange={(e) => set("cost", e.target.value)} placeholder="e.g. 8450" /></Field>
         <Field label="Vendor">
-          <Select value={v.vendor} onChange={(e) => set("vendor", e.target.value)}>{VENDORS.map((t) => <option key={t} value={t}>{t}</option>)}</Select>
+          <Input list="tp-service-vendors" value={v.vendor} onChange={(e) => set("vendor", e.target.value)} placeholder="Workshop or dealer" />
+          <datalist id="tp-service-vendors">{vendors.map((t) => <option key={t} value={t} />)}</datalist>
         </Field>
         <Field label="Work done"><Input value={v.workDone} onChange={(e) => set("workDone", e.target.value)} placeholder="e.g. Engine oil, filters" /></Field>
       </div>

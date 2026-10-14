@@ -6,10 +6,10 @@
 import { useCallback, useMemo, useState } from "react";
 import { ChevronDown, ChevronUp, Eye, Pencil, X } from "lucide-react";
 import { useTransport, useVehicles } from "@/lib/transport/store";
-import { defaultStopFare } from "@/lib/transport/ops";
+import { defaultStopFare } from "@/lib/transport/fares";
 import { addMinutes, fmtTime, inr, num, pad, plural } from "@/lib/transport/format";
 import { downloadCsv, type CsvColumn } from "@/lib/transport/csv";
-import type { RouteStop, TransportRoute, Zone } from "@/lib/transport/types";
+import type { RouteStop, TransportRoute } from "@/lib/transport/types";
 import {
   Badge, BulkBar, Button, Chip, ConfirmDialog, Drawer, DrawerActions, DrawerHeader, DrawerHighlight, DrawerSection,
   EmptyLine, GroupCard, GroupedList, HeroPrimary, HeroSecondary, InfoRow, KpiCard, KpiGrid, ListFooter, OutlineButton,
@@ -93,7 +93,9 @@ export function RoutesPage() {
 
   // KPIs
   const totalStops = routes.reduce((s, r) => s + r.stops.length, 0);
-  const avgTime = routes.length ? Math.round(routes.reduce((s, r) => s + r.routeTimeMin, 0) / routes.length) : 0;
+  const timed = routes.filter((r) => r.routeTimeMin > 0);
+  const avgTime = timed.length ? Math.round(timed.reduce((s, r) => s + r.routeTimeMin, 0) / timed.length) : 0;
+  const zones = [...new Set(routes.map((r) => r.zone).filter(Boolean))].sort();
   const totalStudents = routes.reduce((s, r) => s + studentsOf(r), 0);
 
   // CSV
@@ -126,23 +128,23 @@ export function RoutesPage() {
   };
   const resetFilters = () => { setFZone(ALL); setFUtil(ALL); setFVehicle(ALL); setFLength(ALL); setQuery(""); setApplied(""); };
 
-  const move = (r: TransportRoute, s: RouteStop, dir: -1 | 1) => {
+  const move = async (r: TransportRoute, s: RouteStop, dir: -1 | 1) => {
     const i = r.stops.findIndex((x) => x.id === s.id);
     if (i + dir < 0 || i + dir >= r.stops.length) return;
-    dispatch({ type: "stop/reorder", routeCode: r.code, id: s.id, dir });
-    toast("Stop order updated");
+    if (await dispatch({ type: "stop/reorder", routeCode: r.code, id: s.id, dir })) toast("Stop order updated");
   };
 
-  const submitStop = (v: StopFormValues) => {
+  const submitStop = async (v: StopFormValues) => {
     if (!stopForm) return;
-    const input = { name: v.name, landmark: v.landmark.trim(), students: Math.max(0, Number(v.students) || 0), fare: Math.max(0, Number(v.fare) || 0) };
-    if (stopForm.mode === "add") {
-      dispatch({ type: "stop/add", routeCode: stopForm.routeCode, input });
-      toast(`${v.name} added to ${stopForm.routeCode}`);
-    } else {
-      dispatch({ type: "stop/update", id: stopForm.stopId, patch: input });
-      toast(`${v.name} updated`);
-    }
+    const input = {
+      name: v.name, landmark: v.landmark.trim(), fare: Math.max(0, Number(v.fare) || 0),
+      lat: Number(v.lat), lng: Number(v.lng), pickupTime: v.pickupTime, dropTime: v.dropTime,
+    };
+    const ok = stopForm.mode === "add"
+      ? await dispatch({ type: "stop/add", routeCode: stopForm.routeCode, input })
+      : await dispatch({ type: "stop/update", id: stopForm.stopId, patch: input });
+    if (!ok) { toast("Not saved — see the message above", "error"); return; }
+    toast(stopForm.mode === "add" ? `${v.name} added to ${stopForm.routeCode}` : `${v.name} updated`);
     groups.openOnly(stopForm.routeCode);
     setStopForm(null);
   };
@@ -203,15 +205,15 @@ export function RoutesPage() {
         </>} />
 
       <KpiGrid>
-        <KpiCard loading={loading} label="Routes" value={routes.length} sub="Published for Term 1" />
+        <KpiCard loading={loading} label="Routes" value={routes.length} sub="Active routes" />
         <KpiCard loading={loading} label="Stops" value={totalStops} sub={`Avg ${routes.length ? (totalStops / routes.length).toFixed(1) : "0"} per route`} color={T.pu} />
-        <KpiCard loading={loading} label="Avg route time" value={`${avgTime} min`} sub="Door to school gate" />
-        <KpiCard loading={loading} label="Students on routes" value={num(totalStudents)} sub="Across both shifts" color={T.green} />
+        <KpiCard loading={loading} label="Avg route time" value={avgTime ? `${avgTime} min` : "—"} sub="First pickup to school arrival (Settings)" />
+        <KpiCard loading={loading} label="Students on routes" value={num(totalStudents)} sub="Allocated students" color={T.green} />
       </KpiGrid>
 
       <SmartFilter chips={chips} groupingChip="Grouped by route" onReset={resetFilters} fields={[
         { key: "zone", label: "Zone", value: fZone, onChange: setFZone,
-          options: [{ value: ALL, label: "All zones" }, ...(["West", "North", "South"] as Zone[]).map((z) => ({ value: z, label: z }))] },
+          options: [{ value: ALL, label: "All zones" }, ...zones.map((z) => ({ value: z, label: z }))] },
         { key: "util", label: "Seat utilisation", value: fUtil, onChange: setFUtil,
           options: [{ value: ALL, label: "Any" }, { value: "over90", label: "Over 90%" }, { value: "70to90", label: "70–90%" }, { value: "under70", label: "Under 70%" }] },
         { key: "vehicle", label: "Vehicle", value: fVehicle, onChange: setFVehicle,
@@ -238,8 +240,8 @@ export function RoutesPage() {
             pct={Math.min(100, utilPct(r))}
             chips={<>
               <Chip tone="slate">{plural(r.stops.length, "stop")}</Chip>
-              <Chip tone="green">{r.routeTimeMin} min</Chip>
-              <Chip tone="purple">{r.busReg}</Chip>
+              {r.routeTimeMin > 0 && <Chip tone="green">{r.routeTimeMin} min</Chip>}
+              <Chip tone="purple">{r.busReg || "No vehicle"}</Chip>
               <Chip tone="blue">{studentsOf(r)} / {r.capacity} seats</Chip>
             </>}
             extra={<>
@@ -294,7 +296,6 @@ export function RoutesPage() {
 
       <BulkBar count={selection.count} onClear={selection.clear} actions={[
         { label: "Move to route", onClick: () => setMoveOpen(true) },
-        { label: "Message", onClick: () => { toast(`Message queued for parents at ${plural(selection.count, "stop")}`, "info"); selection.clear(); } },
         { label: "Export", onClick: () => {
           const ids = new Set(selection.ids);
           const list = routes.flatMap((route) => route.stops.filter((s) => ids.has(s.id)).map((stop) => ({ route, stop })));
@@ -307,22 +308,21 @@ export function RoutesPage() {
         const r = drawerRoute;
         const fares = r.stops.map((s) => s.fare);
         const fareRange = fares.length ? `${inr(Math.min(...fares))}–${num(Math.max(...fares))}` : "—";
-        const geo = String(r.geoIdx + 1);
         return (
           <Drawer open onClose={() => setDrawerCode(null)} label={`Route ${r.code}`}>
-            <DrawerHeader avatar={r.code} title={`${r.code} · ${r.name}`} sub={`${r.zone} zone · ${r.shift}`} idLabel={`RT-${pad(Number(geo), 3)}`}
+            <DrawerHeader avatar={r.code} title={`${r.code} · ${r.name}`} sub={`${r.zone ? `${r.zone} zone · ` : ""}${r.shift}`} idLabel={`RT-${pad(r.pk, 3)}`}
               badges={<><Badge tone="green">Published</Badge><Badge tone="purple">{plural(r.stops.length, "stop")}</Badge></>} />
             <DrawerHighlight items={[{ label: "Seats occupied", value: `${studentsOf(r)} / ${r.capacity}` }, { label: "Fare range", value: fareRange }]} />
             <DrawerSection title="Crew & vehicle">
-              <InfoRow label="Vehicle"><span className="tp-mono">{r.busReg}</span></InfoRow>
-              <InfoRow label="Driver">{r.driverName}</InfoRow>
-              <InfoRow label="Attendant">{r.attendantName}</InfoRow>
+              <InfoRow label="Vehicle"><span className="tp-mono">{r.busReg || "—"}</span></InfoRow>
+              <InfoRow label="Driver">{r.driverName || "—"}</InfoRow>
+              <InfoRow label="Attendant">{r.attendantName || "—"}</InfoRow>
             </DrawerSection>
             <DrawerSection title="Timing">
               <InfoRow label="First pickup">{fmtTime(r.firstPickup)}</InfoRow>
-              <InfoRow label="School arrival">{fmtTime(addMinutes(r.firstPickup, r.routeTimeMin))}</InfoRow>
-              <InfoRow label="Afternoon drop starts">3:20 PM</InfoRow>
-              <InfoRow label="Approx. distance">{r.distanceKm} km</InfoRow>
+              <InfoRow label="School arrival">{fmtTime(state.settings.shifts.schoolArrival)}</InfoRow>
+              <InfoRow label="Afternoon drop starts">{fmtTime(state.settings.shifts.afternoonDrop)}</InfoRow>
+              <InfoRow label="Distance along stops">{r.distanceKm ? `${r.distanceKm} km` : "—"}</InfoRow>
             </DrawerSection>
             <DrawerSection title="Stops">
               {r.stops.slice(0, 6).map((s) => (
@@ -334,7 +334,6 @@ export function RoutesPage() {
             </DrawerSection>
             <DrawerActions>
               <Button type="button" variant="soft" size="sm" onClick={() => setEditCode(r.code)}>Edit route</Button>
-              <Button type="button" variant="soft" size="sm" onClick={() => toast(`Message queued for ${studentsOf(r)} parents on ${r.code}`, "info")}>Message parents</Button>
               <Button type="button" variant="red" size="sm" onClick={() => setConfirm({ kind: "archiveRoute", code: r.code })}>Archive route</Button>
             </DrawerActions>
           </Drawer>
@@ -344,12 +343,15 @@ export function RoutesPage() {
       {editRoute && (
         <EditRouteModal key={editRoute.code} route={editRoute} plates={vehicles.map((v) => v.reg)} drivers={activeDrivers} attendants={activeAttendants}
           onClose={() => setEditCode(null)}
-          onSubmit={(patch) => {
-            const clashBus = routes.find((x) => x.code !== editRoute.code && x.busReg === patch.busReg);
-            const clashDriver = routes.find((x) => x.code !== editRoute.code && x.driverName === patch.driverName);
-            dispatch({ type: "route/update", code: editRoute.code, patch });
+          onSubmit={async (patch) => {
+            const code = editRoute.code;
+            const clashBus = routes.find((x) => x.code !== code && patch.busReg && x.busReg === patch.busReg);
+            const clashDriver = routes.find((x) => x.code !== code && patch.driverName && x.driverName === patch.driverName);
+            if (!(await dispatch({ type: "route/update", code, patch: { ...patch, driverName: patch.driverName || editRoute.driverName, attendantName: patch.attendantName || editRoute.attendantName } }))) {
+              toast("Not saved — see the message above", "error"); return;
+            }
             const note = clashBus ? ` · note: ${clashBus.code} shares this vehicle` : clashDriver ? ` · note: ${clashDriver.code} shares this driver` : "";
-            toast(`${editRoute.code} updated${note}`);
+            toast(`${code} updated${note}`);
             setEditCode(null);
           }} />
       )}
@@ -358,9 +360,9 @@ export function RoutesPage() {
         <StopFormModal key={stopForm.mode === "edit" ? stopForm.stopId : `add-${stopForm.routeCode}`} mode={stopForm.mode}
           routeLabel={`${formRoute.code} · ${formRoute.name}`}
           initial={formStop
-            ? { name: formStop.name, landmark: formStop.landmark, students: String(formStop.students), fare: String(formStop.fare) }
-            : { name: "", landmark: "", students: "0", fare: String(defaultStopFare(state.settings.fareSlabs)) }}
-          onClose={() => setStopForm(null)} onSubmit={submitStop} />
+            ? { name: formStop.name, landmark: formStop.landmark, fare: String(formStop.fare), lat: String(formStop.lat), lng: String(formStop.lng), pickupTime: formStop.pickupTime, dropTime: formStop.dropTime }
+            : { name: "", landmark: "", fare: String(defaultStopFare(state.settings.fareSlabs)), lat: "", lng: "", pickupTime: "", dropTime: "" }}
+          onClose={() => setStopForm(null)} onSubmit={(v) => { void submitStop(v); }} />
       )}
 
       {moveOpen && (
@@ -375,13 +377,14 @@ export function RoutesPage() {
       )}
 
       {wizardOpen && (
-        <AddRouteWizard routes={routes} existingCodes={[...routes, ...state.archivedRoutes].map((r) => r.code)}
+        <AddRouteWizard existingCodes={[...routes, ...state.archivedRoutes].map((r) => r.code)}
+          plates={vehicles.map((v) => v.reg)} freePlates={vehicles.filter((v) => !v.routeCode).map((v) => v.reg)}
           drivers={state.drivers} attendants={state.attendants} onClose={() => setWizardOpen(false)}
-          onCreate={(input) => {
-            dispatch({ type: "route/add", input });
+          onCreate={async (input) => {
+            if (!(await dispatch({ type: "route/add", input }))) { toast("Not saved — see the message above", "error"); return; }
             groups.openOnly(input.code);
             setWizardOpen(false);
-            toast(`Route ${input.code} created with ${plural(input.stopNames.length, "stop")}`);
+            toast(`Route ${input.code} created with ${plural(input.stops.length, "stop")}`);
           }} />
       )}
 

@@ -114,6 +114,7 @@ INSTALLED_APPS = [
     "django_filters",
     "auditlog",
     "apps.core",
+    "apps.transport",
     "apps.tenancy",
     "apps.users",
     "apps.admissions",
@@ -240,6 +241,8 @@ if MULTI_TENANCY_ENABLED:
         # school). Verified nothing in the shared apps depends on apps.core
         # in the other direction.
         "apps.core",
+        # Transport (moved out of apps.core); per-school data, FKs into hr.Staff / students.
+        "apps.transport",
         # tenant specific apps
         "apps.students",
         "apps.admissions",

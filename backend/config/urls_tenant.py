@@ -17,6 +17,8 @@ urlpatterns = [
     path("api/v1/access-control/", include("apps.access_control.urls")),
     path("api/v1/admissions/", include("apps.admissions.urls")),
     path("api/v1/core/", include("apps.core.urls")),
+    # Transport endpoints moved to apps.transport; same /api/v1/core/ prefix keeps existing URLs working.
+    path("api/v1/core/", include("apps.transport.urls")),
     path("api/v1/students/", include("apps.students.urls")),
     path("api/v1/academics/", include("apps.academics.urls")),
     path("api/v1/attendance/", include("apps.attendance.urls")),

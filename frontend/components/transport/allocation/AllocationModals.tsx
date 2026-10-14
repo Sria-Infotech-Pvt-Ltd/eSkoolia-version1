@@ -1,7 +1,7 @@
 "use client";
 /** Edit allocation modal and the 3-step Bulk Allocate wizard (Master Prompt §7.7). */
 import { useMemo, useState } from "react";
-import { capacityOf } from "@/lib/transport/mock";
+import { capacityOf, classLine } from "@/lib/transport/catalog";
 import { initials, inr, plural } from "@/lib/transport/format";
 import type { AllocationStatus, Student, TransportRoute, Vehicle } from "@/lib/transport/types";
 import {
@@ -98,7 +98,7 @@ export function BulkAllocateWizard({
 
   return (
     <Modal open onClose={onClose} size="lg" priority={LAYER.wizard} title="Bulk allocate students"
-      subtitle="Assign pending and waitlisted students to a route and pickup point"
+      subtitle="Assign pending, waitlisted or new students to a route and pickup point"
       footer={<>
         <Button type="button" variant="ghost" onClick={onClose}>Cancel</Button>
         <span style={{ flex: 1 }} />
@@ -121,7 +121,7 @@ export function BulkAllocateWizard({
             </button>
           </div>
           <div style={{ border: `1px solid ${T.cardBd}`, borderRadius: 12, maxHeight: 340, overflowY: "auto" }}>
-            {candidates.length === 0 && <div style={{ padding: "24px 12px", textAlign: "center", fontSize: 13, color: T.muted }}>No pending or waitlisted students.</div>}
+            {candidates.length === 0 && <div style={{ padding: "24px 12px", textAlign: "center", fontSize: 13, color: T.muted }}>No students waiting for a seat.</div>}
             {candidates.map((s, i) => {
               const on = picked.has(s.id);
               return (
@@ -130,9 +130,9 @@ export function BulkAllocateWizard({
                   <span style={{ width: 28, height: 28, borderRadius: 999, background: T.pu, color: "#fff", display: "grid", placeItems: "center", fontSize: 11, fontWeight: 800, flexShrink: 0 }}>{initials(s.name)}</span>
                   <span style={{ flex: 1, minWidth: 0 }}>
                     <span style={{ display: "block", fontSize: 13, fontWeight: 700, color: T.ink }}>{s.name}</span>
-                    <span style={{ display: "block", fontSize: 11.5, color: T.muted }}>Class {s.cls}-{s.section} · {s.admission}</span>
+                    <span style={{ display: "block", fontSize: 11.5, color: T.muted }}>{classLine({ cls: s.cls, section: s.section })} · {s.admission}</span>
                   </span>
-                  <StatusBadge status={s.status} />
+                  {s.allocationId === null ? <span style={{ fontSize: 11.5, color: T.muted }}>Not on transport</span> : <StatusBadge status={s.status} />}
                 </label>
               );
             })}

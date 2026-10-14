@@ -9,6 +9,7 @@ import { AlertTriangle, BusFront, CircleDot, Filter, MapPinned, RefreshCw, Route
 import { apiRequestWithRefresh } from "@/lib/api-auth";
 import { extractListData, type ListApiResponse } from "@/lib/pagination";
 import { API_BASE_URL } from "@/lib/api";
+import { getAccessToken } from "@/lib/auth";
 
 const MapContainer = dynamic(() => import("react-leaflet").then((module) => module.MapContainer), { ssr: false });
 const TileLayer = dynamic(() => import("react-leaflet").then((module) => module.TileLayer), { ssr: false });
@@ -269,7 +270,10 @@ function buildWebSocketUrl(path: string): string {
   const parsedBaseUrl = new URL(API_BASE_URL);
   const protocol = parsedBaseUrl.protocol === "https:" ? "wss:" : "ws:";
   const normalizedPath = path.startsWith("/") ? path : `/${path}`;
-  return `${protocol}//${parsedBaseUrl.host}${normalizedPath}`;
+  // Transport sockets require authentication (same ?token= pattern as chat).
+  const token = getAccessToken();
+  const query = token ? `?token=${encodeURIComponent(token)}` : "";
+  return `${protocol}//${parsedBaseUrl.host}${normalizedPath}${query}`;
 }
 
 function buildPolyline(stops: BusStopItem[]): [number, number][] {

@@ -6410,3 +6410,243 @@ Date: 2026-09-30
 ### Impact
 - All 6 report card templates shown in the UI can now be saved.
 - Only the allowed template values were extended. No other Examination feature, module, API contract or database column was modified.
+
+---
+
+
+
+
+
+## Eskoolia Transport Module — Development Summary
+
+
+**Developer:** Srinadh Yalagandula· 
+
+
+**Date:** 12 October 2026
+
+**Area:** Transport module — re-enabled the hidden module, then rebuilt it as a 14-screen frontend in four phases, following the approved "Eskoolia Transport Module Master Prompt" spec (kept outside the repo at `Downloads/Eskoolia_Transport_Module_Master_Prompt.md`, not at the `docs/transport/MASTER_PROMPT.md` path the phase briefs referenced). **Frontend only, in-memory mock data** — the new screens do not call the backend yet. Commits: `cad62426`, `719fa486` ("Implement Transport module Phase 1"; they contain all four phases).
+
+### 0. Starting point (before this work, commit `4062cb52`)
+- The Transport entry in `frontend/lib/routes.ts` was commented out (`// HIDDEN - no backend yet`), so the module was reachable only by typing URLs.
+- The original module was 9 pages plus 7 API-backed components in `components/transport/`. `VehiclePanel` handled vehicles; `TransportRoutePanel` handled routes and stops; `AssignVehiclePanel` assigned vehicles to routes; `BusTrackingPanel` showed live tracking; `StudentTransportReportPanel` produced the student report; `LiveTrackingMap` and `RouteBuilderMap` drew the `/transport/tracking/*` pages. Together they used `/api/v1/core/{vehicles,transport-routes,bus-stops,assign-vehicles,bus-locations,bus-pickups,transport-alerts}/`, `/api/v1/hr/staff/` and `/api/v1/students/students/` — all of these are registered in `backend/apps/core/urls.py`.
+
+
+
+### 1. Four development phases
+- **Phase 1 — Foundation, Dashboard, Vehicles:** the 14-tab sub-nav in `lib/routes.ts`, the shared UI kit, the store, mock data for all 14 screens, the Dashboard, the full Vehicles page, and placeholders for the other 12 tabs.
+- **Phase 2 — Drivers, Attendants, Routes, Pickup Points:** the 4-step Add Route wizard and the SVG `RouteMap`. Store operations keep crews, buses and stops in sync across screens.
+- **Phase 3 — Student Allocation, Attendance, Live Tracking, Alerts:** the context bar, the attendance KPI card and the switch, per-shift/date boarding registers, the live simulation (`lib/transport/sim.ts`) and alert workflows.
+- **Phase 4 — Maintenance, Fuel, Reports, Settings + final pass:** Recharts charts, report previews and real file downloads, and the Settings editor. Saved settings now drive the rest of the module. The Dashboard is fully derived from the store, and every "Coming in Phase N" placeholder was removed.
+
+
+
+### 2. Shared architecture (reuse first)
+- **Shell — reused unchanged:** the existing top bar, `ModuleSubNav`, ⌘K `CommandPalette`, `NotificationBell`, notes and logout. Transport only registered its 14 tabs. `app/(dashboard)/transport/layout.tsx` mounts the store, the Esc-aware overlay stack and the toast, all scoped under the CSS class `.tp`.
+- **Reused HR/Exam components:** `HrButton`, `HrBadge` (wrapped to add a slate tone), `HrField`, `HrInput`, `HrSelect`, `HrTextarea` and `HrStepWizard`; `ProgressBar` and `StepPills` from `ExamUi`.
+- **New kit, `components/transport/ui/`:**
+  - **Rebuilt to the same visual spec:** modal, drawer and confirm dialog. Each HR overlay installs its own Esc listener, so one Esc closed every layer; here one stack closes only the topmost.
+  - **Generic list template:** Smart Filter, search row, grouped accordion with a conic donut, table cells, More menu, bulk bar and "Show N more".
+  - **Hub pieces from the Exam Command Center:** StatTile, ModuleCard, Needs-attention item and Quick action.
+  - **Other new pieces:** `ContextBar`, `AttendanceKpi`, `Switch`, `SimpleAccordion`, `RouteMap`, the toast, and the `?id=` / `?new=1` deep-link hook.
+- **Store:** `lib/transport/store.tsx` (React context + reducer, 40 actions; Zustand isn't installed). The pure operations live in `ops.ts`, `ops3.ts` and `ops4.ts`. Formatting helpers (`inr`, `fmtDate`, `daysLeft`, `maskPhone`) are in `format.ts`, with `TODAY` = 06 Oct 2026. `csv.ts` builds real client-side CSV; `reports.ts` holds the report tables and real XLSX/PDF output via the existing `xlsx` and `jspdf` packages.
+- **Mock data, `lib/transport/mock/`:** 9 routes with 70 stops, 18 vehicles, 16 drivers, 14 attendants, 541 students (513 allocated, 14 pending, 14 waitlisted), 12 alerts, 54 service records, 49 fuel entries, 6 reports and the settings defaults. All of it is fictional, phones are masked, and it resets on page reload.
+
+### 3. The 14 screens
+**3.1 Dashboard — `/transport`** (`components/transport/dashboard/`)
+- Transport Command Center, built in the Examination Command Center style: breadcrumb, Georgia/Playfair hero, "Last synced".
+- Six StatTiles: buses on road, students onboard, late buses, open alerts, seat utilisation, maintenance due.
+- Six module cards grouped by rhythm (Set once / Per term / Daily / Monthly / Live). The Daily Operations CTA turns danger while buses are late.
+- Needs attention lists the store's open alerts by severity, plus a "students awaiting a pickup point" item.
+- Quick actions deep-link into create flows (`?new=1`). The Recharts "Boardings this week" area chart shows the hover value in the card header.
+- All figures come from the store, so this screen moves away from the spec's static seed numbers. At seed: 487 of 513 students onboard, 10 open alerts, 67% seat utilisation, 6 maintenance due.
+- Renewing a vehicle document removes its alert from Needs attention.
+- Replaced the old 3-card landing page.
+- Status: ✅ built.
+
+**3.2 Vehicles — `/transport/vehicles`** (`components/transport/vehicles/`)
+- The reference list page: hero, 4 KPIs, Smart Filter (type, status, route, compliance) with live chips, search on Enter or button.
+- Accordion groups by vehicle type, with one group open at a time and a seat-occupancy donut.
+- Fitness and insurance badges: green date, amber "Due in Nd", red "Expired". The window follows Settings' saved vehicle-document reminder days.
+- Row actions: View, Edit, Upload document, plus a More menu with Mark breakdown and Archive (both confirmed).
+- Drawer: details, compliance documents and actions.
+- Add/Edit modal with validation. Uploading a document rejects past dates and clears the matching alert.
+- Bulk actions: Assign route, Message drivers, Export, Archive. Exports are real CSV.
+- Deep links: `?id=VH-001` and `?new=1`.
+- The route now renders this mock page. The old API-backed `VehiclePanel.tsx` is still in the repo, but nothing imports it.
+- Status: ✅ built (mock).
+
+**3.3 Drivers — `/transport/drivers`** (`components/transport/staff/StaffDirectory.tsx`, kind "driver")
+- One shared component renders both Drivers and Attendants from a per-kind config.
+- KPIs: drivers, on duty, licences expiring, average rating.
+- Filters: shift, status, licence, experience. Groups by shift with an on-duty donut.
+- Rows: avatar with presence dot, staff ID pill, licence number with a Valid / "Expires in Nd" / Expired badge, assigned vehicle and route.
+- More menu: Edit, Mark on leave (immediate), Deactivate (confirmed — the driver becomes Inactive and their vehicle unassigned).
+- Drawer: Contact, Licence and Assignment sections, plus a "★ rating" tag.
+- Add/Edit form with validation. New drivers get the next ID (DR-117 onwards) and appear in the Vehicles driver select.
+- Bulk actions: Assign vehicle, Message, Export, Archive.
+- The licence window follows Settings' saved licence reminder days.
+- Status: ✅ built (mock).
+
+**3.4 Attendants — `/transport/attendants`** (same component, kind "attendant")
+- Same template as Drivers, with first-aid certification in place of the licence.
+- KPIs include "Routes covered N / 9", counted from online attendants.
+- Drawer: a "First-aid certified" or "First-aid expired" tag, a first-aid section and a Students-on-bus highlight.
+- Bulk action "Assign bus". New attendants get the next ID (AT-215 onwards).
+- Crews are reconciled to the canonical route table (for example, the R9 attendant follows the R9 bus).
+- The first-aid window follows Settings' saved first-aid reminder days.
+- Status: ✅ built (mock).
+
+**3.5 Routes — `/transport/routes`** (`components/transport/routes/`)
+- KPIs: routes, stops, average route time, students. Filters: zone, utilisation, vehicle, length.
+- Search filters stop rows and opens the routes that match.
+- One accordion per route (R3 open by default) with edit-route and view buttons, "+ Add stop" and a utilisation donut.
+- Stop table: moving a stop up or down recalculates pickup and drop times. Edit stop; Remove stop (confirmed, students become Pending).
+- Edit route warns when another route already uses the same vehicle or driver. Bus and crew changes update Vehicles, Drivers and Attendants.
+- Route drawer: crew, timing and the first 6 stops; Message parents; Archive route (students become Pending).
+- 4-step Add Route wizard (`HrStepWizard`): Basics → Stops (at least 2) → Vehicle & Staff → Review.
+- Bulk actions: Move to route, Message, Export, Remove.
+- The old `TransportRoutePanel` (API route and stop builder) moved unchanged to `/transport/routes/stop-builder`.
+- Status: ✅ built (mock); the old builder is still reachable.
+
+**3.6 Pickup Points — `/transport/pickup-points`** (`components/transport/pickup/`)
+- Pickup points and route stops are the same store records, so an edit on either page shows on both.
+- KPIs: points, students served, average fare, low-strength stops. Filters: route, zone, strength, fare.
+- Split view: a scrollable table with a sticky header beside the SVG `RouteMap` (viewBox 600×480, roads, water, dashed route paths, school marker).
+- Clicking a row focuses its marker; clicking a marker focuses its row. The focused marker shows a tooltip card that flips below near the top edge.
+- "Highlight route" dims the other routes using the spec's opacities.
+- Add/Edit form: a new point is placed by the geometry rule, or at the coordinates entered if they were changed.
+- Delete is confirmed and affected students become Pending.
+- The default fare for new points comes from the saved fare slabs.
+- Bulk actions: Move to route, Message, Export, Delete. The map stacks under the table at ≤1024px.
+- Status: ✅ built (mock).
+
+**3.7 Student Allocation — `/transport/allocation`** (`components/transport/allocation/`)
+- Context bar above the hero with Class and Section selects. Picking a class opens only that group.
+- KPIs: Allocated 513, Pending 14, Waitlisted 14, Monthly fees.
+- Filters: status, route, bus, fare. Context values show as chips, and Reset clears the context too.
+- Groups for Class 1–10 show 40 rows each, then "Show 40 more students".
+- Edit allocation: the pickup-point list follows the chosen route and resets when it changes; bus and fare are recalculated.
+- Remove from transport (confirmed) makes the student Pending.
+- 3-step Bulk Allocate wizard (Exam `StepPills`): at least 1 student → route & stop → review → "Allocate N students".
+- Bulk actions: Assign route (to its first stop), Message, Export, Remove. Drawer has Allocation and Parent sections.
+- Changes here feed the Attendance register and the Dashboard.
+- Status: ✅ built (mock).
+
+**3.8 Transport Attendance — `/transport/attendance`** (`components/transport/attendance/`)
+- Context bar with Shift (morning/afternoon) and Date (4 dates) and a dynamic note.
+- Attendance KPI cards: BD (boarded), NS (no-show), LT (late), DR (dropped), each with a trend.
+- One register per shift and date, generated by the spec's rule. Today's morning register includes 5 forced R3 no-shows.
+- Edits are stored, so switching shift or date and back keeps them. Edits to past dates are recorded in a change log.
+- The register is built from whoever is allocated in the store right now.
+- One group per route bus showing 25 rows each, with "Mark all boarded".
+- Rows: scheduled time, scanned-at, a Boarded switch, and LATE / NOTE / NO-SHOW tags. Not-boarded rows get a tinted background with a left bar.
+- Row actions: Toggle late (also marks boarded) and Add note.
+- This page's own bulk bar: Mark boarded, Mark absent, Notify parents, Export. "Notify absent parents" uses the safe confirm.
+- Status: ✅ built (mock).
+
+**3.9 Live Tracking — `/transport/live`** (`components/transport/live/`, `lib/transport/sim.ts`)
+- Context bar route select; picking a route also selects its bus.
+- Hero with a pulsing LIVE pill (shows PAUSED when paused), Pause/Resume feed, and Share ETA.
+- Simulation: a 1-second interval using the spec's progress and speed formulas. It stops while paused and is cleared when you leave the page.
+- R5 overspeed spikes; R3 (+14 min) and R7 (+9 min) run late; every bus eventually reaches "At school".
+- Overspeed and late states follow the saved Settings thresholds: overspeed is limit + 5, late is minutes beyond the late threshold.
+- Bus cards are sorted by status. Map markers move with a 1-second transition. The stop timeline stays in sync with the selected bus.
+- Call driver (info toast). Raise alert creates a real alert in the store, visible on Alerts.
+- Buses and crews come from Routes, so Phase 2 edits show here.
+- This is simulated GPS. The old real-GPS `BusTrackingPanel` (`/transport/bus-tracking`) and the `/transport/tracking/*` pages are unchanged but no longer in the nav.
+- Status: ✅ built (simulated).
+
+**3.10 Alerts — `/transport/alerts`** (`components/transport/alerts/`)
+- KPIs: Open, Critical, Resolved today, Avg response.
+- Filters: type, route, state (defaults to "Open alerts only"), raised time.
+- Critical, Warning and Info groups toggle independently; Critical and Warning are open by default.
+- Each group has "Acknowledge all" and an acknowledged-share donut.
+- Items use the needs-attention style with a type icon and badges.
+- Acknowledge records the signed-in user as owner. Resolve uses the safe confirm.
+- Raise alert form: new alerts get the next ID (AL-5413 onwards) and start acknowledged.
+- Drawer: Incident and Timeline sections.
+- Bulk actions: Acknowledge, Message, Export, Resolve. Alerts raised from Live Tracking show here, and resolving them updates the Dashboard.
+- Status: ✅ built (mock).
+
+**3.11 Maintenance — `/transport/maintenance`** (`components/transport/maintenance/`)
+- KPIs: Due this week, Overdue, In workshop, Spend MTD.
+- Filters: status, service type, vendor, date.
+- While any filter or search is active, vehicles with no matches are hidden and the matching groups open automatically.
+- One group per vehicle in the store (TS 09 EZ 2214 open by default), with a worst-status chip and a 10,000 km service-interval donut.
+- Rows: date, service type with record ID, odometer, vendor, cost, status.
+- Row actions: View, Edit, Mark completed (dated today), Delete (confirmed).
+- Log/Edit form: odometer and cost are required; new records are prepended and their group opens.
+- Drawer billing splits cost 62% parts / 38% labour and shows the next service due at odometer + 10,000 km.
+- Bulk actions: Mark completed, Message, Export, Delete.
+- Status: ✅ built (mock).
+
+**3.12 Fuel Management — `/transport/fuel`** (`components/transport/fuel/`)
+- KPIs: Litres MTD, Spend MTD, Avg km/L, Anomalies.
+- Filters: vehicle, check, period (defaults to "This month"), station.
+- Charts row: "Spend by vehicle · MTD" bar chart (18 bars, darker on hover, ₹k gridlines) and "Fleet efficiency trend" line chart (W34–W41, y-axis 5–7). Both show the hover value in the card header.
+- Fuel log, newest first: 20 rows, then "Show N more entries".
+- Anomaly badge ("Anomaly −28%") and red km/L when km/L is below 80% of the vehicle's normal.
+- Log/Edit form with litres, rate and odometer required. New entries get km/L = base × 0.97 and update the KPIs and charts.
+- Drawer: Fill-up and Benchmark sections.
+- Bulk actions: Mark verified, Message, Export, Delete.
+- Status: ✅ built (mock).
+
+**3.13 Reports — `/transport/reports`** (`components/transport/reports/`, `lib/transport/reports.ts`)
+- Six report cards: Route-wise strength, Vehicle utilisation, Transport fee collection, Driver duty roster, Daily boarding register, Fuel & maintenance cost.
+- KPIs, plus filters for category, frequency, status and default format. The default format feeds the Generate form.
+- Generate form checks that To isn't before From. Generating adds a "Recently generated" row, opens the Preview and shows a toast.
+- "Schedule a report" uses the same form with the schedule defaults; it adds a row but opens no preview.
+- Preview modal: 3 stat boxes, a table with right-aligned numbers and a totals row, and Close / Change filters / Download Excel / Download PDF.
+- The tables apply the spec's formulas to live store inputs (routes, stops, buses, crews, allocated students, fares).
+- Downloads are real XLSX and PDF files, falling back to CSV. PDFs show "Rs" instead of ₹ because jsPDF's built-in fonts have no rupee glyph.
+- The old `StudentTransportReportPanel` (`/transport/student-report`) is unchanged but no longer in the nav.
+- Status: ✅ built (mock data).
+
+**3.14 Settings — `/transport/settings`** (`components/transport/settings/`)
+- Five sections, each a `SimpleAccordion`: General, Alerts & thresholds, Parent notifications, Fare rules, Documents.
+- Each section shows an "Unsaved changes" badge while edited, with Discard (info toast) and Save changes.
+- "Save all changes" saves every edited section, or shows "Nothing to save".
+- An overspeed limit above 60 is rejected with the error toast "Overspeed limit can't exceed 60 km/h".
+- Fare slab editor: inline inputs, remove, and "+ Add slab" (from = last "to", to + 5, fare + 400).
+- KPIs reflect saved values only.
+- Filters: category, unsaved only, collapse/expand all. Search covers section titles and field labels.
+- Saved values drive the rest of the module:
+  - overspeed and late threshold → Live Tracking status and the Dashboard's late buses;
+  - reminder days → expiry badges in Vehicles, Drivers and Attendants;
+  - fare slabs → the default fare for new stops and pickup points.
+- The hero's "Export CSV" button downloads the saved settings as JSON, as the spec requires.
+- Status: ✅ built (mock).
+
+### 4. Old Transport code — what happened to it
+- **Kept byte-identical:** all 7 old components, and the old pages at `assign-vehicles`, `bus-tracking`, `student-report`, `tracking`, `tracking/buses` and `tracking/route-builder`. They still work by URL and still call the real APIs, but they're no longer in the Transport sub-nav.
+- **Replaced at the same URL:**
+  - `/transport`: the 3-card landing page became the Dashboard.
+  - `/transport/vehicles`: `VehiclePanel` replaced by the mock Vehicles page. **`VehiclePanel.tsx` is no longer reachable from any page.**
+  - `/transport/routes`: `TransportRoutePanel` moved to `/transport/routes/stop-builder`.
+- **Not merged:** the new screens don't import the old components or call their APIs. Data entered in the new screens isn't saved and isn't visible to the old API-backed pages.
+
+### Files changed
+- `frontend/lib/routes.ts` (Transport module un-hidden; sub-tabs replaced with the 14 new tabs; 3 icon imports). Its comment about "placeholder screens link to them" is now out of date.
+- `frontend/app/(dashboard)/transport/page.tsx`, `vehicles/page.tsx`, `routes/page.tsx` (now render the new screens)
+- New: `frontend/app/(dashboard)/transport/layout.tsx`, 11 new screen pages and `routes/stop-builder/page.tsx`
+- New: `frontend/components/transport/{ui,dashboard,vehicles,staff,routes,pickup,allocation,attendance,live,alerts,maintenance,fuel,reports,settings}/`
+- New: `frontend/lib/transport/` (store, operations, simulation, reports, formatting, CSV, IDs, types, `mock/`)
+- No backend files, no other modules and no shared components were modified.
+
+### Status
+✅ `tsc --noEmit`: no new errors. The only 11 errors are pre-existing ones in `exams/marks-register-create` and `exams/result-publish`, outside this work. `next lint` is clean on all Transport folders.
+
+✅ All 14 Transport routes plus `/transport/routes/stop-builder` returned HTTP 200 with no error markers from the running dev server.
+
+✅ Store, simulation, register, report and settings logic were checked in Node against the spec: reorder retiming, students moving to Pending, crew sync, wizards, forced no-shows, overspeed and late thresholds, all 6 report tables, and the fare-slab defaults.
+
+⚠️ **`next build` not completed:** it compiles successfully, then fails type-checking on the 11 Examination errors above. These need fixing before a production build.
+
+⚠️ **Not browser-verified by me** (per this project's convention I don't start dev servers). Interactive behaviour, the Esc order, responsive layout at 1024/700/640 and the live animation still need a click-through.
+
+⚠️ **Known gaps:**
+- The ⌘K palette finds the 14 pages but not vehicle, driver or route records, and the notification bell shows app notifications rather than Transport items. Both are shared components that were left untouched.
+- The Fuel & maintenance cost report uses the spec's formulas, so its figures won't match the Fuel and Maintenance pages.
+
+⚠️ **Next step — backend integration:** wire the store actions to the existing `/api/v1/core/*` transport endpoints, and decide whether to retire or relink the old pages, including restoring access to `VehiclePanel`.

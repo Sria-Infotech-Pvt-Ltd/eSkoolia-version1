@@ -1,5 +1,5 @@
 "use client";
-/** "Boardings this week" area chart (Master Prompt §7.1). Hover updates the header label — no tooltip box. */
+/** "Boardings this week" area chart (Master Prompt §7.1): morning boardings per day from the register. Hover updates the header label. */
 import { useState } from "react";
 import { Area, AreaChart, CartesianGrid, ResponsiveContainer, Tooltip, XAxis, YAxis } from "recharts";
 import { num } from "@/lib/transport/format";
@@ -18,7 +18,7 @@ export function BoardingsChart({ data }: { data: { day: string; value: number }[
           {hovered ? `${hovered.day} · ${num(hovered.value)} boardings` : `Total ${num(total)}`}
         </span>
       </div>
-      <div style={{ fontSize: 11.5, color: T.exInk2, marginTop: 2, marginBottom: 8 }}>Morning + afternoon, all routes</div>
+      <div style={{ fontSize: 11.5, color: T.exInk2, marginTop: 2, marginBottom: 8 }}>Morning pickups boarded, last 7 days, all routes</div>
       <div style={{ height: 150 }}>
         <ResponsiveContainer width="100%" height="100%">
           <AreaChart
@@ -38,8 +38,8 @@ export function BoardingsChart({ data }: { data: { day: string; value: number }[
             </defs>
             <CartesianGrid vertical={false} stroke={T.track} />
             <XAxis dataKey="day" tick={{ fontSize: 9, fill: T.exInk3 }} axisLine={false} tickLine={false} />
-            <YAxis domain={[0, 1100]} ticks={[0, 500, 1000]} tick={{ fontSize: 9, fill: T.exInk3 }} axisLine={false} tickLine={false}
-              tickFormatter={(v: number) => (v === 0 ? "0" : v === 500 ? "0.5k" : "1k")} />
+            <YAxis domain={[0, "auto"]} allowDecimals={false} tick={{ fontSize: 9, fill: T.exInk3 }} axisLine={false} tickLine={false}
+              tickFormatter={(v: number) => (v >= 1000 ? `${Math.round(v / 100) / 10}k` : String(v))} />
             <Tooltip content={() => null} cursor={false} />
             <Area type="monotone" dataKey="value" stroke={T.exPu} strokeWidth={2} fill="url(#tpBoardingsFill)"
               dot={{ r: 3, fill: "#fff", stroke: T.exPu, strokeWidth: 2 }}
