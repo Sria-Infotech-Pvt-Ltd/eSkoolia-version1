@@ -5,7 +5,7 @@ import { docField } from "@/lib/transport/store";
 import { daysLeft, fmtDate } from "@/lib/transport/format";
 import { VEHICLE_STATUSES, VEHICLE_TYPES, routeLabel } from "@/lib/transport/catalog";
 import type { Driver, TransportRoute, Vehicle, VehicleDoc, VehicleStatus, VehicleType } from "@/lib/transport/types";
-import { Button, Field, Input, LAYER, Modal, Select, T, useTpToast } from "@/components/transport/ui";
+import { Button, Field, Input, LAYER, Modal, SaveButton, Select, T, useTpToast } from "@/components/transport/ui";
 import { DOCS, defaultDoc, useVehicleDocWindow } from "./shared";
 
 export interface VehicleFormValues {
@@ -42,7 +42,7 @@ export function VehicleFormModal({
       subtitle="Registration, assignment and compliance dates"
       footer={<>
         <Button type="button" variant="ghost" onClick={onClose}>Cancel</Button>
-        <Button type="button" variant="primary" onClick={submit}>{mode === "add" ? "Add vehicle" : "Save changes"}</Button>
+        <SaveButton onClick={submit}>{mode === "add" ? "Add vehicle" : "Save changes"}</SaveButton>
       </>}>
       <div className="tp-form-grid">
         <Field label="Registration no." required error={errors.reg} hint="Format: state · RTO · series · number">
@@ -109,7 +109,7 @@ export function UploadDocModal({
       subtitle="Saving the new valid-till date updates the expiry badges and resolves related expiry alerts"
       footer={<>
         <Button type="button" variant="ghost" onClick={onClose}>Cancel</Button>
-        <Button type="button" variant="primary" onClick={submit}>Save renewal</Button>
+        <SaveButton onClick={submit}>Save renewal</SaveButton>
       </>}>
       <div className="tp-form-grid">
         <Field label="Document" required hint={`${vehicle.reg} · ${vehicle.model}`}>
@@ -147,7 +147,7 @@ export function AssignRouteModal({
     <Modal open onClose={onClose} size="sm" title="Assign route" subtitle="Move the selected vehicles onto one route"
       footer={<>
         <Button type="button" variant="ghost" onClick={onClose}>Cancel</Button>
-        <Button type="button" variant="primary" onClick={submit}>Assign route</Button>
+        <SaveButton onClick={submit}>Assign route</SaveButton>
       </>}>
       <Field label="Route" required error={error} hint={`Applies to ${count} selected vehicles.`}>
         <Select value={route} onChange={(e) => { setRoute(e.target.value); setError(undefined); }}>

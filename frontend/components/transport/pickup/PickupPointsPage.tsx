@@ -11,7 +11,7 @@ import { fmtTime, inr, num, plural } from "@/lib/transport/format";
 import { downloadCsv, type CsvColumn } from "@/lib/transport/csv";
 import type { RouteStop, TransportRoute } from "@/lib/transport/types";
 import {
-  Badge, BulkBar, Button, Chip, ConfirmDialog, Drawer, DrawerActions, DrawerHeader, DrawerHighlight, DrawerSection, Field,
+  Badge, BulkBar, Button, SaveButton, Chip, ConfirmDialog, Drawer, DrawerActions, DrawerHeader, DrawerHighlight, DrawerSection, Field,
   HeroPrimary, HeroSecondary, InfoRow, Input, KpiCard, KpiGrid, MapLegend, Modal, OutlineButton, PageHero, RouteMap,
   RowIconButton, SearchRow, Select, SmartFilter, T, TransportPage, useDeepLink, useMountSkeleton, useSelection, useTpToast,
   type FilterChip,
@@ -26,7 +26,7 @@ type ConfirmState = { kind: "delete"; id: string } | { kind: "bulkDelete" };
 interface FormValues { name: string; landmark: string; routeCode: string; lat: string; lng: string; fare: string; pickupTime: string; dropTime: string }
 
 export function PickupPointsPage() {
-  const { state, dispatch } = useTransport();
+  const { state, dispatch, errorText } = useTransport();
   const { routes } = state;
   const { toast } = useTpToast();
   const loading = useMountSkeleton();
@@ -117,35 +117,31 @@ export function PickupPointsPage() {
       lat: Number(v.lat), lng: Number(v.lng), pickupTime: v.pickupTime, dropTime: v.dropTime,
     };
     if (form.mode === "add") {
-      if (!(await dispatch({ type: "stop/add", routeCode: v.routeCode, input }))) { toast("Not saved — see the message above", "error"); return; }
+      if (!(await dispatch({ type: "stop/add", routeCode: v.routeCode, input }))) { toast(`Not saved: ${errorText()}`, "error"); return; }
       toast(`${v.name} added to ${v.routeCode}`);
     } else {
       const prev = byId(form.id);
-      if (!(await dispatch({ type: "stop/update", id: form.id, patch: { ...input, routeCode: v.routeCode } }))) { toast("Not saved — see the message above", "error"); return; }
+      if (!(await dispatch({ type: "stop/update", id: form.id, patch: { ...input, routeCode: v.routeCode } }))) { toast(`Not saved: ${errorText()}`, "error"); return; }
       if (prev) focus(prev.stop.id, true);
       toast(`${v.name} updated`);
     }
     setForm(null);
   };
 
-  const runConfirm = () => {
+  // The dialog stays open (showing progress) until the save finishes; a failure keeps it open to retry.
+  const runConfirm = async () => {
     if (!confirm) return;
     const cf = confirm;
+    const p = cf.kind === "delete" ? byId(cf.id) : null;
+    const n = selection.count;
+    const focusRemoved = cf.kind === "delete" ? focusId === cf.id : !!focusId && selection.isSelected(focusId);
+    const ok = await dispatch({ type: "stop/remove", ids: cf.kind === "delete" ? [cf.id] : selection.ids });
+    if (!ok) { toast(`Not saved: ${errorText()}`, "error"); return; }
     setConfirm(null);
     setDrawerId(null);
-    if (cf.kind === "delete") {
-      const p = byId(cf.id);
-      dispatch({ type: "stop/remove", ids: [cf.id] });
-      if (focusId === cf.id) setFocusId(null);
-      selection.clear();
-      if (p) toast(`${p.stop.name} deleted`);
-    } else {
-      const n = selection.count;
-      dispatch({ type: "stop/remove", ids: selection.ids });
-      if (focusId && selection.isSelected(focusId)) setFocusId(null);
-      selection.clear();
-      toast(`${plural(n, "pickup point")} deleted`);
-    }
+    if (focusRemoved) setFocusId(null);
+    selection.clear();
+    toast(cf.kind === "delete" ? `${p?.stop.name ?? "Pickup point"} deleted` : `${plural(n, "pickup point")} deleted`);
   };
 
   const confirmText = (() => {
@@ -315,10 +311,10 @@ export function PickupPointsPage() {
       {moveOpen && (
         <MoveStopsModal title="Move to route" subtitle="Move the selected points to another route" fieldLabel="Route" cta="Move points"
           routes={routes} onClose={() => setMoveOpen(false)}
-          onSubmit={(code) => {
+          onSubmit={async (code) => {
             const n = selection.count;
             const r = routes.find((x) => x.code === code);
-            dispatch({ type: "stop/move", ids: selection.ids, routeCode: code });
+            if (!(await dispatch({ type: "stop/move", ids: selection.ids, routeCode: code }))) { toast(`Not saved: ${errorText()}`, "error"); return; }
             selection.clear(); setMoveOpen(false);
             toast(`${plural(n, "point")} moved to ${r ? `${r.code} · ${r.name}` : code}`);
           }} />
@@ -351,7 +347,7 @@ function PointForm({
     <Modal open onClose={onClose} size="md" title={mode === "add" ? "Add pickup point" : "Edit pickup point"} subtitle="Location, route and monthly fare"
       footer={<>
         <Button type="button" variant="ghost" onClick={onClose}>Cancel</Button>
-        <Button type="button" variant="primary" onClick={submit}>{mode === "add" ? "Add pickup point" : "Save changes"}</Button>
+        <SaveButton onClick={submit}>{mode === "add" ? "Add pickup point" : "Save changes"}</SaveButton>
       </>}>
       <div className="tp-form-grid">
         <Field label="Stop name" required error={errors.name}>

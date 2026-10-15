@@ -10,7 +10,7 @@ import { daysLeft, fmtTime } from "@/lib/transport/format";
 import type { NewRouteInput, RoutePatch } from "@/lib/transport/actions";
 import type { Attendant, Driver, RouteShift, TransportRoute } from "@/lib/transport/types";
 import {
-  Button, Field, InfoRow, Input, LAYER, Modal, Select, StepWizard, T, useTpToast,
+  Button, SaveButton, Field, InfoRow, Input, LAYER, Modal, Select, StepWizard, T, useTpToast,
 } from "@/components/transport/ui";
 
 export interface StopFormValues { name: string; landmark: string; fare: string; lat: string; lng: string; pickupTime: string; dropTime: string }
@@ -41,7 +41,7 @@ export function StopFormModal({
     <Modal open onClose={onClose} size="md" title={mode === "add" ? "Add stop" : "Edit stop"} subtitle={`${routeLabel} · stop details and monthly fare`}
       footer={<>
         <Button type="button" variant="ghost" onClick={onClose}>Cancel</Button>
-        <Button type="button" variant="primary" onClick={submit}>{mode === "add" ? "Add stop" : "Save changes"}</Button>
+        <SaveButton onClick={submit}>{mode === "add" ? "Add stop" : "Save changes"}</SaveButton>
       </>}>
       <div className="tp-form-grid">
         <Field label="Stop name" required error={errors.name}>
@@ -85,7 +85,7 @@ export function EditRouteModal({
     <Modal open onClose={onClose} size="md" title={`Edit route ${route.code}`} subtitle="Name, crew, vehicle and first pickup time"
       footer={<>
         <Button type="button" variant="ghost" onClick={onClose}>Cancel</Button>
-        <Button type="button" variant="primary" onClick={submit}>Save route</Button>
+        <SaveButton onClick={submit}>Save route</SaveButton>
       </>}>
       <div className="tp-form-grid">
         <Field label="Route name" required error={error}>
@@ -137,7 +137,7 @@ export function MoveStopsModal({
     <Modal open onClose={onClose} size="sm" title={title} subtitle={subtitle}
       footer={<>
         <Button type="button" variant="ghost" onClick={onClose}>Cancel</Button>
-        <Button type="button" variant="primary" onClick={submit}>{cta}</Button>
+        <SaveButton onClick={submit}>{cta}</SaveButton>
       </>}>
       <Field label={fieldLabel} required error={error}>
         <Select value={code} onChange={(e) => { setCode(e.target.value); setError(undefined); }}>
@@ -232,7 +232,7 @@ export function AddRouteWizard({
         {step > 1 && <Button type="button" variant="ghost" onClick={() => setStep((s) => s - 1)}>Back</Button>}
         {step < 4
           ? <Button type="button" variant="primary" onClick={next}>Next</Button>
-          : <Button type="button" variant="primary" onClick={create}>Create route</Button>}
+          : <SaveButton onClick={create}>Create route</SaveButton>}
       </>}>
       <div className="tp-scroll-x" style={{ marginBottom: 22 }}>
         <StepWizard steps={STEPS} currentStep={step} onStepClick={(n) => { if (n < step) setStep(n); }} />

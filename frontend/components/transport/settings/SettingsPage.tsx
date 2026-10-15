@@ -10,7 +10,7 @@ import { AlertTriangle, Bell, Coins, Settings as SettingsIcon, ShieldCheck, X } 
 import { useTransport } from "@/lib/transport/store";
 import type { FareSlab, TransportSettings } from "@/lib/transport/types";
 import {
-  Badge, Button, Field, HeroPrimary, HeroSecondary, Input, KpiCard, KpiGrid, OutlineButton, PageHero, SearchRow, Select, SimpleAccordion,
+  Badge, Button, SaveButton, Field, HeroPrimary, HeroSecondary, Input, KpiCard, KpiGrid, OutlineButton, PageHero, SearchRow, Select, SimpleAccordion,
   SmartFilter, Switch, T, TransportPage, useDeepLink, useMountSkeleton, useTpToast, type FilterChip,
 } from "@/components/transport/ui";
 
@@ -37,7 +37,7 @@ function pick(s: TransportSettings, key: SectionKey): Partial<TransportSettings>
 }
 
 export function SettingsPage() {
-  const { state, dispatch } = useTransport();
+  const { state, dispatch, errorText, saving } = useTransport();
   const saved = state.settings;
   const { toast } = useTpToast();
   const loading = useMountSkeleton();
@@ -104,7 +104,7 @@ export function SettingsPage() {
     const patch = pick(draft, key);
     justSaved.current = new Set(Object.keys(patch));
     if (await dispatch({ type: "settings/save", patch })) toast(`${title} saved`);
-    else { justSaved.current = new Set(); toast("Not saved — see the message above", "error"); }
+    else { justSaved.current = new Set(); toast(`Not saved: ${errorText()}`, "error"); }
   };
   const discardSection = (key: SectionKey, title: string) => {
     setDraft((d) => ({ ...d, ...structuredClone(pick(saved, key)) }));
@@ -116,7 +116,7 @@ export function SettingsPage() {
     const patch = Object.assign({}, ...dirtyKeys.map((k) => pick(draft, k)));
     justSaved.current = new Set(Object.keys(patch));
     if (await dispatch({ type: "settings/save", patch })) toast("All changes saved", "info");
-    else { justSaved.current = new Set(); toast("Not saved — see the message above", "error"); }
+    else { justSaved.current = new Set(); toast(`Not saved: ${errorText()}`, "error"); }
   };
   const exportJson = () => {
     const blob = new Blob([JSON.stringify(saved, null, 2)], { type: "application/json" });
@@ -284,7 +284,7 @@ export function SettingsPage() {
         sub="Geofence, shift timings, safety thresholds, parent notifications, fare slabs and document reminders for this campus."
         actions={<>
           <HeroSecondary onClick={exportJson}>Export JSON</HeroSecondary>
-          <HeroPrimary icon={false} onClick={() => { void saveAll(); }}>Save all changes</HeroPrimary>
+          <HeroPrimary icon={false} disabled={saving} aria-busy={saving || undefined} onClick={() => { void saveAll(); }}>{saving ? "Saving…" : "Save all changes"}</HeroPrimary>
         </>} />
 
       <KpiGrid>
@@ -316,7 +316,7 @@ export function SettingsPage() {
             {body(s.key)}
             <div style={{ display: "flex", justifyContent: "flex-end", gap: 10, marginTop: 16 }}>
               <Button type="button" variant="ghost" onClick={() => discardSection(s.key, s.title)}>Discard</Button>
-              <Button type="button" variant="primary" onClick={() => saveSection(s.key, s.title)}>Save changes</Button>
+              <SaveButton onClick={() => saveSection(s.key, s.title)}>Save changes</SaveButton>
             </div>
           </SimpleAccordion>
         ))}

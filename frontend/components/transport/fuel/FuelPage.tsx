@@ -11,7 +11,7 @@ import { fmtDate, inr, num, plural, toISO, TODAY } from "@/lib/transport/format"
 import { downloadCsv, type CsvColumn } from "@/lib/transport/csv";
 import type { FuelEntry, Vehicle } from "@/lib/transport/types";
 import {
-  Badge, BulkBar, Button, ConfirmDialog, Drawer, DrawerActions, DrawerHeader, DrawerHighlight, DrawerSection, Field, HeroPrimary,
+  Badge, BulkBar, Button, SaveButton, ConfirmDialog, Drawer, DrawerActions, DrawerHeader, DrawerHighlight, DrawerSection, Field, HeroPrimary,
   HeroSecondary, InfoRow, Input, KpiCard, KpiGrid, Modal, OutlineButton, PageHero, RowIconButton, SearchRow, Select, ShowMoreRow,
   SmartFilter, T, TransportPage, useDeepLink, useMountSkeleton, useSelection, useTpToast, type FilterChip,
 } from "@/components/transport/ui";
@@ -32,7 +32,7 @@ type ConfirmState = { kind: "delete"; id: string } | { kind: "bulkDelete" };
 interface FormValues { vehicleId: string; date: string; litres: string; rate: string; odometer: string; station: string }
 
 export function FuelPage() {
-  const { state, dispatch } = useTransport();
+  const { state, dispatch, errorText } = useTransport();
   const vehicles = useVehicles();
   const { toast } = useTpToast();
   const loading = useMountSkeleton();
@@ -120,7 +120,7 @@ export function FuelPage() {
     const ok = form.mode === "add"
       ? await dispatch({ type: "fuel/add", input })
       : await dispatch({ type: "fuel/update", id: form.id, input });
-    if (!ok) { toast("Not saved — see the message above", "error"); return; }
+    if (!ok) { toast(`Not saved: ${errorText()}`, "error"); return; }
     toast(form.mode === "add" ? `Fuel logged for ${reg(v.vehicleId)}` : "Fuel entry updated");
     setForm(null);
   };
@@ -128,10 +128,13 @@ export function FuelPage() {
   const runConfirm = async () => {
     if (!confirm) return;
     const cf = confirm;
+    // Confirm only after the backend has saved; the dialog shows progress and stays open to retry on failure.
+    const n = selection.count;
+    const ok = await dispatch({ type: "fuel/delete", ids: cf.kind === "delete" ? [cf.id] : selection.ids });
+    if (!ok) { toast(`Not saved: ${errorText()}`, "error"); return; }
     setConfirm(null); setDrawerId(null);
-    // Confirm only after the backend has saved; on failure the sync banner shows the error.
-    if (cf.kind === "delete") { if (await dispatch({ type: "fuel/delete", ids: [cf.id] })) toast(`${cf.id} deleted`); }
-    else { const n = selection.count; const ids = selection.ids; selection.clear(); if (await dispatch({ type: "fuel/delete", ids })) toast(`${plural(n, "entry", "entries")} deleted`); }
+    if (cf.kind === "delete") toast(`${cf.id} deleted`);
+    else { selection.clear(); toast(`${plural(n, "entry", "entries")} deleted`); }
   };
   const confirmText = !confirm ? null : confirm.kind === "bulkDelete"
     ? { title: `Delete ${plural(selection.count, "entry", "entries")}?`, message: "They are removed from spend and efficiency figures.", label: "Delete all" }
@@ -229,7 +232,7 @@ export function FuelPage() {
       </div>
 
       <BulkBar count={selection.count} onClear={selection.clear} actions={[
-        { label: "Mark verified", onClick: async () => { const n = selection.count; const ids = selection.ids; selection.clear(); if (await dispatch({ type: "fuel/verify", ids })) toast(`${plural(n, "entry", "entries")} marked verified`); } },
+        { label: "Mark verified", onClick: async () => { const n = selection.count; const ids = selection.ids; if (await dispatch({ type: "fuel/verify", ids })) { selection.clear(); toast(`${plural(n, "entry", "entries")} marked verified`) } else toast(`Not saved: ${errorText()}`, "error"); } },
         { label: "Export", onClick: () => {
           const list = state.fuel.filter((f) => selection.isSelected(f.id));
           downloadCsv("transport-fuel-selected.csv", csv, list); toast(`Exported ${plural(list.length, "entry", "entries")}`); selection.clear();
@@ -295,7 +298,7 @@ function FuelForm({ mode, vehicles, stations, initial, onClose, onSubmit }: {
     <Modal open onClose={onClose} size="md" title={mode === "add" ? "Log fuel" : "Edit fuel entry"} subtitle="Litres, rate and odometer reading · km/L is worked out from the previous reading"
       footer={<>
         <Button type="button" variant="ghost" onClick={onClose}>Cancel</Button>
-        <Button type="button" variant="primary" onClick={submit}>{mode === "add" ? "Log fuel" : "Save changes"}</Button>
+        <SaveButton onClick={submit}>{mode === "add" ? "Log fuel" : "Save changes"}</SaveButton>
       </>}>
       <div className="tp-form-grid">
         <Field label="Vehicle" required error={errors.vehicleId}>

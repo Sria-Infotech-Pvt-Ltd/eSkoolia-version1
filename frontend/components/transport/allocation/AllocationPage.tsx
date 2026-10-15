@@ -22,7 +22,7 @@ const PAGE = 40;
 type ConfirmState = { kind: "remove"; id: string } | { kind: "bulkRemove" };
 
 export function AllocationPage() {
-  const { state, dispatch } = useTransport();
+  const { state, dispatch, errorText, saving } = useTransport();
   const vehicles = useVehicles();
   const { routes, students, studentPool } = state;
   const { toast } = useTpToast();
@@ -123,21 +123,18 @@ export function AllocationPage() {
     setCtxClass(ALL); setCtxSection(ALL); setFStatus(ALL); setFRoute(ALL); setFBus(ALL); setFFare(ALL); setQuery(""); setApplied("");
   };
 
-  const runConfirm = () => {
+  // The dialog stays open (showing progress) until the save finishes; a failure keeps it open to retry.
+  const runConfirm = async () => {
     if (!confirm) return;
     const cf = confirm;
+    const s = cf.kind === "remove" ? byId(cf.id) : null;
+    const n = selection.count;
+    const ok = await dispatch({ type: "student/remove", ids: cf.kind === "remove" ? [cf.id] : selection.ids });
+    if (!ok) { toast(`Not saved: ${errorText()}`, "error"); return; }
     setConfirm(null);
     setDrawerId(null);
-    if (cf.kind === "remove") {
-      const s = byId(cf.id);
-      dispatch({ type: "student/remove", ids: [cf.id] });
-      if (s) toast(`${s.name} moved to Pending`);
-    } else {
-      const n = selection.count;
-      dispatch({ type: "student/remove", ids: selection.ids });
-      selection.clear();
-      toast(`${plural(n, "student")} moved to Pending`);
-    }
+    if (cf.kind === "remove") toast(`${s?.name ?? "Student"} moved to Pending`);
+    else { selection.clear(); toast(`${plural(n, "student")} moved to Pending`); }
   };
 
   const confirmText = (() => {
@@ -298,8 +295,8 @@ export function AllocationPage() {
 
       {editStudent && (
         <EditAllocationModal key={editStudent.id} student={editStudent} routes={routes} onClose={() => setEditId(null)}
-          onSubmit={(routeCode, stopId, status) => {
-            dispatch({ type: "student/update", id: editStudent.id, routeCode, stopId, status });
+          onSubmit={async (routeCode, stopId, status) => {
+            if (!(await dispatch({ type: "student/update", id: editStudent.id, routeCode, stopId, status }))) { toast(`Not saved: ${errorText()}`, "error"); return; }
             setEditId(null);
             groups.openOnly(editStudent.cls);
             toast("Allocation updated");
@@ -309,10 +306,10 @@ export function AllocationPage() {
       {wizard && (
         <BulkAllocateWizard candidates={candidates} preselect={wizard.preselect} routes={routes} vehicles={vehicles}
           onClose={() => setWizard(null)}
-          onAllocate={(ids, routeCode, stopId) => {
+          onAllocate={async (ids, routeCode, stopId) => {
             const r = routes.find((x) => x.code === routeCode);
             const st = r?.stops.find((x) => x.id === stopId);
-            dispatch({ type: "student/allocate", ids, routeCode, stopId });
+            if (!(await dispatch({ type: "student/allocate", ids, routeCode, stopId }))) { toast(`Not saved: ${errorText()}`, "error"); return; }
             setWizard(null);
             toast(`${plural(ids.length, "student")} allocated to ${routeCode} · ${st?.name ?? ""}`);
           }} />

@@ -26,7 +26,7 @@ type StopForm = { mode: "add"; routeCode: string } | { mode: "edit"; routeCode: 
 type ConfirmState = { kind: "removeStop"; stopId: string } | { kind: "archiveRoute"; code: string } | { kind: "bulkRemove" };
 
 export function RoutesPage() {
-  const { state, dispatch } = useTransport();
+  const { state, dispatch, errorText, saving } = useTransport();
   const vehicles = useVehicles();
   const { routes } = state;
   const { toast } = useTpToast();
@@ -132,6 +132,7 @@ export function RoutesPage() {
     const i = r.stops.findIndex((x) => x.id === s.id);
     if (i + dir < 0 || i + dir >= r.stops.length) return;
     if (await dispatch({ type: "stop/reorder", routeCode: r.code, id: s.id, dir })) toast("Stop order updated");
+    else toast(`Not saved: ${errorText()}`, "error");
   };
 
   const submitStop = async (v: StopFormValues) => {
@@ -143,32 +144,27 @@ export function RoutesPage() {
     const ok = stopForm.mode === "add"
       ? await dispatch({ type: "stop/add", routeCode: stopForm.routeCode, input })
       : await dispatch({ type: "stop/update", id: stopForm.stopId, patch: input });
-    if (!ok) { toast("Not saved — see the message above", "error"); return; }
+    if (!ok) { toast(`Not saved: ${errorText()}`, "error"); return; }
     toast(stopForm.mode === "add" ? `${v.name} added to ${stopForm.routeCode}` : `${v.name} updated`);
     groups.openOnly(stopForm.routeCode);
     setStopForm(null);
   };
 
-  const runConfirm = () => {
+  // The dialog stays open (showing progress) until the save finishes; a failure keeps it open to retry.
+  const runConfirm = async () => {
     if (!confirm) return;
     const cf = confirm;
+    const hit = cf.kind === "removeStop" ? findStop(cf.stopId) : null;
+    const n = selection.count;
+    const ok = cf.kind === "removeStop" ? await dispatch({ type: "stop/remove", ids: [cf.stopId] })
+      : cf.kind === "archiveRoute" ? await dispatch({ type: "route/archive", code: cf.code })
+      : await dispatch({ type: "stop/remove", ids: selection.ids });
+    if (!ok) { toast(`Not saved: ${errorText()}`, "error"); return; }
     setConfirm(null);
     setDrawerCode(null);
-    if (cf.kind === "removeStop") {
-      const hit = findStop(cf.stopId);
-      dispatch({ type: "stop/remove", ids: [cf.stopId] });
-      selection.clear();
-      if (hit) toast(`${hit.stop.name} removed from ${hit.route.code}`);
-    } else if (cf.kind === "archiveRoute") {
-      dispatch({ type: "route/archive", code: cf.code });
-      selection.clear();
-      toast(`${cf.code} archived`);
-    } else {
-      const n = selection.count;
-      dispatch({ type: "stop/remove", ids: selection.ids });
-      selection.clear();
-      toast(`${plural(n, "stop")} removed`);
-    }
+    selection.clear();
+    toast(cf.kind === "removeStop" ? (hit ? `${hit.stop.name} removed from ${hit.route.code}` : "Stop removed")
+      : cf.kind === "archiveRoute" ? `${cf.code} archived` : `${plural(n, "stop")} removed`);
   };
 
   const confirmText = (() => {
@@ -278,8 +274,8 @@ export function RoutesPage() {
                           <td>{s.students}</td>
                           <td style={{ fontWeight: 700 }}>{inr(s.fare)}</td>
                           <td style={{ textAlign: "right", whiteSpace: "nowrap" }}>
-                            <RowIconButton label="Move up" disabled={idx === 0} onClick={() => move(r, s, -1)}><ChevronUp size={15} strokeWidth={2} /></RowIconButton>
-                            <RowIconButton label="Move down" disabled={idx === r.stops.length - 1} onClick={() => move(r, s, 1)}><ChevronDown size={15} strokeWidth={2} /></RowIconButton>
+                            <RowIconButton label="Move up" disabled={saving || idx === 0} onClick={() => { void move(r, s, -1); }}><ChevronUp size={15} strokeWidth={2} /></RowIconButton>
+                            <RowIconButton label="Move down" disabled={saving || idx === r.stops.length - 1} onClick={() => { void move(r, s, 1); }}><ChevronDown size={15} strokeWidth={2} /></RowIconButton>
                             <RowIconButton label="Edit stop" onClick={() => setStopForm({ mode: "edit", routeCode: r.code, stopId: s.id })}><Pencil size={14} strokeWidth={1.8} /></RowIconButton>
                             <RowIconButton label="Remove stop" onClick={() => setConfirm({ kind: "removeStop", stopId: s.id })}><X size={15} strokeWidth={2} /></RowIconButton>
                           </td>
@@ -348,7 +344,7 @@ export function RoutesPage() {
             const clashBus = routes.find((x) => x.code !== code && patch.busReg && x.busReg === patch.busReg);
             const clashDriver = routes.find((x) => x.code !== code && patch.driverName && x.driverName === patch.driverName);
             if (!(await dispatch({ type: "route/update", code, patch: { ...patch, driverName: patch.driverName || editRoute.driverName, attendantName: patch.attendantName || editRoute.attendantName } }))) {
-              toast("Not saved — see the message above", "error"); return;
+              toast(`Not saved: ${errorText()}`, "error"); return;
             }
             const note = clashBus ? ` · note: ${clashBus.code} shares this vehicle` : clashDriver ? ` · note: ${clashDriver.code} shares this driver` : "";
             toast(`${code} updated${note}`);
@@ -368,9 +364,9 @@ export function RoutesPage() {
       {moveOpen && (
         <MoveStopsModal title="Move stops" subtitle="Move the selected stops to another route" fieldLabel="Destination route" cta="Move stops"
           routes={routes} onClose={() => setMoveOpen(false)}
-          onSubmit={(code) => {
+          onSubmit={async (code) => {
             const n = selection.count;
-            dispatch({ type: "stop/move", ids: selection.ids, routeCode: code });
+            if (!(await dispatch({ type: "stop/move", ids: selection.ids, routeCode: code }))) { toast(`Not saved: ${errorText()}`, "error"); return; }
             selection.clear(); setMoveOpen(false); groups.openOnly(code);
             toast(`${plural(n, "stop")} moved to ${code}`);
           }} />
@@ -381,7 +377,7 @@ export function RoutesPage() {
           plates={vehicles.map((v) => v.reg)} freePlates={vehicles.filter((v) => !v.routeCode).map((v) => v.reg)}
           drivers={state.drivers} attendants={state.attendants} onClose={() => setWizardOpen(false)}
           onCreate={async (input) => {
-            if (!(await dispatch({ type: "route/add", input }))) { toast("Not saved — see the message above", "error"); return; }
+            if (!(await dispatch({ type: "route/add", input }))) { toast(`Not saved: ${errorText()}`, "error"); return; }
             groups.openOnly(input.code);
             setWizardOpen(false);
             toast(`Route ${input.code} created with ${plural(input.stops.length, "stop")}`);

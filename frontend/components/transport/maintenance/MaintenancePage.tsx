@@ -13,7 +13,7 @@ import { daysLeft, fmtDate, inr, num, plural, toISO, TODAY } from "@/lib/transpo
 import { downloadCsv, type CsvColumn } from "@/lib/transport/csv";
 import type { ServiceRecord, ServiceStatus, Vehicle } from "@/lib/transport/types";
 import {
-  Badge, BulkBar, Button, Chip, ConfirmDialog, Drawer, DrawerActions, DrawerHeader, DrawerHighlight, DrawerSection, EmptyLine, Field,
+  Badge, BulkBar, Button, SaveButton, Chip, ConfirmDialog, Drawer, DrawerActions, DrawerHeader, DrawerHighlight, DrawerSection, EmptyLine, Field,
   GroupCard, GroupedList, HeroPrimary, HeroSecondary, InfoRow, Input, KpiCard, KpiGrid, Modal, OutlineButton, PageHero, RowIconButton,
   SearchRow, Select, SmartFilter, T, TransportPage, useDeepLink, useGroupOpen, useMountSkeleton, useSelection, useTpToast,
   type FilterChip, type Tone,
@@ -37,7 +37,7 @@ type ConfirmState = { kind: "delete"; id: string } | { kind: "bulkDelete" };
 interface FormValues { vehicleId: string; date: string; type: string; status: ServiceStatus; odometer: string; cost: string; vendor: string; workDone: string }
 
 export function MaintenancePage() {
-  const { state, dispatch } = useTransport();
+  const { state, dispatch, errorText, saving } = useTransport();
   const vehicles = useVehicles();
   const records = state.maintenance;
   const { toast } = useTpToast();
@@ -121,6 +121,7 @@ export function MaintenancePage() {
 
   const complete = async (r: ServiceRecord) => {
     if (await dispatch({ type: "service/complete", ids: [r.id] })) toast(`${r.type} on ${vehicleOf(r.vehicleId)?.reg ?? ""} marked completed`);
+    else toast(`Not saved: ${errorText()}`, "error");
   };
 
   const submitForm = async (v: FormValues) => {
@@ -129,7 +130,7 @@ export function MaintenancePage() {
     const ok = form.mode === "add"
       ? await dispatch({ type: "service/add", input })
       : await dispatch({ type: "service/update", id: form.id, patch: input });
-    if (!ok) { toast("Not saved — see the message above", "error"); return; }
+    if (!ok) { toast(`Not saved: ${errorText()}`, "error"); return; }
     toast(form.mode === "add" ? `Service logged for ${vehicleOf(v.vehicleId)?.reg ?? ""}` : "Service record updated");
     groups.openOnly(v.vehicleId);
     setForm(null);
@@ -138,10 +139,13 @@ export function MaintenancePage() {
   const runConfirm = async () => {
     if (!confirm) return;
     const cf = confirm;
+    // Confirm only after the backend has saved; the dialog shows progress and stays open to retry on failure.
+    const n = selection.count;
+    const ok = await dispatch({ type: "service/delete", ids: cf.kind === "delete" ? [cf.id] : selection.ids });
+    if (!ok) { toast(`Not saved: ${errorText()}`, "error"); return; }
     setConfirm(null); setDrawerId(null);
-    // Confirm only after the backend has saved; on failure the sync banner shows the error.
-    if (cf.kind === "delete") { if (await dispatch({ type: "service/delete", ids: [cf.id] })) toast(`${cf.id} deleted`); }
-    else { const n = selection.count; const ids = selection.ids; selection.clear(); if (await dispatch({ type: "service/delete", ids })) toast(`${plural(n, "record")} deleted`); }
+    if (cf.kind === "delete") toast(`${cf.id} deleted`);
+    else { selection.clear(); toast(`${plural(n, "record")} deleted`); }
   };
   const confirmText = !confirm ? null : confirm.kind === "bulkDelete"
     ? { title: `Delete ${plural(selection.count, "record")}?`, message: "Their cost is removed from monthly spend.", label: "Delete all" }
@@ -243,7 +247,7 @@ export function MaintenancePage() {
                               <RowIconButton label={`View ${r.id}`} onClick={() => setDrawerId(r.id)}><Eye size={15} strokeWidth={1.8} /></RowIconButton>
                               <RowIconButton label={`Edit ${r.id}`} onClick={() => setForm({ mode: "edit", id: r.id })}><Pencil size={14} strokeWidth={1.8} /></RowIconButton>
                               {r.status !== "Completed" && (
-                                <RowIconButton label="Mark completed" onClick={() => complete(r)}><Check size={15} strokeWidth={2} /></RowIconButton>
+                                <RowIconButton label="Mark completed" disabled={saving} aria-busy={saving || undefined} onClick={() => { void complete(r); }}><Check size={15} strokeWidth={2} /></RowIconButton>
                               )}
                               <RowIconButton label={`Delete ${r.id}`} onClick={() => setConfirm({ kind: "delete", id: r.id })}><X size={15} strokeWidth={2} /></RowIconButton>
                             </td>
@@ -260,7 +264,7 @@ export function MaintenancePage() {
       </GroupedList>
 
       <BulkBar count={selection.count} onClear={selection.clear} actions={[
-        { label: "Mark completed", onClick: async () => { const n = selection.count; const ids = selection.ids; selection.clear(); if (await dispatch({ type: "service/complete", ids })) toast(`${plural(n, "record")} marked completed`); } },
+        { label: "Mark completed", onClick: async () => { const n = selection.count; const ids = selection.ids; if (await dispatch({ type: "service/complete", ids })) { selection.clear(); toast(`${plural(n, "record")} marked completed`) } else toast(`Not saved: ${errorText()}`, "error"); } },
         { label: "Export", onClick: () => {
           const list = records.filter((r) => selection.isSelected(r.id));
           downloadCsv("transport-maintenance-selected.csv", csv, list); toast(`Exported ${plural(list.length, "record")}`); selection.clear();
@@ -329,7 +333,7 @@ function ServiceForm({ mode, vehicles, types, vendors, initial, onClose, onSubmi
     <Modal open onClose={onClose} size="lg" title={mode === "add" ? "Log service" : "Edit service record"} subtitle="Odometer, vendor, cost and status"
       footer={<>
         <Button type="button" variant="ghost" onClick={onClose}>Cancel</Button>
-        <Button type="button" variant="primary" onClick={submit}>{mode === "add" ? "Log service" : "Save changes"}</Button>
+        <SaveButton onClick={submit}>{mode === "add" ? "Log service" : "Save changes"}</SaveButton>
       </>}>
       <div className="tp-form-grid">
         <Field label="Vehicle" required error={errors.vehicleId}>

@@ -13,6 +13,7 @@ import { createContext, useCallback, useContext, useEffect, useRef, useState } f
 import { createPortal } from "react-dom";
 import { AlertTriangle, X } from "lucide-react";
 import { HrButton } from "@/components/hr/HrUi";
+import { useTransport } from "@/lib/transport/store";
 import { T, Z } from "./tokens";
 
 // ─── Escape stack ────────────────────────────────────────────────────────────
@@ -84,11 +85,14 @@ const MODAL_WIDTH: Record<ModalSize, string> = {
 };
 
 export function Modal({
-  open, onClose, title, subtitle, size = "md", footer, children, priority = LAYER.modal,
+  open, onClose: requestClose, title, subtitle, size = "md", footer, children, priority = LAYER.modal,
 }: {
   open: boolean; onClose: () => void; title: string; subtitle?: string; size?: ModalSize;
   footer?: React.ReactNode; children: React.ReactNode; priority?: number;
 }) {
+  // A form stays open while its save is running (its result decides whether it closes).
+  const { saving } = useTransport();
+  const onClose = () => { if (!saving) requestClose(); };
   useOverlayLayer(open, priority, onClose);
   const ref = useAutoFocus(open);
   if (!open) return null;
@@ -130,11 +134,18 @@ export function Modal({
 // ─── Confirm dialog (HrConfirmDialog) ────────────────────────────────────────
 
 export function ConfirmDialog({
-  open, onClose, onConfirm, title, message, confirmLabel, tone = "danger",
+  open, onClose: requestClose, onConfirm, title, message, confirmLabel, tone = "danger", busy, busyLabel,
 }: {
-  open: boolean; onClose: () => void; onConfirm: () => void; title: string; message: string;
+  open: boolean; onClose: () => void; onConfirm: () => void | Promise<unknown>; title: string; message: string;
   confirmLabel: string; tone?: "danger" | "safe";
+  /** For actions that call the API directly (not through the store): running state + its label. */
+  busy?: boolean; busyLabel?: string;
 }) {
+  // While the confirmed action runs: spinner + progress label, no second click, no closing.
+  const store = useTransport();
+  const saving = !!busy || store.saving;
+  const busyText = (busy && busyLabel) || store.busyText;
+  const onClose = () => { if (!saving) requestClose(); };
   useOverlayLayer(open, LAYER.confirm, onClose);
   const ref = useAutoFocus(open);
   if (!open) return null;
@@ -161,8 +172,10 @@ export function ConfirmDialog({
             </div>
           </div>
           <div style={{ display: "flex", justifyContent: "flex-end", gap: 10, marginTop: 16 }}>
-            <HrButton type="button" variant="ghost" onClick={onClose}>Cancel</HrButton>
-            <HrButton type="button" variant={danger ? "red" : "primary"} onClick={onConfirm}>{confirmLabel}</HrButton>
+            <HrButton type="button" variant="ghost" onClick={onClose} disabled={saving}>Cancel</HrButton>
+            <HrButton type="button" variant={danger ? "red" : "primary"} onClick={() => { void onConfirm(); }} loading={saving} aria-busy={saving || undefined}>
+              {saving ? busyText || "Working…" : confirmLabel}
+            </HrButton>
           </div>
         </div>
       </div>

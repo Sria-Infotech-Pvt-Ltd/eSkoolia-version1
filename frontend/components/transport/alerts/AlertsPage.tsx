@@ -10,7 +10,7 @@ import { ageLabel, plural } from "@/lib/transport/format";
 import { downloadCsv, type CsvColumn } from "@/lib/transport/csv";
 import type { AlertSeverity, AlertType, TransportAlert } from "@/lib/transport/types";
 import {
-  Badge, BulkBar, Button, Chip, ConfirmDialog, Drawer, DrawerActions, DrawerHeader, DrawerHighlight, DrawerSection, EmptyLine,
+  Badge, BulkBar, Button, SaveButton, Chip, ConfirmDialog, Drawer, DrawerActions, DrawerHeader, DrawerHighlight, DrawerSection, EmptyLine,
   Field, GroupCard, GroupedList, HeroPrimary, HeroSecondary, InfoRow, Input, KpiCard, KpiGrid, Modal, OutlineButton, PageHero,
   RowIconButton, SearchRow, Select, SmartFilter, T, TransportPage, useDeepLink, useMountSkeleton, useSelection, useTpToast,
   type FilterChip, type Tone,
@@ -31,7 +31,7 @@ const SEV: Record<AlertSeverity, { color: string; bg: string; tone: Tone }> = {
 type ConfirmState = { kind: "resolve"; id: string } | { kind: "bulkResolve" };
 
 export function AlertsPage() {
-  const { state, dispatch } = useTransport();
+  const { state, dispatch, errorText, saving } = useTransport();
   const { alerts, routes } = state;
   const owner = useOwnerName();
   const { toast } = useTpToast();
@@ -108,24 +108,24 @@ export function AlertsPage() {
   });
 
   const toggleGroup = (s: AlertSeverity) => setOpen((o) => { const n = new Set(o); if (n.has(s)) n.delete(s); else n.add(s); return n; });
-  const acknowledge = (a: TransportAlert) => { dispatch({ type: "alert/ack", ids: [a.id], owner }); toast(`${a.id} acknowledged`); };
+  const acknowledge = async (a: TransportAlert) => {
+    if (await dispatch({ type: "alert/ack", ids: [a.id], owner })) toast(`${a.id} acknowledged`);
+    else toast(`Not saved: ${errorText()}`, "error");
+  };
   const resetFilters = () => { setFType(ALL); setFRoute(ALL); setFState("open"); setFRaised(ALL); setQuery(""); setApplied(""); };
   const runSearch = () => { const q = query.trim(); setApplied(q); if (q) setOpen(new Set(SEVERITIES)); };
 
+  // Confirm only after the backend has saved; the dialog shows progress and stays open to retry on failure.
   const runConfirm = async () => {
     if (!confirm) return;
     const cf = confirm;
+    const n = selection.count;
+    const ok = await dispatch({ type: "alert/resolve", ids: cf.kind === "resolve" ? [cf.id] : selection.ids, owner });
+    if (!ok) { toast(`Not saved: ${errorText()}`, "error"); return; }
     setConfirm(null);
     setDrawerId(null);
-    // Confirm only after the backend has saved; on failure the sync banner shows the error.
-    if (cf.kind === "resolve") {
-      if (await dispatch({ type: "alert/resolve", ids: [cf.id], owner })) toast(`${cf.id} resolved`);
-    } else {
-      const n = selection.count;
-      const ids = selection.ids;
-      selection.clear();
-      if (await dispatch({ type: "alert/resolve", ids, owner })) toast(`${plural(n, "alert")} resolved`);
-    }
+    if (cf.kind === "resolve") toast(`${cf.id} resolved`);
+    else { selection.clear(); toast(`${plural(n, "alert")} resolved`); }
   };
 
   const confirmText = (() => {
@@ -196,10 +196,10 @@ export function AlertsPage() {
                 <Chip tone="green">{resN} resolved</Chip>
               </>}
               extra={openN > 0 ? (
-                <OutlineButton onClick={() => {
-                  dispatch({ type: "alert/ack", ids: all.filter((a) => a.state === "open").map((a) => a.id), owner });
-                  toast(`All ${sev.toLowerCase()} alerts acknowledged`);
-                }}>Acknowledge all</OutlineButton>
+                <OutlineButton disabled={saving} aria-busy={saving || undefined} onClick={async () => {
+                  if (await dispatch({ type: "alert/ack", ids: all.filter((a) => a.state === "open").map((a) => a.id), owner })) toast(`All ${sev.toLowerCase()} alerts acknowledged`);
+                  else toast(`Not saved: ${errorText()}`, "error");
+                }}>{saving ? "Acknowledging…" : "Acknowledge all"}</OutlineButton>
               ) : undefined}>
               {rows.length === 0 ? <EmptyLine>No {sev.toLowerCase()} alerts match these filters.</EmptyLine> : (
                 <div style={{ padding: 12, display: "flex", flexDirection: "column", gap: 8 }}>
@@ -249,7 +249,7 @@ export function AlertsPage() {
       </GroupedList>
 
       <BulkBar count={selection.count} onClear={selection.clear} actions={[
-        { label: "Acknowledge", onClick: async () => { const n = selection.count; const ids = selection.ids; selection.clear(); if (await dispatch({ type: "alert/ack", ids, owner })) toast(`${plural(n, "alert")} acknowledged`); } },
+        { label: "Acknowledge", onClick: async () => { const n = selection.count; const ids = selection.ids; if (await dispatch({ type: "alert/ack", ids, owner })) { selection.clear(); toast(`${plural(n, "alert")} acknowledged`) } else toast(`Not saved: ${errorText()}`, "error"); } },
         { label: "Message", onClick: () => { toast("Messaging drivers isn't connected yet - no message was sent", "info"); } },
         { label: "Export", onClick: () => {
           const list = alerts.filter((a) => selection.isSelected(a.id));
@@ -291,7 +291,7 @@ export function AlertsPage() {
         <RaiseAlertModal routes={routes.map((r) => ({ code: r.code, label: `${r.code} · ${r.name}` }))} onClose={() => setRaiseOpen(false)}
           onSubmit={async (v) => {
             if (!(await dispatch({ type: "alert/raise", input: { ...v, state: "acknowledged", owner, detail: `Raised manually by ${owner}` } }))) {
-              toast("Not raised — see the message above", "error"); return;
+              toast(`Not raised: ${errorText()}`, "error"); return;
             }
             setOpen((o) => new Set(o).add(v.severity));
             setRaiseOpen(false);
@@ -325,7 +325,7 @@ function RaiseAlertModal({
     <Modal open onClose={onClose} size="md" title="Raise alert" subtitle="Log a manual incident for the transport desk"
       footer={<>
         <Button type="button" variant="ghost" onClick={onClose}>Cancel</Button>
-        <Button type="button" variant="primary" onClick={submit}>Raise alert</Button>
+        <SaveButton onClick={submit}>Raise alert</SaveButton>
       </>}>
       <div className="tp-form-grid">
         <div style={{ gridColumn: "1 / -1" }}>

@@ -36,6 +36,7 @@ function nowLabel(): string {
 
 export function ReportsPage() {
   const { state, dispatch } = useTransport();
+  const [downloading, setDownloading] = useState<"PDF" | "Excel" | null>(null);
   const { reports, recentReports, routes } = state;
   const { toast } = useTpToast();
   const loading = useMountSkeleton();
@@ -112,6 +113,8 @@ export function ReportsPage() {
 
   /** Downloads the previewed table and logs it under "Recently generated". */
   const download = async (report: string, p: ReportPreview, format: "PDF" | "Excel", scope: Scope) => {
+    if (downloading) return;
+    setDownloading(format);
     let fellBackToCsv = false;
     try {
       if (format === "PDF") await downloadPdf(report, p); else await downloadXlsx(report, p);
@@ -120,6 +123,8 @@ export function ReportsPage() {
       fellBackToCsv = true;
       downloadCsv(`${report}.csv`, p.columns.map((col, i) => ({ header: col.header, value: (row: string[]) => row[i] })),
         [...p.rows.map((r) => r.map((x) => x.text)), p.totals]);
+    } finally {
+      setDownloading(null);
     }
     if (fellBackToCsv) {
       // A CSV is neither the PDF nor the Excel file that was asked for, so it isn't logged as one.
@@ -247,8 +252,8 @@ export function ReportsPage() {
             <Button type="button" variant="ghost" onClick={() => setPreview(null)}>Close</Button>
             <span style={{ flex: 1 }} />
             <Button type="button" variant="ghost" onClick={() => { const r = preview.report; setPreview(null); openGenerate(r); }}>Change filters</Button>
-            <Button type="button" variant="soft" onClick={() => { void download(preview.report, previewData, "Excel", preview.scope); }}>Download Excel</Button>
-            <Button type="button" variant="primary" onClick={() => { void download(preview.report, previewData, "PDF", preview.scope); }}>Download PDF</Button>
+            <Button type="button" variant="soft" disabled={!!downloading} loading={downloading === "Excel"} onClick={() => { void download(preview.report, previewData, "Excel", preview.scope); }}>{downloading === "Excel" ? "Exporting…" : "Download Excel"}</Button>
+            <Button type="button" variant="primary" disabled={!!downloading} loading={downloading === "PDF"} onClick={() => { void download(preview.report, previewData, "PDF", preview.scope); }}>{downloading === "PDF" ? "Exporting…" : "Download PDF"}</Button>
           </>}>
           <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(160px, 1fr))", gap: 12, marginBottom: 16 }}>
             {previewData.stats.map((s) => (

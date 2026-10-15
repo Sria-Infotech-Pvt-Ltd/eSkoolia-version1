@@ -5,7 +5,7 @@ import { capacityOf, classLine } from "@/lib/transport/catalog";
 import { initials, inr, plural } from "@/lib/transport/format";
 import type { AllocationStatus, Student, TransportRoute, Vehicle } from "@/lib/transport/types";
 import {
-  Button, Field, InfoRow, LAYER, Modal, Select, StatusBadge, StepPills, T, useTpToast,
+  Button, SaveButton, Field, InfoRow, LAYER, Modal, Select, StatusBadge, StepPills, T, useTpToast,
 } from "@/components/transport/ui";
 
 export function EditAllocationModal({
@@ -36,7 +36,7 @@ export function EditAllocationModal({
     <Modal open onClose={onClose} size="md" title="Edit allocation" subtitle="Route, pickup point and status"
       footer={<>
         <Button type="button" variant="ghost" onClick={onClose}>Cancel</Button>
-        <Button type="button" variant="primary" onClick={submit}>Save allocation</Button>
+        <SaveButton onClick={submit}>Save allocation</SaveButton>
       </>}>
       <div className="tp-form-grid">
         <Field label="Route" required error={errors.route}>
@@ -105,7 +105,7 @@ export function BulkAllocateWizard({
         {step > 1 && <Button type="button" variant="ghost" onClick={() => setStep(step - 1)}>Back</Button>}
         {step < 3
           ? <Button type="button" variant="primary" onClick={() => goTo(step + 1)}>Next</Button>
-          : <Button type="button" variant="primary" onClick={() => onAllocate([...picked], routeCode, stopId)}>Allocate {plural(picked.size, "student")}</Button>}
+          : <SaveButton onClick={() => onAllocate([...picked], routeCode, stopId)}>Allocate {plural(picked.size, "student")}</SaveButton>}
       </>}>
       <div style={{ marginBottom: 18 }}>
         <StepPills step={step} setStep={(n) => { if (n < step) setStep(n); else goTo(n); }} steps={["Students", "Route & stop", "Review"]} />

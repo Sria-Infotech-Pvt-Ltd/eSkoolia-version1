@@ -34,8 +34,12 @@ interface Ctx {
   /** Saves through the API, then reloads. Resolves false (and sets `error`) when the save failed. */
   dispatch: (action: TransportAction) => Promise<boolean>;
   status: LoadStatus;
-  /** True while an action is being saved. */
+  /** True from the moment an action is dispatched until it (and any queued after it) has finished. */
   saving: boolean;
+  /** Progress label for the running action ("Adding…", "Saving…", "Deleting…" …); "" when idle. */
+  busyText: string;
+  /** Message of the most recent failed load / save (for toasts); "" when none. */
+  errorText: () => string;
   /** Last load / save error, shown by the Transport layout. */
   error: string | null;
   clearError: () => void;
@@ -46,6 +50,21 @@ interface Ctx {
 
 const TransportContext = createContext<Ctx | null>(null);
 
+/** Progress label shown on the button / dialog that started an action. */
+const BUSY_TEXT: Partial<Record<TransportAction["type"], string>> = {
+  "vehicle/add": "Adding…", "route/add": "Adding…", "stop/add": "Adding…", "driver/add": "Adding…", "attendant/add": "Adding…",
+  "service/add": "Adding…", "fuel/add": "Adding…", "alert/raise": "Raising…",
+  "vehicle/archive": "Archiving…", "route/archive": "Archiving…", "driver/archive": "Archiving…", "attendant/archive": "Archiving…",
+  "stop/remove": "Deleting…", "service/delete": "Deleting…", "fuel/delete": "Deleting…", "student/remove": "Removing…",
+  "vehicle/assignRoute": "Assigning…", "driver/assignVehicle": "Assigning…", "attendant/assignBus": "Assigning…", "student/allocate": "Allocating…",
+  "stop/move": "Moving…", "stop/reorder": "Reordering…", "alert/ack": "Acknowledging…", "alert/resolve": "Resolving…",
+  "service/complete": "Completing…", "fuel/verify": "Verifying…", "driver/deactivate": "Deactivating…", "report/add": "Exporting…",
+};
+
+function busyTextOf(type: TransportAction["type"]): string {
+  return BUSY_TEXT[type] ?? (type.endsWith("/update") || type === "vehicle/breakdown" ? "Updating…" : "Saving…");
+}
+
 function messageOf(error: unknown): string {
   if (error instanceof Error && error.message && error.message !== "401") return error.message;
   return "Something went wrong. Please try again.";
@@ -55,7 +74,12 @@ export function TransportProvider({ children }: { children: React.ReactNode }) {
   const [state, setState] = useState<TransportData>(emptyTransportData);
   const [status, setStatus] = useState<LoadStatus>("loading");
   const [saving, setSaving] = useState(false);
+  const [busyText, setBusyText] = useState("");
   const [error, setError] = useState<string | null>(null);
+  const errorRef = useRef<string | null>(null);
+  errorRef.current = error;
+  // Actions dispatched and not yet finished (they run one at a time, in order).
+  const inFlight = useRef(0);
   const stateRef = useRef(state);
   stateRef.current = state;
   const queue = useRef<Promise<unknown>>(Promise.resolve());
@@ -83,27 +107,35 @@ export function TransportProvider({ children }: { children: React.ReactNode }) {
   }, []);
 
   const dispatch = useCallback((action: TransportAction) => {
+    // Busy from the click itself, so the button disables before the request starts (no double submits).
+    inFlight.current += 1;
+    setSaving(true);
+    setBusyText(busyTextOf(action.type));
     const run = queue.current.then(async () => {
-      setSaving(true);
+      setBusyText(busyTextOf(action.type));
       try {
         await performAction(action, stateRef.current);
         if (action.type === "attendance/set") await loadRegister(action.date, action.shift);
         return true;
       } catch (e) {
-        setError(messageOf(e));
+        const message = messageOf(e);
+        errorRef.current = message;
+        setError(message);
         return false;
       } finally {
         await reload();
-        setSaving(false);
+        inFlight.current -= 1;
+        if (inFlight.current === 0) { setSaving(false); setBusyText(""); }
       }
     });
     queue.current = run.catch(() => undefined);
     return run;
   }, [reload, loadRegister]);
 
+  const errorText = useCallback(() => errorRef.current ?? "", []);
   const value = useMemo<Ctx>(() => ({
-    state, dispatch, status, saving, error, clearError: () => setError(null), reload, loadRegister,
-  }), [state, dispatch, status, saving, error, reload, loadRegister]);
+    state, dispatch, status, saving, busyText, error, errorText, clearError: () => setError(null), reload, loadRegister,
+  }), [state, dispatch, status, saving, busyText, error, errorText, reload, loadRegister]);
   return <TransportContext.Provider value={value}>{children}</TransportContext.Provider>;
 }
 

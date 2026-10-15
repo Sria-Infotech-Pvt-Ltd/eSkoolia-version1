@@ -8,6 +8,7 @@ import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { ChevronDown, MoreHorizontal, Search } from "lucide-react";
 import { Chip, ExportChip, OutlineButton, type Tone } from "./controls";
 import { LAYER, TpPortal, useOverlayLayer } from "./overlays";
+import { useTransport } from "@/lib/transport/store";
 import { T, Z } from "./tokens";
 
 // ─── State hooks ─────────────────────────────────────────────────────────────
@@ -346,9 +347,22 @@ export function MoreMenu({ open, onToggle, onClose, items, label }: {
 // ─── Floating bulk-action bar ────────────────────────────────────────────────
 
 export function BulkBar({ count, actions, onClear }: {
-  count: number; actions: { label: string; onClick: () => void }[]; onClear: () => void;
+  count: number; actions: { label: string; onClick: () => void | Promise<unknown> }[]; onClear: () => void;
 }) {
-  if (count === 0) return null;
+  // The clicked action shows its progress label until the save finishes; the bar stays up meanwhile.
+  const { saving, busyText } = useTransport();
+  const [active, setActive] = useState<{ label: string; count: number } | null>(null);
+  const started = useRef(false);
+  useEffect(() => {
+    if (!active) return;
+    if (saving) { started.current = true; return; }
+    if (started.current) { started.current = false; setActive(null); return; }
+    // Instant actions (export, open a modal) never start a save: release right away.
+    const t = setTimeout(() => setActive(null), 150);
+    return () => clearTimeout(t);
+  }, [active, saving]);
+  if (count === 0 && !active) return null;
+  const busy = !!active && saving;
   // Outer element centres; inner element animates (hr-fade-up also uses transform).
   return (
     <div role="region" aria-label="Bulk actions" style={{
@@ -358,10 +372,20 @@ export function BulkBar({ count, actions, onClear }: {
         background: T.ink, color: "#fff", borderRadius: 999, padding: "8px 16px", display: "flex", alignItems: "center", gap: 10,
         boxShadow: T.shadowBulk, whiteSpace: "nowrap", overflowX: "auto",
       }}>
-        <span style={{ fontSize: 12.5, fontWeight: 700 }}>{count} selected</span>
+        <span style={{ fontSize: 12.5, fontWeight: 700 }}>{count || active?.count || 0} selected</span>
         <span aria-hidden style={{ width: 1, height: 18, background: "rgba(255,255,255,.2)" }} />
-        {actions.map((a) => <button key={a.label} type="button" className="tp-bulk-btn" onClick={a.onClick}>{a.label}</button>)}
-        <button type="button" onClick={onClear} className="tp-link-reset" style={{ fontSize: 12, fontWeight: 700, color: "rgba(255,255,255,.7)", padding: "0 4px" }}>Clear</button>
+        {actions.map((a) => {
+          const running = busy && active?.label === a.label;
+          return (
+            <button key={a.label} type="button" className="tp-bulk-btn" disabled={saving} aria-busy={running || undefined}
+              style={saving ? { opacity: running ? 1 : 0.5, cursor: "not-allowed" } : undefined}
+              onClick={() => { setActive({ label: a.label, count }); void a.onClick(); }}>
+              {running && <span aria-hidden className="animate-spin" style={{ display: "inline-block", width: 11, height: 11, marginRight: 6, border: "2px solid currentColor", borderTopColor: "transparent", borderRadius: 999, verticalAlign: "-1px" }} />}
+              {running ? busyText || "Saving…" : a.label}
+            </button>
+          );
+        })}
+        <button type="button" onClick={onClear} disabled={saving} className="tp-link-reset" style={{ fontSize: 12, fontWeight: 700, color: "rgba(255,255,255,.7)", padding: "0 4px" }}>Clear</button>
       </div>
     </div>
   );

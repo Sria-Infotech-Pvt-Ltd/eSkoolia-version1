@@ -41,9 +41,10 @@ export function AttendanceKpi({
   );
 }
 
-export function Switch({ checked, onChange, label }: { checked: boolean; onChange: () => void; label: string }) {
+export function Switch({ checked, onChange, label, disabled }: { checked: boolean; onChange: () => void; label: string; disabled?: boolean }) {
   return (
-    <button type="button" role="switch" aria-checked={checked} aria-label={label} className="tp-switch" onClick={onChange}>
+    <button type="button" role="switch" aria-checked={checked} aria-label={label} className="tp-switch" onClick={onChange}
+      disabled={disabled} aria-busy={disabled || undefined} style={disabled ? { opacity: 0.55, cursor: "wait" } : undefined}>
       <span />
     </button>
   );

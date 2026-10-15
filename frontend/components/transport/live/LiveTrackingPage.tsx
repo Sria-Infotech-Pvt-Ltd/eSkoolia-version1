@@ -59,7 +59,10 @@ function useLiveFeed(on: boolean) {
   const [positions, setPositions] = useState<Map<number, LivePosition>>(new Map());
   const [error, setError] = useState<string | null>(null);
   const [fetchedAt, setFetchedAt] = useState<Date | null>(null);
-  const refresh = useCallback(async () => {
+  const [refreshing, setRefreshing] = useState(false);
+  // `manual` = the Refresh button (shows "Refreshing…"); the 10 s background poll stays silent.
+  const refresh = useCallback(async (manual = false) => {
+    if (manual) setRefreshing(true);
     try {
       const rows = await loadLive();
       setPositions(new Map(rows.map((r) => [r.vehiclePk, r])));
@@ -67,6 +70,8 @@ function useLiveFeed(on: boolean) {
       setError(null);
     } catch (e) {
       setError(e instanceof Error ? e.message : "GPS feed unavailable");
+    } finally {
+      if (manual) setRefreshing(false);
     }
   }, []);
   useEffect(() => {
@@ -75,7 +80,7 @@ function useLiveFeed(on: boolean) {
     const id = setInterval(() => { void refresh(); }, POLL_MS);
     return () => clearInterval(id);
   }, [on, refresh]);
-  return { positions, error, fetchedAt, refresh };
+  return { positions, error, fetchedAt, refresh, refreshing };
 }
 
 function statusBadge(b: BusState): { tone: Tone; text: string } {
@@ -96,7 +101,7 @@ function Micro({ label, children, color }: { label: string; children: React.Reac
 }
 
 export function LiveTrackingPage() {
-  const { state, dispatch } = useTransport();
+  const { state, dispatch, saving, errorText } = useTransport();
   const { routes, settings } = state;
   const owner = useOwnerName();
   const { toast } = useTpToast();
@@ -222,6 +227,7 @@ export function LiveTrackingPage() {
       },
     });
     if (ok) toast(`Alert raised for ${sel.plate} — see Alerts tab`);
+    else toast(`Not raised: ${errorText()}`, "error");
   };
 
   const livePill = (
@@ -248,8 +254,8 @@ export function LiveTrackingPage() {
         sub="Every bus on a route, positioned from its GPS feed. Select a bus to follow it and see its stop-by-stop progress."
         actions={<>
           <HeroSecondary download={false} onClick={() => setPlaying((p) => !p)}>{playing ? "Pause feed" : "Resume feed"}</HeroSecondary>
-          <HeroPrimary icon={false} onClick={() => { void feed.refresh(); }}>
-            <Navigation size={15} strokeWidth={1.8} /> Refresh now
+          <HeroPrimary icon={false} disabled={feed.refreshing} aria-busy={feed.refreshing || undefined} onClick={() => { void feed.refresh(true); }}>
+            <Navigation size={15} strokeWidth={1.8} /> {feed.refreshing ? "Refreshing…" : "Refresh now"}
           </HeroPrimary>
         </>} />
 
@@ -338,7 +344,7 @@ export function LiveTrackingPage() {
                 {sel?.driverPhone
                   ? <a className="tp-btn-outline" href={`tel:${sel.driverPhone.replace(/\s/g, "")}`}>Call driver</a>
                   : <OutlineButton disabled onClick={() => undefined}>Call driver</OutlineButton>}
-                <OutlineButton disabled={!sel} onClick={() => { void raiseAlert(); }}>Raise alert</OutlineButton>
+                <OutlineButton disabled={!sel || saving} aria-busy={saving || undefined} onClick={() => { void raiseAlert(); }}>{saving ? "Raising…" : "Raise alert"}</OutlineButton>
               </div>
             </div>
 

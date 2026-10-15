@@ -5,10 +5,25 @@
  * HrBadge is wrapped to add the spec's slate tone.
  */
 import { Download, Plus } from "lucide-react";
-import { HrBadge } from "@/components/hr/HrUi";
+import { HrBadge, HrButton } from "@/components/hr/HrUi";
+import { useTransport } from "@/lib/transport/store";
 import { T } from "./tokens";
 
 export { HrButton as Button } from "@/components/hr/HrUi";
+
+/**
+ * Submit button for forms that save through the Transport store: while a save is
+ * running it shows the spinner and the action's progress label ("Adding…",
+ * "Saving…" …) and is disabled, so it can't be submitted twice.
+ */
+export function SaveButton({ children, variant = "primary", disabled, ...rest }: React.ComponentProps<typeof HrButton>) {
+  const { saving, busyText } = useTransport();
+  return (
+    <HrButton type="button" variant={variant} {...rest} disabled={disabled} loading={saving} aria-busy={saving || undefined}>
+      {saving ? busyText || "Saving…" : children}
+    </HrButton>
+  );
+}
 
 type BtnProps = React.ButtonHTMLAttributes<HTMLButtonElement>;
 

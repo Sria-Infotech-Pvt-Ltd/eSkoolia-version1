@@ -14,7 +14,7 @@ import { TODAY, clockOf, fmtTime, initials, plural, toISO } from "@/lib/transpor
 import { downloadCsv, type CsvColumn } from "@/lib/transport/csv";
 import type { AttendanceEntry, AttendanceShift, RouteStop, Student, TransportRoute } from "@/lib/transport/types";
 import {
-  AttendanceKpi, Avatar, Badge, BulkBar, Button, Chip, ConfirmDialog, ContextBar, Drawer, DrawerActions, DrawerHeader,
+  AttendanceKpi, Avatar, Badge, BulkBar, Button, SaveButton, Chip, ConfirmDialog, ContextBar, Drawer, DrawerActions, DrawerHeader,
   DrawerHighlight, DrawerSection, EmptyLine, Field, GroupCard, GroupedList, HeroPrimary, HeroSecondary, IdentityCell, InfoRow,
   Input, KpiGrid, ListFooter, Modal, OutlineButton, PageHero, RowIconButton, SearchRow, Select, ShowMoreRow, SmartFilter,
   Switch, T, TransportPage, useDeepLink, useGroupOpen, useMountSkeleton, useSelection, useTpToast, type FilterChip,
@@ -43,7 +43,8 @@ function Tag({ color, bg, children, title }: { color: string; bg: string; childr
 }
 
 export function AttendancePage() {
-  const { state, dispatch, loadRegister, status } = useTransport();
+  const { state, dispatch, loadRegister, status, saving, errorText } = useTransport();
+  const [notifying, setNotifying] = useState(false);
   const { routes, students } = state;
   const { toast } = useTpToast();
   const loading = useMountSkeleton();
@@ -128,10 +129,13 @@ export function AttendancePage() {
     ? "Past register — corrections are saved with your name"
     : "GPS stop arrivals fill boarded lines automatically; mark the rest here";
 
-  const write = (ids: string[], patch: (e: AttendanceEntry) => AttendanceEntry, change: string) => {
+  /** Saves register lines; resolves true when saved (a failure is toasted with the backend's message). */
+  const write = async (ids: string[], patch: (e: AttendanceEntry) => AttendanceEntry, change: string) => {
     const entries: Record<string, AttendanceEntry> = {};
     ids.forEach((id) => { const l = byId(id); if (l) entries[id] = patch(l.entry); });
-    void dispatch({ type: "attendance/set", shift, date, entries, change });
+    const ok = await dispatch({ type: "attendance/set", shift, date, entries, change });
+    if (!ok) toast(`Not saved: ${errorText()}`, "error");
+    return ok;
   };
 
   const scheduled = (l: Line) => (l.stop ? fmtTime(shift === "morning" ? l.stop.pickupTime : l.stop.dropTime) : "—");
@@ -164,20 +168,23 @@ export function AttendancePage() {
   const runSearch = () => { const q = query.trim(); setApplied(q); if (q) groups.expandAll(routes.map((r) => r.code)); };
   const resetFilters = () => { setFClass(ALL); setFBoard(ALL); setFFlag(ALL); setFStop(ALL); setQuery(""); setApplied(""); };
 
-  const toggleBoarded = (l: Line) => {
+  const toggleBoarded = async (l: Line) => {
     const next = !l.entry.boarded;
-    write([l.student.id], (e) => ({ ...e, boarded: next, late: next ? e.late : false }), next ? "marked boarded" : "marked not boarded");
-    toast(next ? `${l.student.name} marked boarded` : `${l.student.name} marked not boarded`);
+    if (await write([l.student.id], (e) => ({ ...e, boarded: next, late: next ? e.late : false }), next ? "marked boarded" : "marked not boarded")) {
+      toast(next ? `${l.student.name} marked boarded` : `${l.student.name} marked not boarded`);
+    }
   };
-  const toggleLate = (l: Line) => {
+  const toggleLate = async (l: Line) => {
     const next = !l.entry.late;
-    write([l.student.id], (e) => ({ ...e, late: next, boarded: true }), next ? "flagged late" : "late flag cleared");
-    toast(next ? `${l.student.name} flagged late` : "Late flag cleared");
+    if (await write([l.student.id], (e) => ({ ...e, late: next, boarded: true }), next ? "flagged late" : "late flag cleared")) {
+      toast(next ? `${l.student.name} flagged late` : "Late flag cleared");
+    }
   };
 
   const notBoardedNow = lines.filter((l) => !l.entry.boarded).length;
   const notifyAbsent = async () => {
-    setNotifyOpen(false); setDrawerId(null);
+    if (notifying) return;
+    setNotifying(true);
     try {
       const res = await tsend<{ absent: number; sent: number; skipped: number; failed: number }>("/transport-attendance/notify-absent/", "POST", { date, shift });
       // Attempts that were skipped (SMS/email not configured) or failed are not reported as sent.
@@ -185,8 +192,12 @@ export function AttendancePage() {
       if (res.skipped) parts.push(`${res.skipped} skipped — SMS/email not configured`);
       if (res.failed) parts.push(`${res.failed} failed`);
       toast(parts.join(" · "), res.failed || (res.skipped && !res.sent) ? "error" : "info");
+      setNotifyOpen(false); setDrawerId(null);
     } catch (e) {
+      // Dialog stays open so the request can be retried.
       toast(e instanceof Error ? e.message : "Couldn't send notifications", "error");
+    } finally {
+      setNotifying(false);
     }
   };
   const drawer = byId(drawerId);
@@ -256,11 +267,12 @@ export function AttendancePage() {
                 <Chip tone={off > 0 ? "red" : "grey"}>{off} not boarded</Chip>
                 <Chip tone="purple">{rows.filter((l) => l.entry.late).length} late</Chip>
               </>}
-              extra={<OutlineButton onClick={() => {
+              extra={<OutlineButton disabled={saving} aria-busy={saving || undefined} onClick={async () => {
                 const all = lines.filter((l) => l.route.code === route.code);
-                write(all.map((l) => l.student.id), (e) => ({ ...e, boarded: true }), "marked all boarded");
-                toast(`All ${all.length} students on ${route.busReg} marked boarded`);
-              }}>Mark all boarded</OutlineButton>}>
+                if (await write(all.map((l) => l.student.id), (e) => ({ ...e, boarded: true }), "marked all boarded")) {
+                  toast(`All ${all.length} students on ${route.busReg} marked boarded`);
+                }
+              }}>{saving ? "Saving…" : "Mark all boarded"}</OutlineButton>}>
               {rows.length === 0 ? <EmptyLine>No students on this bus yet.</EmptyLine> : (
                 <div className="tp-scroll-x">
                   <table className="tp-table" style={{ minWidth: 1100 }}>
@@ -284,7 +296,7 @@ export function AttendancePage() {
                             <td>{l.stop?.name ?? "—"}</td>
                             <td className="tp-mono" style={{ fontSize: 12.5 }}>{scheduled(l)}</td>
                             <td className="tp-mono" style={{ fontSize: 12.5, color: sc.color }}>{sc.text}</td>
-                            <td><Switch checked={l.entry.boarded} onChange={() => toggleBoarded(l)} label={`Boarded: ${s.name}`} /></td>
+                            <td><Switch checked={l.entry.boarded} onChange={() => { void toggleBoarded(l); }} label={`Boarded: ${s.name}`} disabled={saving} /></td>
                             <td>
                               <div style={{ display: "flex", gap: 4, flexWrap: "wrap" }}>
                                 {l.entry.late && <Tag color="#B4721B" bg="#FDF1DC">LATE</Tag>}
@@ -296,7 +308,7 @@ export function AttendancePage() {
                             </td>
                             <td style={{ textAlign: "right", whiteSpace: "nowrap" }}>
                               <RowIconButton label={`View ${s.name}`} onClick={() => setDrawerId(s.id)}><Eye size={15} strokeWidth={1.8} /></RowIconButton>
-                              <RowIconButton label="Toggle late" onClick={() => toggleLate(l)}><Clock size={14} strokeWidth={1.8} /></RowIconButton>
+                              <RowIconButton label="Toggle late" disabled={saving} onClick={() => { void toggleLate(l); }}><Clock size={14} strokeWidth={1.8} /></RowIconButton>
                               <RowIconButton label="Add note" onClick={() => setNoteId(s.id)}><FileText size={14} strokeWidth={1.8} /></RowIconButton>
                             </td>
                           </tr>
@@ -314,8 +326,8 @@ export function AttendancePage() {
       </GroupedList>
 
       <BulkBar count={selection.count} onClear={selection.clear} actions={[
-        { label: "Mark boarded", onClick: () => { const n = selection.count; write(selection.ids, (e) => ({ ...e, boarded: true }), "bulk marked boarded"); selection.clear(); toast(`${plural(n, "student")} marked boarded`); } },
-        { label: "Mark absent", onClick: () => { const n = selection.count; write(selection.ids, (e) => ({ ...e, boarded: false, late: false }), "bulk marked absent"); selection.clear(); toast(`${plural(n, "student")} marked absent`); } },
+        { label: "Mark boarded", onClick: async () => { const n = selection.count; if (await write(selection.ids, (e) => ({ ...e, boarded: true }), "bulk marked boarded")) { selection.clear(); toast(`${plural(n, "student")} marked boarded`); } } },
+        { label: "Mark absent", onClick: async () => { const n = selection.count; if (await write(selection.ids, (e) => ({ ...e, boarded: false, late: false }), "bulk marked absent")) { selection.clear(); toast(`${plural(n, "student")} marked absent`); } } },
         { label: "Export", onClick: () => {
           const list = lines.filter((l) => selection.isSelected(l.student.id));
           downloadCsv("boarding-register-selected.csv", csv, list); toast(`Exported ${plural(list.length, "student")}`); selection.clear();
@@ -358,8 +370,8 @@ export function AttendancePage() {
 
       {noteLine && (
         <NoteModal key={noteLine.student.id} onClose={() => setNoteId(null)}
-          onSave={(text, reason) => {
-            write([noteLine.student.id], (e) => ({ ...e, note: `${text} (${reason})` }), "note added");
+          onSave={async (text, reason) => {
+            if (!(await write([noteLine.student.id], (e) => ({ ...e, note: `${text} (${reason})` }), "note added"))) return;
             setNoteId(null);
             toast("Note saved");
           }} />
@@ -368,8 +380,8 @@ export function AttendancePage() {
       <ConfirmDialog open={notifyOpen} onClose={() => setNotifyOpen(false)} tone="safe"
         title={`Notify ${plural(notBoardedNow, "parent")}?`}
         message={`Guardians of allocated children not boarded on the ${dateLabel} ${shift === "morning" ? "morning pickup" : "afternoon drop"} (including unmarked lines) get an SMS / email through the school's messaging settings.`}
-        confirmLabel="Send notifications"
-        onConfirm={() => { void notifyAbsent(); }} />
+        confirmLabel="Send notifications" busy={notifying} busyLabel="Sending…"
+        onConfirm={() => notifyAbsent()} />
     </TransportPage>
   );
 }
@@ -387,7 +399,7 @@ function NoteModal({ onClose, onSave }: { onClose: () => void; onSave: (text: st
     <Modal open onClose={onClose} size="sm" title="Add note" subtitle="Visible to the attendant and the class teacher"
       footer={<>
         <Button type="button" variant="ghost" onClick={onClose}>Cancel</Button>
-        <Button type="button" variant="primary" onClick={submit}>Save note</Button>
+        <SaveButton onClick={submit}>Save note</SaveButton>
       </>}>
       <div style={{ display: "flex", flexDirection: "column", gap: 16 }}>
         <Field label="Note" required error={error}>

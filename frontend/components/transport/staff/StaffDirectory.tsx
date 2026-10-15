@@ -13,7 +13,7 @@ import { daysLeft, fmtDate, initials, plural } from "@/lib/transport/format";
 import { downloadCsv, type CsvColumn } from "@/lib/transport/csv";
 import type { Attendant, Driver, ShiftGroup, StaffStatus } from "@/lib/transport/types";
 import {
-  Avatar, Badge, BulkBar, Button, CellStack, Chip, ConfirmDialog, Drawer, DrawerActions, DrawerHeader, DrawerHighlight,
+  Avatar, Badge, BulkBar, Button, SaveButton, CellStack, Chip, ConfirmDialog, Drawer, DrawerActions, DrawerHeader, DrawerHighlight,
   DrawerSection, EmptyLine, Field, GroupCard, GroupedList, HeroPrimary, HeroSecondary, IdPill, IdentityCell, InfoRow,
   Input, KpiCard, KpiGrid, ListFooter, Modal, MoreMenu, OutlineButton, PageHero, Plate, RowIconButton, SearchRow, Select,
   SmartFilter, StatusBadge, T, TransportPage, useDeepLink, useGroupOpen, useMountSkeleton, useSelection, useTpToast,
@@ -96,7 +96,7 @@ type ConfirmState = { kind: "deactivate"; id: string } | { kind: "bulkArchive" }
 
 export function StaffDirectory({ kind }: { kind: StaffKind }) {
   const c = CFG[kind];
-  const { state, dispatch } = useTransport();
+  const { state, dispatch, errorText } = useTransport();
   const vehicles = useVehicles();
   const { toast } = useTpToast();
   const loading = useMountSkeleton();
@@ -188,6 +188,7 @@ export function StaffDirectory({ kind }: { kind: StaffKind }) {
       ? await dispatch({ type: "driver/update", id: r.id, patch: { status: "On leave" } })
       : await dispatch({ type: "attendant/update", id: r.id, patch: { status: "On leave" } });
     if (ok) toast(`${r.name} marked on leave`);
+    else toast(`Not saved: ${errorText()}`, "error");
   };
 
   const submitForm = async (v: FormValues) => {
@@ -206,28 +207,28 @@ export function StaffDirectory({ kind }: { kind: StaffKind }) {
         ? await dispatch({ type: "attendant/add", staffPk: Number(v.staffPk), input })
         : await dispatch({ type: "attendant/update", id: form.id, patch: input });
     }
-    if (!ok) { toast("Not saved — see the message above", "error"); return; }
+    if (!ok) { toast(`Not saved: ${errorText()}`, "error"); return; }
     toast(form.mode === "add" ? `${name} ${c.addedAs}` : `${name} updated`);
     groups.openOnly(v.shift);
     setForm(null);
   };
 
-  const runConfirm = () => {
+  // The dialog stays open (showing progress) until the save finishes; a failure keeps it open to retry.
+  const runConfirm = async () => {
     if (!confirm) return;
     const cf = confirm;
+    const r = cf.kind === "deactivate" ? byId(cf.id) : null;
+    const n = selection.count;
+    const ok = cf.kind === "deactivate"
+      ? await dispatch(kind === "driver"
+        ? { type: "driver/deactivate", id: cf.id }
+        : { type: "attendant/update", id: cf.id, patch: { status: "Inactive", busReg: "Unassigned" } })
+      : await dispatch(kind === "driver" ? { type: "driver/archive", ids: selection.ids } : { type: "attendant/archive", ids: selection.ids });
+    if (!ok) { toast(`Not saved: ${errorText()}`, "error"); return; }
     setConfirm(null);
     setDrawerId(null);
-    if (cf.kind === "deactivate") {
-      const r = byId(cf.id);
-      if (kind === "driver") dispatch({ type: "driver/deactivate", id: cf.id });
-      else dispatch({ type: "attendant/update", id: cf.id, patch: { status: "Inactive", busReg: "Unassigned" } });
-      if (r) toast(`${r.name} deactivated`);
-    } else {
-      const n = selection.count;
-      dispatch(kind === "driver" ? { type: "driver/archive", ids: selection.ids } : { type: "attendant/archive", ids: selection.ids });
-      selection.clear();
-      toast(`${plural(n, c.noun)} archived`);
-    }
+    if (cf.kind === "deactivate") toast(`${r?.name ?? "Staff member"} deactivated`);
+    else { selection.clear(); toast(`${plural(n, c.noun)} archived`); }
   };
 
   const confirmText = (() => {
@@ -431,9 +432,10 @@ export function StaffDirectory({ kind }: { kind: StaffKind }) {
 
       {assignOpen && (
         <AssignPlateModal kind={kind} count={selection.count} plates={plates} onClose={() => setAssignOpen(false)}
-          onSubmit={(reg) => {
+          onSubmit={async (reg) => {
             const n = selection.count;
-            dispatch(kind === "driver" ? { type: "driver/assignVehicle", ids: selection.ids, reg } : { type: "attendant/assignBus", ids: selection.ids, reg });
+            const ok = await dispatch(kind === "driver" ? { type: "driver/assignVehicle", ids: selection.ids, reg } : { type: "attendant/assignBus", ids: selection.ids, reg });
+            if (!ok) { toast(`Not saved: ${errorText()}`, "error"); return; }
             selection.clear();
             setAssignOpen(false);
             toast(`${plural(n, c.noun)} assigned to ${reg}`);
@@ -475,7 +477,7 @@ function StaffForm({
     <Modal open onClose={onClose} size="lg" title={mode === "add" ? `Add ${c.noun}` : `Edit ${c.noun}`} subtitle={c.formSub}
       footer={<>
         <Button type="button" variant="ghost" onClick={onClose}>Cancel</Button>
-        <Button type="button" variant="primary" onClick={submit}>{mode === "add" ? `Add ${c.noun}` : "Save changes"}</Button>
+        <SaveButton onClick={submit}>{mode === "add" ? `Add ${c.noun}` : "Save changes"}</SaveButton>
       </>}>
       <div className="tp-form-grid">
         {mode === "add" ? (
@@ -535,7 +537,7 @@ function AssignPlateModal({
     <Modal open onClose={onClose} size="sm" title={c.assignTitle} subtitle={c.assignSub}
       footer={<>
         <Button type="button" variant="ghost" onClick={onClose}>Cancel</Button>
-        <Button type="button" variant="primary" onClick={submit}>Assign</Button>
+        <SaveButton onClick={submit}>Assign</SaveButton>
       </>}>
       <Field label={c.assignField} required error={error} hint={`Applies to ${plural(count, `selected ${c.noun}`)}.`}>
         <Select value={reg} onChange={(e) => { setReg(e.target.value); setError(undefined); }}>

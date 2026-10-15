@@ -29,7 +29,7 @@ type ConfirmState = { kind: "breakdown" | "archive"; id: string } | { kind: "bul
 const ALL = "all";
 
 export function VehiclesPage() {
-  const { state, dispatch } = useTransport();
+  const { state, dispatch, errorText } = useTransport();
   const vehicles = useVehicles();
   const { routes, drivers } = state;
   const { toast } = useTpToast();
@@ -155,32 +155,27 @@ export function VehiclesPage() {
     const ok = form.mode === "add"
       ? await dispatch({ type: "vehicle/add", vehicle: payload })
       : await dispatch({ type: "vehicle/update", id: form.id, patch: payload });
-    if (!ok) { toast("Not saved — see the message above", "error"); return; }
+    if (!ok) { toast(`Not saved: ${errorText()}`, "error"); return; }
     toast(form.mode === "add" ? `${values.reg} added to the fleet` : `${values.reg} updated`);
     groups.openOnly(values.type);
     setForm(null);
   };
 
-  const runConfirm = () => {
+  // The dialog stays open (showing progress) until the save finishes; a failure keeps it open to retry.
+  const runConfirm = async () => {
     if (!confirm) return;
     const c = confirm;
+    const v = c.kind === "bulkArchive" ? null : byId(c.id);
+    const n = selection.count;
+    const ok = c.kind === "breakdown"
+      ? await dispatch({ type: "vehicle/breakdown", id: c.id })
+      : await dispatch({ type: "vehicle/archive", ids: c.kind === "archive" ? [c.id] : selection.ids });
+    if (!ok) { toast(`Not saved: ${errorText()}`, "error"); return; }
     setConfirm(null);
     setDrawerId(null);
-    if (c.kind === "breakdown") {
-      const v = byId(c.id);
-      dispatch({ type: "vehicle/breakdown", id: c.id });
-      if (v) toast(`${v.reg} marked as breakdown`);
-    } else if (c.kind === "archive") {
-      const v = byId(c.id);
-      dispatch({ type: "vehicle/archive", ids: [c.id] });
-      selection.clear();
-      if (v) toast(`${v.reg} archived`);
-    } else {
-      const n = selection.count;
-      dispatch({ type: "vehicle/archive", ids: selection.ids });
-      selection.clear();
-      toast(`${plural(n, "vehicle")} archived`);
-    }
+    if (c.kind !== "breakdown") selection.clear();
+    toast(c.kind === "breakdown" ? `${v?.reg ?? "Vehicle"} marked as breakdown`
+      : c.kind === "archive" ? `${v?.reg ?? "Vehicle"} archived` : `${plural(n, "vehicle")} archived`);
   };
 
   const confirmProps = (() => {
@@ -346,7 +341,7 @@ export function VehiclesPage() {
       {uploadVehicle && (
         <UploadDocModal key={uploadVehicle.id} vehicle={uploadVehicle} onClose={() => setUploadId(null)}
           onSubmit={async (doc, validTill) => {
-            if (!(await dispatch({ type: "vehicle/renewDoc", id: uploadVehicle.id, doc, validTill, owner: ownerName }))) return;
+            if (!(await dispatch({ type: "vehicle/renewDoc", id: uploadVehicle.id, doc, validTill, owner: ownerName }))) { toast(`Not saved: ${errorText()}`, "error"); return; }
             toast(`${doc} for ${uploadVehicle.reg} updated · valid till ${fmtDate(validTill)}`);
             setUploadId(null);
           }} />
@@ -354,9 +349,9 @@ export function VehiclesPage() {
 
       {assignOpen && (
         <AssignRouteModal count={selection.count} routes={routes} onClose={() => setAssignOpen(false)}
-          onSubmit={(code) => {
+          onSubmit={async (code) => {
             const n = selection.count;
-            dispatch({ type: "vehicle/assignRoute", ids: selection.ids, routeCode: code });
+            if (!(await dispatch({ type: "vehicle/assignRoute", ids: selection.ids, routeCode: code }))) { toast(`Not saved: ${errorText()}`, "error"); return; }
             selection.clear();
             setAssignOpen(false);
             toast(`${plural(n, "vehicle")} assigned to ${routeLabel(routes, code)}`);
