@@ -41,7 +41,7 @@ export function VehicleDrawer({
       </DrawerSection>
       <DrawerActions>
         <Button type="button" variant="soft" size="sm" onClick={onEdit}>Edit vehicle</Button>
-        <Button type="button" variant="soft" size="sm" onClick={onUpload}>Upload document</Button>
+        <Button type="button" variant="soft" size="sm" onClick={onUpload}>Renew document</Button>
         <Button type="button" variant="red" size="sm" onClick={onBreakdown}>Mark breakdown</Button>
       </DrawerActions>
     </Drawer>

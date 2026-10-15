@@ -157,7 +157,8 @@ export function StaffDirectory({ kind }: { kind: StaffKind }) {
   const online = rows.filter((r) => r.online);
   const onRoute = rows.filter((r) => r.status === "On route").length;
   const docAlerts = rows.filter((r) => daysLeft(r.docValid) <= docWindow).length;
-  const avgRating = rows.length ? rows.reduce((s, r) => s + (r.rating ?? 0), 0) / rows.length : 0;
+  const rated = rows.filter((r) => (r.rating ?? 0) > 0);
+  const avgRating = rated.length ? rated.reduce((s, r) => s + (r.rating ?? 0), 0) / rated.length : null;
   const routesCovered = new Set(online.map((r) => r.route.match(/^R\d+/)?.[0]).filter(Boolean)).size;
 
   // ─── CSV ───
@@ -260,11 +261,12 @@ export function StaffDirectory({ kind }: { kind: StaffKind }) {
             <KpiCard loading={loading} label="Drivers" value={activeRows.length} sub={`${activeRows.length} on the transport payroll`} />
             <KpiCard loading={loading} label="On duty today" value={online.length} sub={`${onRoute} currently on route`} color={T.green} />
             <KpiCard loading={loading} label={c.docKpi} value={docAlerts} sub={`Within ${docWindow} days or expired`} color={T.amber} />
-            <KpiCard loading={loading} label="Avg rating" value={avgRating.toFixed(1)} sub="Parent feedback · last 90 days" color={T.pu} />
+            <KpiCard loading={loading} label="Avg rating" value={avgRating === null ? "—" : avgRating.toFixed(1)}
+              sub={rated.length ? `From ${plural(rated.length, "rated driver profile")}` : "No ratings recorded yet"} color={T.pu} />
           </>
         ) : (
           <>
-            <KpiCard loading={loading} label="Attendants" value={activeRows.length} sub="One per route plus relief pool" />
+            <KpiCard loading={loading} label="Attendants" value={activeRows.length} sub="With a transport profile" />
             <KpiCard loading={loading} label="On duty today" value={online.length} sub={`${onRoute} currently on route`} color={T.green} />
             <KpiCard loading={loading} label={c.docKpi} value={docAlerts} sub={`Within ${docWindow} days or expired`} color={T.amber} />
             <KpiCard loading={loading} label="Routes covered" value={`${routesCovered} / ${state.routes.length}`} sub="Routes with an attendant onboard" color={T.pu} />

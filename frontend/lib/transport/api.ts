@@ -365,6 +365,7 @@ export async function loadTransportData(): Promise<TransportData> {
         ageMin: at ? Math.max(0, Math.round((now - at.getTime()) / 60000)) : 0,
         state: (a.state ?? (a.is_resolved ? "resolved" : "open")) as AlertState,
         owner: a.resolved_by_name ?? a.acknowledged_by_name ?? undefined,
+        createdAt: a.created_at ?? null, acknowledgedAt: a.acknowledged_at ?? null, resolvedAt: a.resolved_at ?? null,
         ref: type === "Document expiry" && a.document ? { vehicleId: ids.vehicle(a.vehicle), doc: docLabel[a.document] } : undefined,
       };
     });

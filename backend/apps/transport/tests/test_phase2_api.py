@@ -180,6 +180,8 @@ def test_notify_absent_logs_guardian_messages(admin_client, school, academic_yea
     response = admin_client.post(f"{ATTENDANCE}notify-absent/", {"date": "2026-10-12", "shift": "morning"}, format="json")
     assert response.status_code == 200, response.data
     assert response.data["absent"] == 1
+    # No SMS/email provider in tests: reported as skipped, never as sent.
+    assert response.data["sent"] == 0 and response.data["skipped"] >= 1 and response.data["failed"] == 0
     logs = TransportNotificationLog.objects.all()
     assert {log.student_id for log in logs} == {absent.id}
     assert all(log.status == "skipped" for log in logs)  # no SMS provider configured in tests

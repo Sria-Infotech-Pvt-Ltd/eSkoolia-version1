@@ -177,8 +177,11 @@ export function AttendancePage() {
   const notifyAbsent = async () => {
     setNotifyOpen(false); setDrawerId(null);
     try {
-      const res = await tsend<{ absent: number; notifications_logged: number }>("/transport-attendance/notify-absent/", "POST", { date, shift });
-      toast(`${plural(res.absent, "student")} not boarded · ${plural(res.notifications_logged, "message")} sent to guardians`, "info");
+      const res = await tsend<{ absent: number; sent: number; skipped: number; failed: number }>("/transport-attendance/notify-absent/", "POST", { date, shift });
+      const parts = [`${plural(res.absent, "student")} not boarded`, `${plural(res.sent, "message")} sent`];
+      if (res.skipped) parts.push(`${res.skipped} skipped — SMS/email not configured`);
+      if (res.failed) parts.push(`${res.failed} failed`);
+      toast(parts.join(" · "), res.failed || (res.skipped && !res.sent) ? "error" : "info");
     } catch (e) {
       toast(e instanceof Error ? e.message : "Couldn't send notifications", "error");
     }

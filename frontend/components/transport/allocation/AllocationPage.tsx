@@ -40,7 +40,7 @@ export function AllocationPage() {
   const [query, setQuery] = useState("");
   const [applied, setApplied] = useState("");
 
-  const groups = useGroupOpen("1");
+  const groups = useGroupOpen(CLASSES[0] ?? null);
   const selection = useSelection();
   const [limits, setLimits] = useState<Record<string, number>>({});
   const [drawerId, setDrawerId] = useState<string | null>(null);
@@ -143,11 +143,11 @@ export function AllocationPage() {
   const confirmText = (() => {
     if (!confirm) return null;
     if (confirm.kind === "bulkRemove") {
-      return { title: `Remove ${plural(selection.count, "student")} from transport?`, message: "Their seats are released and transport fees stop from next month.", label: "Remove all" };
+      return { title: `Remove ${plural(selection.count, "student")} from transport?`, message: "Their seats are released and their monthly transport fare is cleared. They stay listed as Pending.", label: "Remove all" };
     }
     const s = byId(confirm.id);
     if (!s) return null;
-    return { title: `Remove ${s.name} from transport?`, message: `Their seat on ${s.routeCode ? routeName(s.routeCode) : "their route"} is released and transport fees stop from next month.`, label: "Remove" };
+    return { title: `Remove ${s.name} from transport?`, message: `Their seat on ${s.routeCode ? routeName(s.routeCode) : "their route"} is released and their monthly transport fare is cleared. They stay listed as Pending.`, label: "Remove" };
   })();
 
   const drawer = byId(drawerId);
@@ -176,7 +176,7 @@ export function AllocationPage() {
         <KpiCard loading={loading} label="Allocated" value={allocated.length} sub="Students with a seat this term" color={T.green} />
         <KpiCard loading={loading} label="Pending" value={pending} sub="Awaiting a pickup point" color={T.amber} />
         <KpiCard loading={loading} label="Waitlisted" value={waitlisted} sub="Routes at full capacity" />
-        <KpiCard loading={loading} label="Monthly fees" value={inr(fees)} sub="Billed to parents via Fees" color={T.pu} />
+        <KpiCard loading={loading} label="Monthly fees" value={inr(fees)} sub="Sum of allocated monthly fares" color={T.pu} />
       </KpiGrid>
 
       <SmartFilter chips={chips} groupingChip="Grouped by class" onReset={resetFilters} fields={[

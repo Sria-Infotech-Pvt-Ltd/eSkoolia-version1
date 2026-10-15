@@ -1184,14 +1184,24 @@ class TransportAttendanceViewSet(TenantQueryMixin, PermissionScopedViewSet):
         date, shift = self._day_shift(request.data)
         absent = attendance_service.absent_students(request.user.school_id, date, shift)
         shift_label = "morning pickup" if shift == "morning" else "afternoon drop"
-        sent = 0
+        started = timezone.now()
+        logged = 0
         for allocation in absent:
-            sent += notify_guardians(
+            logged += notify_guardians(
                 allocation.vehicle, [allocation.student],
                 message=f"{allocation.student.first_name} did not board the {shift_label} on {date:%d %b %Y}.",
                 subject="Transport attendance",
             ) if allocation.vehicle else 0
-        return Response({"absent": len(absent), "notifications_logged": sent})
+        # Report what actually happened: "skipped" means SMS/email is not configured.
+        outcome = dict(
+            TransportNotificationLog.objects.filter(
+                created_at__gte=started, student_id__in=[a.student_id for a in absent]
+            ).order_by().values("status").annotate(n=Count("id")).values_list("status", "n")
+        )
+        return Response({
+            "absent": len(absent), "notifications_logged": logged,
+            "sent": outcome.get("sent", 0), "skipped": outcome.get("skipped", 0), "failed": outcome.get("failed", 0),
+        })
 
 
 # Maintenance

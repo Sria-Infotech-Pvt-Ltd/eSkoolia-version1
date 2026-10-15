@@ -161,6 +161,10 @@ export interface TransportAlert {
   ageMin: number;
   state: AlertState;
   owner?: string;
+  /** ISO timestamps from the backend (acknowledged / resolved are null until then). */
+  createdAt?: string | null;
+  acknowledgedAt?: string | null;
+  resolvedAt?: string | null;
   /** Document-expiry alerts reference the record + document they are about. */
   ref?: { vehicleId?: string; driverId?: string; doc?: VehicleDoc | "Licence" };
 }

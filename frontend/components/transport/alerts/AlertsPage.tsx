@@ -81,7 +81,14 @@ export function AlertsPage() {
   const notResolved = alerts.filter((a) => a.state !== "resolved");
   const acked = alerts.filter((a) => a.state === "acknowledged").length;
   const critical = notResolved.filter((a) => a.severity === "Critical").length;
-  const resolved = alerts.filter((a) => a.state === "resolved").length;
+  const todayIso = new Date().toDateString();
+  const resolved = alerts.filter((a) => a.state === "resolved" && a.resolvedAt && new Date(a.resolvedAt).toDateString() === todayIso).length;
+  // Avg minutes from raised to acknowledged, alerts raised in the last 7 days.
+  const weekAgo = Date.now() - 7 * 24 * 60 * 60 * 1000;
+  const responses = alerts
+    .filter((a) => a.createdAt && a.acknowledgedAt && new Date(a.createdAt).getTime() >= weekAgo)
+    .map((a) => (new Date(a.acknowledgedAt as string).getTime() - new Date(a.createdAt as string).getTime()) / 60000);
+  const avgResponse = responses.length ? responses.reduce((s, m) => s + m, 0) / responses.length : null;
 
   const csv: CsvColumn<TransportAlert>[] = [
     { header: "ID", value: (a) => a.id }, { header: "Severity", value: (a) => a.severity }, { header: "Type", value: (a) => a.type },
@@ -126,7 +133,7 @@ export function AlertsPage() {
     if (!a) return null;
     return {
       title: `Resolve ${a.id}?`,
-      message: `“${a.title}” will be closed and logged with your name. Parents subscribed to this route are told it is resolved.`,
+      message: `“${a.title}” will be closed and logged with your name.`,
       label: "Resolve alert",
     };
   })();
@@ -147,7 +154,8 @@ export function AlertsPage() {
         <KpiCard loading={loading} label="Open" value={notResolved.length} sub={`${acked} acknowledged`} />
         <KpiCard loading={loading} label="Critical" value={critical} sub="SOS, overspeed, breakdown" color={T.red} />
         <KpiCard loading={loading} label="Resolved today" value={resolved} sub="Closed by the transport desk" color={T.green} />
-        <KpiCard loading={loading} label="Avg response" value="4.2 min" sub="Time to acknowledge · 7 days" color={T.pu} />
+        <KpiCard loading={loading} label="Avg response" value={avgResponse === null ? "—" : `${avgResponse.toFixed(1)} min`}
+          sub={responses.length ? `Time to acknowledge · ${responses.length} alerts, 7 days` : "No acknowledged alerts in 7 days"} color={T.pu} />
       </KpiGrid>
 
       <SmartFilter chips={chips} groupingChip="Grouped by severity" onReset={resetFilters} fields={[
@@ -240,7 +248,6 @@ export function AlertsPage() {
 
       <BulkBar count={selection.count} onClear={selection.clear} actions={[
         { label: "Acknowledge", onClick: () => { const n = selection.count; dispatch({ type: "alert/ack", ids: selection.ids, owner }); selection.clear(); toast(`${plural(n, "alert")} acknowledged`); } },
-        { label: "Message", onClick: () => { toast(`Drivers on ${plural(selection.count, "alert")} messaged`, "info"); selection.clear(); } },
         { label: "Export", onClick: () => {
           const list = alerts.filter((a) => selection.isSelected(a.id));
           downloadCsv("transport-alerts-selected.csv", csv, list); toast(`Exported ${plural(list.length, "alert")}`); selection.clear();

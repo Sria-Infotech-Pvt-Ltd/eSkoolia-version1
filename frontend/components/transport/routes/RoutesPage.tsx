@@ -39,7 +39,7 @@ export function RoutesPage() {
   const [query, setQuery] = useState("");
   const [applied, setApplied] = useState("");
 
-  const groups = useGroupOpen("R3");
+  const groups = useGroupOpen(routes[0]?.code ?? null);
   const selection = useSelection();
   const [drawerCode, setDrawerCode] = useState<string | null>(null);
   const [editCode, setEditCode] = useState<string | null>(null);

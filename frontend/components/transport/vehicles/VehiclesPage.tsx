@@ -301,7 +301,7 @@ export function VehiclesPage() {
                             <td style={{ textAlign: "right", whiteSpace: "nowrap" }}>
                               <RowIconButton label={`View ${v.reg}`} onClick={() => setDrawerId(v.id)}><Eye size={15} strokeWidth={1.8} /></RowIconButton>
                               <RowIconButton label={`Edit ${v.reg}`} onClick={() => setForm({ mode: "edit", id: v.id })}><Pencil size={14} strokeWidth={1.8} /></RowIconButton>
-                              <RowIconButton label={`Upload document for ${v.reg}`} onClick={() => setUploadId(v.id)}><FileText size={14} strokeWidth={1.8} /></RowIconButton>
+                              <RowIconButton label={`Renew document for ${v.reg}`} onClick={() => setUploadId(v.id)}><FileText size={14} strokeWidth={1.8} /></RowIconButton>
                               <MoreMenu label={`More actions for ${v.reg}`} open={menuId === v.id}
                                 onToggle={() => setMenuId((m) => (m === v.id ? null : v.id))} onClose={() => setMenuId(null)}
                                 items={[

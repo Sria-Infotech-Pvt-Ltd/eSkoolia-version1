@@ -161,7 +161,7 @@ export function MaintenancePage() {
         <KpiCard loading={loading} label="Due this week" value={dueWeek} sub="Scheduled or due within 7 days" color={T.amber} />
         <KpiCard loading={loading} label="Overdue" value={overdue} sub="Past interval — vehicle restricted" color={T.red} />
         <KpiCard loading={loading} label="In workshop" value={workshop} sub="Off the road today" />
-        <KpiCard loading={loading} label="Spend MTD" value={inr(spendMtd)} sub="October 2026 · parts + labour" color={T.pu} />
+        <KpiCard loading={loading} label="Spend MTD" value={inr(spendMtd)} sub={`${TODAY.toLocaleDateString("en-IN", { month: "long", year: "numeric" })} · completed services`} color={T.pu} />
       </KpiGrid>
 
       <SmartFilter chips={chips} groupingChip="Grouped by vehicle" onReset={resetFilters} fields={[

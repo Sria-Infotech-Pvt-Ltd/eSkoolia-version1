@@ -15,13 +15,20 @@ import { T, Z } from "./tokens";
 /** One group open at a time; Expand all / Collapse all; search opens all. */
 export function useGroupOpen(initialOpen: string | null) {
   const [open, setOpen] = useState<Set<string>>(() => new Set(initialOpen ? [initialOpen] : []));
+  // Data loads after mount, so the first group key can arrive late: open it then,
+  // unless the user has already opened / closed groups themselves.
+  const touched = useRef(false);
+  useEffect(() => {
+    if (initialOpen && !touched.current) setOpen((prev) => (prev.size ? prev : new Set([initialOpen])));
+  }, [initialOpen]);
   const isOpen = useCallback((key: string) => open.has(key), [open]);
   const toggle = useCallback((key: string) => {
+    touched.current = true;
     setOpen((prev) => (prev.has(key) ? new Set([...prev].filter((k) => k !== key)) : new Set([key])));
   }, []);
-  const openOnly = useCallback((key: string) => setOpen(new Set([key])), []);
-  const expandAll = useCallback((keys: string[]) => setOpen(new Set(keys)), []);
-  const collapseAll = useCallback(() => setOpen(new Set()), []);
+  const openOnly = useCallback((key: string) => { touched.current = true; setOpen(new Set([key])); }, []);
+  const expandAll = useCallback((keys: string[]) => { touched.current = true; setOpen(new Set(keys)); }, []);
+  const collapseAll = useCallback(() => { touched.current = true; setOpen(new Set()); }, []);
   return { isOpen, toggle, openOnly, expandAll, collapseAll };
 }
 
