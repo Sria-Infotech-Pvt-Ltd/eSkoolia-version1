@@ -81,7 +81,16 @@ export function AlertsPage() {
   const notResolved = alerts.filter((a) => a.state !== "resolved");
   const acked = alerts.filter((a) => a.state === "acknowledged").length;
   const critical = notResolved.filter((a) => a.severity === "Critical").length;
-  const resolved = alerts.filter((a) => a.state === "resolved").length;
+  // Resolved today = resolved on today's local date (not every resolved alert ever loaded).
+  const sameDay = (iso: string | null | undefined) => !!iso && new Date(iso).toDateString() === new Date().toDateString();
+  const resolved = alerts.filter((a) => a.state === "resolved" && sameDay(a.resolvedAt)).length;
+  // Average time to acknowledge over the last 7 days, from the stored timestamps.
+  const weekAgo = Date.now() - 7 * 24 * 60 * 60 * 1000;
+  const responseMins = alerts
+    .filter((a) => a.raisedAt && a.acknowledgedAt && new Date(a.raisedAt).getTime() >= weekAgo)
+    .map((a) => (new Date(a.acknowledgedAt!).getTime() - new Date(a.raisedAt!).getTime()) / 60000)
+    .filter((m) => m >= 0);
+  const avgResponse = responseMins.length ? `${(responseMins.reduce((x, y) => x + y, 0) / responseMins.length).toFixed(1)} min` : "—";
 
   const csv: CsvColumn<TransportAlert>[] = [
     { header: "ID", value: (a) => a.id }, { header: "Severity", value: (a) => a.severity }, { header: "Type", value: (a) => a.type },
@@ -103,19 +112,19 @@ export function AlertsPage() {
   const resetFilters = () => { setFType(ALL); setFRoute(ALL); setFState("open"); setFRaised(ALL); setQuery(""); setApplied(""); };
   const runSearch = () => { const q = query.trim(); setApplied(q); if (q) setOpen(new Set(SEVERITIES)); };
 
-  const runConfirm = () => {
+  const runConfirm = async () => {
     if (!confirm) return;
     const cf = confirm;
     setConfirm(null);
     setDrawerId(null);
+    // Confirm only after the backend has saved; on failure the sync banner shows the error.
     if (cf.kind === "resolve") {
-      dispatch({ type: "alert/resolve", ids: [cf.id], owner });
-      toast(`${cf.id} resolved`);
+      if (await dispatch({ type: "alert/resolve", ids: [cf.id], owner })) toast(`${cf.id} resolved`);
     } else {
       const n = selection.count;
-      dispatch({ type: "alert/resolve", ids: selection.ids, owner });
+      const ids = selection.ids;
       selection.clear();
-      toast(`${plural(n, "alert")} resolved`);
+      if (await dispatch({ type: "alert/resolve", ids, owner })) toast(`${plural(n, "alert")} resolved`);
     }
   };
 
@@ -126,7 +135,7 @@ export function AlertsPage() {
     if (!a) return null;
     return {
       title: `Resolve ${a.id}?`,
-      message: `“${a.title}” will be closed and logged with your name. Parents subscribed to this route are told it is resolved.`,
+      message: `“${a.title}” will be closed and logged with your name.`,
       label: "Resolve alert",
     };
   })();
@@ -147,7 +156,7 @@ export function AlertsPage() {
         <KpiCard loading={loading} label="Open" value={notResolved.length} sub={`${acked} acknowledged`} />
         <KpiCard loading={loading} label="Critical" value={critical} sub="SOS, overspeed, breakdown" color={T.red} />
         <KpiCard loading={loading} label="Resolved today" value={resolved} sub="Closed by the transport desk" color={T.green} />
-        <KpiCard loading={loading} label="Avg response" value="4.2 min" sub="Time to acknowledge · 7 days" color={T.pu} />
+        <KpiCard loading={loading} label="Avg response" value={avgResponse} sub="Time to acknowledge · 7 days" color={T.pu} />
       </KpiGrid>
 
       <SmartFilter chips={chips} groupingChip="Grouped by severity" onReset={resetFilters} fields={[
@@ -167,7 +176,7 @@ export function AlertsPage() {
         onCollapseAll={() => setOpen(new Set())} onExpandAll={() => setOpen(new Set(SEVERITIES))}
         footer={
           <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", flexWrap: "wrap", gap: 12, padding: "4px 4px 0" }}>
-            <span style={{ fontSize: 12, color: T.muted }}>Showing {visible.length} of {alerts.length} alerts today</span>
+            <span style={{ fontSize: 12, color: T.muted }}>Showing {visible.length} of {alerts.length} alerts</span>
             <OutlineButton onClick={exportLog}>Export log</OutlineButton>
           </div>
         }>
@@ -239,8 +248,8 @@ export function AlertsPage() {
       </GroupedList>
 
       <BulkBar count={selection.count} onClear={selection.clear} actions={[
-        { label: "Acknowledge", onClick: () => { const n = selection.count; dispatch({ type: "alert/ack", ids: selection.ids, owner }); selection.clear(); toast(`${plural(n, "alert")} acknowledged`); } },
-        { label: "Message", onClick: () => { toast(`Drivers on ${plural(selection.count, "alert")} messaged`, "info"); selection.clear(); } },
+        { label: "Acknowledge", onClick: async () => { const n = selection.count; const ids = selection.ids; selection.clear(); if (await dispatch({ type: "alert/ack", ids, owner })) toast(`${plural(n, "alert")} acknowledged`); } },
+        { label: "Message", onClick: () => { toast("Messaging drivers isn't connected yet - no message was sent", "info"); } },
         { label: "Export", onClick: () => {
           const list = alerts.filter((a) => selection.isSelected(a.id));
           downloadCsv("transport-alerts-selected.csv", csv, list); toast(`Exported ${plural(list.length, "alert")}`); selection.clear();
@@ -264,14 +273,14 @@ export function AlertsPage() {
           <DrawerSection title="Timeline">
             <InfoRow label="Raised">{ageLabel(drawer.ageMin)}</InfoRow>
             <InfoRow label="Acknowledged">{drawer.state !== "open" && drawer.owner ? `by ${drawer.owner}` : "—"}</InfoRow>
-            <InfoRow label="Parents notified">{drawer.severity === "Critical" ? "Yes" : "No"}</InfoRow>
+            <InfoRow label="Parents notified">Not recorded</InfoRow>
           </DrawerSection>
           <DrawerActions>
             <Button type="button" variant="soft" size="sm" disabled={drawer.state === "resolved"}
-              onClick={() => (drawer.state === "open" ? acknowledge(drawer) : toast(`${drawer.id} re-assigned to ${owner}`, "info"))}>
+              onClick={() => (drawer.state === "open" ? acknowledge(drawer) : toast("Re-assigning alerts isn't connected yet - the owner is unchanged", "info"))}>
               {drawer.state === "open" ? "Acknowledge" : "Re-assign"}
             </Button>
-            <Button type="button" variant="soft" size="sm" onClick={() => toast("Calling the driver via masked number", "info")}>Call driver</Button>
+            <Button type="button" variant="soft" size="sm" onClick={() => toast("Calling isn't connected yet - no call was placed", "info")}>Call driver</Button>
             <Button type="button" variant="red" size="sm" disabled={drawer.state === "resolved"} onClick={() => setConfirm({ kind: "resolve", id: drawer.id })}>Resolve</Button>
           </DrawerActions>
         </Drawer>

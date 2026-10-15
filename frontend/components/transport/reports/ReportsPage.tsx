@@ -112,12 +112,19 @@ export function ReportsPage() {
 
   /** Downloads the previewed table and logs it under "Recently generated". */
   const download = async (report: string, p: ReportPreview, format: "PDF" | "Excel", scope: Scope) => {
+    let fellBackToCsv = false;
     try {
       if (format === "PDF") await downloadPdf(report, p); else await downloadXlsx(report, p);
     } catch {
       // Library unavailable in this environment — fall back to CSV of the same table.
+      fellBackToCsv = true;
       downloadCsv(`${report}.csv`, p.columns.map((col, i) => ({ header: col.header, value: (row: string[]) => row[i] })),
         [...p.rows.map((r) => r.map((x) => x.text)), p.totals]);
+    }
+    if (fellBackToCsv) {
+      // A CSV is neither the PDF nor the Excel file that was asked for, so it isn't logged as one.
+      toast(`${format} isn't available here - ${report} downloaded as CSV instead`, "info");
+      return;
     }
     void dispatch({ type: "report/add", scheduled: false, row: {
       report, period: periodLabel(report, scope), scope: routeLabel(scope.route), format, generated: "Just now",

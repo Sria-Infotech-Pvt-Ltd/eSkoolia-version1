@@ -6650,3 +6650,336 @@ Date: 2026-09-30
 - The Fuel & maintenance cost report uses the spec's formulas, so its figures won't match the Fuel and Maintenance pages.
 
 ⚠️ **Next step — backend integration:** wire the store actions to the existing `/api/v1/core/*` transport endpoints, and decide whether to retire or relink the old pages, including restoring access to `VehiclePanel`.
+
+
+### Update — 14/10/2026
+
+**Developer:** Jampala Kavya
+**Area:** Eskoolia → Transport Module
+
+**Change:** Renamed the Transport Module's dashboard navigation label from "Dashboard" to "Home".
+
+**File changed:** `frontend/lib/routes.ts` (UI text only)
+
+1. In the `transport` module's `sub` list, changed `{ label: 'Dashboard', path: '/transport', icon: LayoutDashboard }` to `{ label: 'Home', path: '/transport', icon: LayoutDashboard }`. This is the label shown in the Transport module's navigation menu, and in the ⌘K command palette, which reads the same `FLAT_INDEX`.
+2. "Home" matches the existing label used for the Fees module's landing page in the same file.
+
+**Route:** `/transport` — unchanged. The icon, permission and all other Transport navigation labels are unchanged.
+
+**Not changed:**
+- The `/transport` page heading is "Command Center" and does not show "Dashboard", so it was left as is.
+- The breadcrumb in `frontend/components/transport/dashboard/TransportDashboard.tsx` starts with "Dashboard". That crumb links to the main app dashboard (`/dashboard`), not to the Transport page, so it was left as is.
+- The legacy `components/layout/sidebar-menu.data.ts` Transport section has no "Dashboard" item.
+
+**Backend/API changes: None.** No changes to routes, permissions, data fetching, styling or business logic.
+
+**Testing performed:**
+- `tsc --noEmit` (frontend): no errors in `lib/routes.ts`. The 11 existing errors in `exams/marks-register-create` and `exams/result-publish` are unchanged.
+- `eslint lib/routes.ts`: clean.
+- Browser check (Transport menu shows "Home" and opens `/transport`) still needs to be done manually.
+
+
+### Update — 14/10/2026
+
+**Developer:** Jampala Kavya
+**Area:** Eskoolia School ERP → Transport → Drivers & Attendants (`/transport/drivers`, `/transport/attendants`)
+
+**Change:** Compact layout for the Drivers and Attendants pages. Reduced vertical spacing; summary-card, filter, search and shift-group spacing tightened; existing responsive wrapping kept.
+
+**How it is scoped:** Both pages render the same `StaffDirectory` component (`kind="driver"` / `kind="attendant"`). The page header, summary cards, Smart Filter, search row, grouped list, shift cards and empty-state line are shared components used by 12 Transport pages. So instead of changing their default spacing, I added an optional `compact` prop to each shared component. It defaults to off, so the other Transport pages render exactly as before. Only `StaffDirectory` passes `compact`.
+
+**Files changed:**
+1. `frontend/components/transport/ui/page.tsx`: `compact` prop on `PageHero`, `KpiCard` and `EmptyLine`.
+   - `PageHero`: bottom margin 18 → 12px, eyebrow margin 8 → 4px, description top margin 10 → 6px.
+   - `KpiCard`: padding 14 → 12/14px, minimum height 96 → 84px, value/sub spacing 10/8 → 6/4px.
+   - `EmptyLine`: vertical padding 32 → 14px. This removes the oversized empty area in shift groups with no records.
+2. `frontend/components/transport/ui/list.tsx`: `compact` prop on `SmartFilter`, `SearchRow`, `GroupedList` and `GroupCard`.
+   - `SmartFilter`: the title and filter chips sit on one row and wrap on narrow screens. Header padding 12/16 → 8/14px, expanded panel padding 14/16 → 10/14px.
+   - `SearchRow`: padding 12/16 → 6/14px.
+   - `GroupedList`: header padding 14/16 → 10/14px, body padding 12 → 10px.
+   - `GroupCard` (Full day / Morning shift / Relief & reserve): the title and count chips sit on one row and wrap on narrow screens. Header padding 12/16 → 8/14px, gap between groups 12 → 8px.
+3. `frontend/components/transport/staff/StaffDirectory.tsx`: passes `compact` to the components above. No other changes.
+
+**Not changed:**
+- Font sizes, colours, icons, borders, shadows, card styling and all text labels.
+- All actions and controls: Add Driver / Add Attendant, Edit, View, Documents, More menu (Mark on leave, Deactivate), Search, Export CSV, Select All, the four filters and Reset, bulk actions (Assign, Export, Archive), shift grouping, per-group "+ Add", Collapse all / Expand all, and Export view.
+- State, API calls, store actions, validation, permissions and routes.
+- The four summary cards were already one row on desktop. The existing breakpoints are unchanged: 2 columns at ≤1024px, 1 column at ≤640px. The search row already wraps with `flex-wrap`. The staff table keeps its existing horizontal scroll container on narrow screens.
+
+**Backend/API changes: None.**
+
+**Testing performed:**
+- `tsc --noEmit` (frontend): no errors in the three changed files. The 11 existing errors in `exams/marks-register-create` and `exams/result-publish` are unchanged.
+- `eslint` on the three changed files: clean.
+- Confirmed that only `StaffDirectory.tsx` passes `compact`, so other Transport pages keep their default spacing.
+- Browser check not done (no dev server was running). Still needs a manual check on both pages:
+  - desktop and mobile layout;
+  - filter expand/collapse;
+  - search;
+  - Select All and bulk actions;
+  - Export CSV;
+  - group expand/collapse;
+  - empty shift groups.
+
+
+### Update — 14/10/2026
+
+**Developer:** Jampala Kavya
+**Area:** Eskoolia School ERP → Transport → Drivers & Attendants (`/transport/drivers`, `/transport/attendants`) — layout fix, second pass
+
+**Original issue:** After the first compact pass (entry above), both pages still used too much vertical space.
+
+**Causes found (measured in a rendered page, not guessed):**
+1. **CSS class collision.** `styles/student-groups.css` is imported globally from `app/globals.css`. It defines a `.tp` chip style: `padding: 5px 12px; border: 1.5px; border-radius: 20px; background; cursor: pointer`. The Transport layout root (`app/(dashboard)/transport/layout.tsx`) also uses `className="tp"`. So every Transport page got an extra rounded border, padding and a pointer cursor over the whole page. The Transport modal/drawer container in `components/transport/ui/overlays.tsx` also uses `tp`.
+2. **Stacked padding.** `<main>` 18px + `.tp-wrap` 12px top / 40px bottom + `.tp-frame` 18px on every side.
+3. **Header description** was capped at 640px wide, so it wrapped to two lines.
+4. **Summary cards** stacked label, value and sub-text on three lines.
+5. **List and shift-group headers.** "All drivers" and its helper text were on two lines, and shift-group headers had 8px padding with 8px gaps between groups.
+
+**Files changed:**
+1. `frontend/components/transport/ui/transport.css`:
+   - Added `.tp-wrap--compact` (padding 6px 20px 8px) and `.tp-frame--compact` (padding 12px). The existing ≤640px mobile rules still override them.
+   - Added `.tp:has(> .tp-wrap--compact)`, which undoes the Student Groups `.tp` chip style (padding, border, radius, background, cursor) on Drivers/Attendants only. It also sets `display: flow-root`, so the sync banner's top margin doesn't cause a 12px phantom scroll.
+2. `frontend/components/transport/ui/page.tsx`:
+   - `TransportPage`: new optional `compact` prop that applies the classes above.
+   - `PageHero` (compact): description max width 640 → 1000px, so it fits on one line on desktop.
+   - `KpiCard` (compact): value and sub-text share one row and wrap on narrow cards. Minimum height removed; the four cards stay equal height through the grid.
+   - `EmptyLine` (compact): padding 14 → 12px.
+3. `frontend/components/transport/ui/list.tsx`:
+   - `GroupedList` (compact): title and helper text on one row, header padding 10 → 8px.
+   - `GroupCard` (compact): header padding 8 → 6px, gap between groups 8 → 6px.
+4. `frontend/components/transport/staff/StaffDirectory.tsx`: passes `compact` to `TransportPage`.
+
+All new behaviour is behind the opt-in `compact` prop. Only `StaffDirectory` passes it, so the other Transport pages are unchanged.
+
+**Not changed:**
+- Fonts and font sizes, colours, icons, borders, shadows and button styles.
+- All controls and behaviour: Add, Edit, View, Documents, More menu, Search, Export CSV, Select All, filters and Reset, bulk actions, shift grouping, per-group "+ Add", expand/collapse (Full day still opens by default), and empty-state messages.
+- API calls, store and data loading, routes and permissions.
+- "Loading transport records…" banner (`SyncBanner.tsx`): left unchanged. It shows only while the first `loadTransportData()` call (16 parallel requests) is pending, and is replaced by the ready state or by the error bar with Retry. It does not stay after loading finishes. If it stays visible for a long time, one of those backend requests is slow or never responds.
+
+**Backend/API changes: None.**
+
+**Testing performed:**
+- `tsc --noEmit` (frontend): no errors in the changed files. The 11 existing errors in `exams/marks-register-create` and `exams/result-publish` are unchanged.
+- `eslint` on the three changed `.tsx` files: clean.
+- **Rendered check in headless Chrome** against the running dev server:
+  - Setup: a temporary, unauthenticated page rendered the real `StaffDirectory` with the real Transport store, providers, CSS and `SyncBanner`, inside placeholder bars matching the app shell (56px top bar, 46px sub-nav, `<main>` 18px/32px padding). The page was deleted afterwards.
+  - Data: with no login, the API returns no data, so every shift group was empty. The real Transport layout, top bar and sub-nav were not rendered.
+  - Results, with the error banner dismissed (the normal loaded state):
+    - 1920×940 viewport: everything fits with no page scroll, including when all three groups are expanded.
+    - 1536×730 (1080p at 125% scaling): all three shift-group headers are visible. The last one ends at 714px of 730, and about 40px of bottom padding needs scrolling.
+    - Tablet 1024×768: cards wrap to 2 columns.
+    - Mobile 390×844: everything stacks into 1 column.
+    - No horizontal overflow at any size.
+  - Interactions on both pages:
+    - Expand all, Collapse all and single-group toggle work.
+    - Smart Filter expands with 4 filters; setting a filter adds its chip, and Reset works.
+    - Search shows the "no matches" message and a search chip.
+    - Export CSV shows its toast.
+    - Add Driver / Add Attendant opens the correct modal.
+    - The search toolbar is one row.
+- **Not verified:** the signed-in app with real records (populated tables, bulk bar with selected rows). This still needs a manual browser check.
+
+
+### Update — 14/10/2026
+
+**Developer:** Jampala Kavya
+**Area:** Eskoolia School ERP → Transport → screen consolidation (4 pairs of pages combined)
+
+**Change:** Each pair of related Transport screens is now one page, with the two sections stacked vertically. The sub-navigation went from 14 items to 10.
+
+| Combined page (route kept) | Top section | Section below (old route now redirects here) | Sub-nav label |
+|---|---|---|---|
+| `/transport/drivers` | Drivers | Attendants (`/transport/attendants`) | Staff |
+| `/transport/routes` | Routes | Pickup Points (`/transport/pickup-points`) | Routes & Pickup Points |
+| `/transport/allocation` | Student Allocation | Transport Attendance (`/transport/attendance`) | Allocation & Attendance |
+| `/transport/maintenance` | Maintenance & service | Fuel Management (`/transport/fuel`) | Maintenance & Fuel |
+
+**How it works:**
+- The existing screen components are reused unchanged as sections: `StaffDirectory` (driver/attendant), `RoutesPage`, `PickupPointsPage`, `AllocationPage`, `AttendancePage`, `MaintenancePage` and `FuelPage`. Each section keeps its own state, API calls, validation, filters, search, exports, modals, bulk actions, map and charts. No business logic or state was merged.
+- New `TransportSections` component (`components/transport/ui/sections.tsx`) draws one page frame and stacks the sections. The lower section is separated by a dashed divider.
+- New `TransportSectionContext` (`components/transport/ui/sectionContext.ts`):
+  - A section's own `TransportPage` renders its content only, so there is no nested page frame.
+  - The lower section's `PageHero` renders as a smaller `<h2>` (28px), so each page keeps a single `<h1>`.
+- **Deep links:** `useDeepLink` (`components/transport/ui/deeplink.ts`) is now section-aware:
+  - `?id=` / `?new=1` go to the top section by default, or to the section named in `?section=<key>`. Before this, both sections would have reacted to the same link.
+  - `?section=<key>` scrolls to that section once data has loaded, and the URL is then cleaned.
+- **Old routes:** `/transport/attendants`, `/pickup-points`, `/attendance` and `/fuel` are now server redirects to the combined page with `?section=…`. Their query string (e.g. `?id=`, `?new=1`) is kept. The component files were not deleted.
+
+**Files changed:**
+- New: `frontend/components/transport/ui/sectionContext.ts`, `frontend/components/transport/ui/sections.tsx`, `frontend/lib/transport/sections.ts` (the `sectionHref` helper for the redirects).
+- `frontend/components/transport/ui/page.tsx`: section-aware `TransportPage` and `PageHero`.
+- `frontend/components/transport/ui/deeplink.ts`: section-scoped deep links.
+- `frontend/components/transport/ui/index.ts`: exports the two new UI modules.
+- `frontend/app/(dashboard)/transport/{drivers,routes,allocation,maintenance}/page.tsx`: the combined pages.
+- `frontend/app/(dashboard)/transport/{attendants,pickup-points,attendance,fuel}/page.tsx`: now redirects.
+- `frontend/lib/routes.ts`: Transport sub-nav (4 items removed, 4 relabelled, unused `MapPin` / `Fuel` icon imports removed).
+- `frontend/components/transport/dashboard/TransportDashboard.tsx`: 4 links (Pickup points, Attendance ×2, Fuel log) now point straight at the new section URLs.
+
+**Not changed:**
+- Backend, API endpoints, models, permissions (the Transport module permission is unchanged and the sub-items have none).
+- The other Transport pages.
+- `/transport/routes/stop-builder` and the older pages listed in `lib/routes.ts`.
+
+**Backend/API changes: None.**
+
+**Testing performed:**
+- `tsc --noEmit` (frontend): no new errors. The 11 existing errors in `exams/marks-register-create` and `exams/result-publish` are unchanged.
+- `eslint` on all changed files: clean.
+- **Redirects** (HTTP against the running dev server): all four old routes return Next's redirect to the right section with the query kept. Example: `/transport/attendance?id=42&x=a&x=b` → `/transport/allocation?section=attendance&id=42&x=a&x=b`. Next applies it in the browser (HTTP 200 with a redirect marker, not a 307).
+- **Combined pages** in headless Chrome:
+  - Setup: a temporary, unauthenticated page imported the four real route files inside the real Transport providers, CSS and `SyncBanner`. It was deleted afterwards. Without a login the API returns no data, so every section was empty.
+  - Results for all four pages:
+    - One page frame, one `<h1>`, and the lower section as `<h2>`. Both sections show their 4 KPI cards, Smart Filter, search and Export CSV.
+    - Each section's main action opens its own dialog: Add Driver / Add Attendant, Add Route / Add Pickup Point, Bulk Allocate / Notify absent parents (confirmation dialog), Log Service / Log Fuel. Esc closes them.
+    - The Smart Filter of one section opens without opening the other's.
+    - Export CSV in each section shows its own toast.
+    - `?new=1` opens only the top section's dialog, and `?section=<lower>&new=1` opens only the lower one (Attendance has no `?new` flow).
+    - `?section=<lower>` scrolls to that section and cleans the URL.
+    - The Pickup Points map and the 4 Fuel charts render; Allocation's class/section bar and Attendance's shift/date bar each stay in their own section.
+    - No horizontal overflow at 1024px or 390px. No browser console errors.
+- **Not verified:**
+  - Real data in the signed-in app (no test login was available). Still needs a manual check: lists with records, `?id=` record deep links, edit/delete/archive, bulk actions, register marking, saving.
+- **Known limitation:** each section has its own floating bulk-action bar at the same spot at the bottom. If rows are selected in both sections at once, the two bars overlap.
+
+
+### Update — 14/10/2026 (functional audit)
+
+**Developer:** Jampala Kavya
+**Area:** Eskoolia School ERP → Transport → full functional audit and bug fixes (all 14 screens)
+
+**Scope and method:**
+- Every Transport screen was traced end to end: component → store action (`lib/transport/actions.ts`) → API → serializer/view/service → reload adapter (`lib/transport/api.ts`).
+  - Screens: Home, Vehicles, Drivers, Attendants, Routes (and the legacy stop-builder), Pickup Points, Student Allocation, Attendance, Live Tracking (and the legacy Bus Tracking), Alerts, Maintenance, Fuel, Reports, Settings.
+- Create/read/update/delete and the five workflows (fleet setup, route setup, student transport, daily operations, maintenance & fuel) were run as automated API tests, using the same request shapes the screens send.
+- Test data: an **isolated throwaway SQLite test database**. The shared `neondb` database was not written to, and no browser sign-in was used.
+
+**Bugs found and fixed:**
+
+| # | Screen / action | Problem | Fix |
+|---|---|---|---|
+| 1 | Routes › Edit route › change bus | Old bus stayed active on the route; switching back appeared to do nothing | Old bus's assignment on that route is switched off (`actions.ts`) |
+| 2 | Routes › Edit route › change attendant | Previous attendant stayed on the bus, so the change often didn't show | Previous attendant is unassigned (`actions.ts`) |
+| 3 | Vehicles › Archive | Archived bus stayed on its route with its crew; later crew edits failed with "Vehicle … was not found" | Archive also ends route assignments and frees driver/attendants (`views.py`) |
+| 4 | Drivers › Archive | Removed driver still shown as the route's driver | Removing a driver profile clears `Vehicle.driver` (`views.py`) |
+| 5 | Add vehicle / Add or rename route | Duplicate registration or route name hit a database error (generic 409/500) | Clear 400 messages from serializer checks (`serializers.py`) |
+| 6 | Add Route wizard | Duplicate stop names created a half-built route, and the retry was blocked by "code in use" | Duplicate stop names are refused while adding (`RouteModals.tsx`) |
+| 7 | Drivers › bulk Assign vehicle | With several drivers selected, only the last one was assigned (toast claimed all) | Driver bulk assign limited to one driver, with a message (`StaffDirectory.tsx`) |
+| 8 | Attendance (register + Notify absent parents) | Students on morning-only routes were listed (and parents messaged) for the afternoon drop, and vice versa | Register and notifications follow the route's shift (`services/attendance.py`, `AttendancePage.tsx`) |
+| 9 | Attendance › Notify absent parents | Toast counted skipped/failed SMS/email as "sent" | API returns `notifications_sent`; toast shows sent vs not sent (`views.py`, `AttendancePage.tsx`) |
+| 10 | Live Tracking › Raise alert | Alert recorded against the route's first bus, not the selected bus | Selected bus is sent (`LiveTrackingPage.tsx`, `actions.ts`) |
+| 11 | Maintenance › Mark completed (early) | Completing a future-dated job left a record every later edit refused | Early completion is dated today (`services/upkeep.py`) |
+| 12 | Fuel › Avg km/L KPI | First fill's litres (no distance) were included, so the figure was too low (e.g. 4.4 instead of 10.0) | Only fills with a measured distance count (`views.py`) |
+| 13 | Home › Buses on road now | Broken-down buses counted as on the road | Subtracted and shown in the note (`TransportDashboard.tsx`) |
+| 14 | Home › Maintenance due; Maintenance KPIs | Counted every open job, including archived vehicles and jobs months away | Due this week + overdue, active vehicles only (`TransportDashboard.tsx`, `MaintenancePage.tsx`) |
+| 15 | Deep links (`?id=`, `?new=1`) opened in a new tab | Ran before data loaded, so the record wasn't found and the link was cleared | Handled after the first load (`ui/deeplink.ts`) |
+| 16 | Pickup Points drawer | Schedule times and the 80 m radius were invented | Saved pickup/drop times and saved radius shown, or "Not set" (`PickupPointsPage.tsx`, `api.ts`, `types.ts`) |
+| 17 | Vehicle drawer | Fixed "Online · last ping 08:41 AM" | Real last GPS time, or "No GPS data received" (`VehicleDrawer.tsx`, `api.ts`, `types.ts`) |
+| 18 | Alerts KPIs, drawer, actions | Fake "4.2 min" response time; "Resolved today" counted all time; "Parents notified: Yes" for critical alerts; Message / Re-assign / Call claimed success | Computed from stored timestamps; honest labels; unconnected actions say nothing was sent (`AlertsPage.tsx`, `api.ts`, `types.ts`) |
+| 19 | Maintenance, Fuel, Alerts bulk actions | Success toasts shown before (and even without) a successful save | Toast after the API succeeds; "Archive" relabelled "Delete", which is what it does |
+| 20 | Allocation › bulk Assign route | Route with no stops: nothing sent, toast said success | Refused with a message (`AllocationPage.tsx`) |
+| 21 | Reports › download | When the PDF/Excel library was unavailable and CSV was downloaded, the log still said PDF/Excel | Not logged as PDF/Excel; toast says CSV (`ReportsPage.tsx`) |
+| 22 | Settings | Fare slabs stayed "Unsaved changes" after saving (backend sorts/rounds them); "Export CSV" downloaded JSON | Draft adopts saved values; button relabelled "Export JSON" (`SettingsPage.tsx`) |
+| 23 | Maintenance KPI | "Spend MTD" subtitle hardcoded to "October 2026" | Current month (`MaintenancePage.tsx`) |
+| 24 | Legacy Bus Tracking and stop-builder pages | Requests without `page_size` returned only the first 10 rows | All rows requested (`BusTrackingPanel.tsx`, `TransportRoutePanel.tsx`) |
+
+**Files modified:**
+- Backend:
+  - `apps/transport/views.py`, `serializers.py`, `services/attendance.py`, `services/upkeep.py`.
+  - `tests/test_phase3_api.py`: fuel average expectation corrected from 3.0 to 6.0 km/L; early-completion check added.
+  - New `tests/test_e2e_workflows.py` (40 tests).
+- Frontend:
+  - `lib/transport/actions.ts`, `api.ts`, `types.ts`.
+  - `components/transport/ui/deeplink.ts`.
+  - Screens: `dashboard/TransportDashboard.tsx`, `staff/StaffDirectory.tsx`, `routes/RouteModals.tsx`, `pickup/PickupPointsPage.tsx`, `vehicles/VehicleDrawer.tsx`, `allocation/AllocationPage.tsx`, `attendance/AttendancePage.tsx`, `live/LiveTrackingPage.tsx`, `alerts/AlertsPage.tsx`, `maintenance/MaintenancePage.tsx`, `fuel/FuelPage.tsx`, `reports/ReportsPage.tsx`, `settings/SettingsPage.tsx`.
+  - Legacy pages: `BusTrackingPanel.tsx`, `TransportRoutePanel.tsx`.
+- No schema or migration changes. No API endpoints removed or renamed; one response field added (`notifications_sent`).
+
+**Tests executed:**
+- Backend `pytest apps/transport/tests`: **97 passed** (57 existing + 40 new).
+  - The new tests cover the five workflows, validation and duplicate handling, every report (preview + PDF/Excel log), settings persistence, anonymous and role-without-permission access, and regressions for fixes 3, 4, 5, 8, 9, 11 and 12.
+  - Run on a throwaway SQLite file with `--nomigrations` (see blocked items).
+- Frontend: `tsc --noEmit` gives no new errors (the 11 existing Examination errors are unchanged); `eslint` is clean on all Transport code.
+
+**Blocked / not verified:**
+- **Migrations can't build a fresh test database** on either engine:
+  - `students/0012_repair_missing_district_column.py` runs SQLite-only `PRAGMA` on PostgreSQL.
+  - Another migration uses PostgreSQL-only `IF EXISTS` on SQLite.
+  - Belongs to Students, not changed. CI on a fresh database will hit the same problem.
+- **Signed-in browser testing:** not done (no test account was used). Still to check manually: every screen with real data, the dialogs and toasts changed above, and real PDF/Excel files.
+- **Live GPS:** not verified (no GPS source). Only the "no GPS" paths were tested.
+- **Real SMS/email delivery:** not verified (no provider credentials in the test environment).
+- **Jest:** finds no test files on this machine (config issue). No existing Jest test covers Transport.
+
+**Known remaining issues (not fixed):**
+- **Stop-builder:** deleting a stop doesn't release its students first.
+- **Moved stop order:** moving a stop to another route in the Pickup edit form keeps its old position number.
+- **Driver/attendant dropped without a bus:** choosing a driver/attendant in Add/Edit route with no bus doesn't save them.
+- **Vehicle edit:** setting a driver doesn't free that driver's previous vehicle on screen until reload.
+- **Staff "Routes covered" KPI:** only counts codes like `R1`.
+- **Reports:** the Generate modal's "Format" choice is not used, and PDF/Excel files omit the stats and notes shown in the preview.
+- **Alerts:** "Message", "Re-assign" and "Call driver" have no backend yet.
+- **Allocation:** per-class "+ Allocate" can preselect students from other classes.
+- **Existing data:** attendants already linked to an archived bus (before fix 3) still fail on edit until their bus is changed.
+
+
+### Update — 14/10/2026 (end-to-end workflow run)
+
+**Developer:** Jampala Kavya
+**Area:** Eskoolia School ERP → Transport → one complete workflow executed through the real UI (vehicle → crew → route → pickup point → student → morning pickup → afternoon drop)
+
+**How it was run:**
+- **Frontend:** the running Next.js dev server, driven by headless Chrome. Every action was a real click or keystroke, and sign-in went through the real login page.
+- **Backend:** a second copy of the Django backend (same code, settings and auth) on port 8765, with its own throwaway SQLite database and its own signing secret.
+- **Isolation:** the test browser's API calls were redirected there. **The shared `neondb` database was not written to.**
+- **Seed data:** one test school, academic year, Grade 5-A, one student (`E2E-001`) with a guardian, two HR staff, and one school-admin login.
+
+**Steps and results (all PASS):**
+
+| Step | Screen | Result |
+|---|---|---|
+| 1 Add vehicle `TS 09 EZ 2026` | Vehicles | 201; listed after reload; DB row. Required-field check also confirmed. |
+| 2 Add driver + assign vehicle | Staff › Drivers | 201; licence `TS0920260000123`; vehicle shows the driver |
+| 3 Add attendant + assign bus | Staff › Attendants | 201; certificate `FA-E2E-2026-01`; bus assigned |
+| 5 Create route `E2E1` (run before 4) | Routes › Add Route wizard | Route, 2 ordered stops, bus, driver and attendant saved; drawer shows the crew. Duplicate stop name refused. |
+| 4 Pickup/drop point "E2E Temple Pickup" | Pickup Points | Stop 3 with pickup 07:20 and drop 15:35, ₹1,500; drawer shows the saved values |
+| 6 Allocate student | Allocation › Bulk Allocate | Route 1 / stop 3 / bus 1 / ₹1,500; seat and stop counts updated |
+| 7 Morning pickup | Attendance › Morning pickup | Boarded; "Boarded 1 of 1" after reload; DB row (manual) |
+| 8 Drop-off | Attendance › Afternoon drop | Separate afternoon record; "Dropped 1" after reload |
+| 9 Verify chain | Home, Vehicles, Routes, Reports, API | Dashboard, route summary, boarding register (morning and afternoon) and route-strength reports consistent; independent API read consistent |
+
+**Implementation notes:**
+- **Pickup / drop-off points:** not separate records. They are ordered route stops with an optional morning pickup time and afternoon drop time, so the route is created first.
+- **Drop-off:** the "Afternoon drop" attendance register; "boarded" there means dropped.
+
+**Bugs found and fixed:**
+- **Pickup Points drawer:** showed an empty "zone" badge for routes without a zone. It now shows only when a zone is set.
+  - File: `frontend/components/transport/pickup/PickupPointsPage.tsx`.
+  - Retested: PASS (screenshot 04c).
+- **"Failed to fetch" on one page load:** traced to the test environment, not the app. The isolated dev server refused connections when ~20 requests arrived at once. The test proxy retries (logged); no app change.
+
+**Files modified:**
+- `frontend/components/transport/pickup/PickupPointsPage.tsx`
+- `backend/apps/transport/tests/test_e2e_workflows.py`: new test `test_morning_pickup_and_afternoon_drop_are_separate_records`.
+- No schema, migration or API changes.
+
+**Tests executed:**
+- Backend `pytest apps/transport/tests`: **98 passed** (isolated SQLite, `--nomigrations`).
+- Frontend: `tsc` gives no new errors (the 11 existing Examination errors are unchanged); `eslint` is clean.
+
+**Evidence:** `transport-e2e-evidence-2026-10-14/` next to the project. It contains `report.html`, 31 screenshots, `api_log.jsonl` (2,327 calls; login and tokens redacted) and `proxy_retries.jsonl`.
+
+**Not verified:**
+- GPS automatic boarding and live positions (no GPS source).
+- Contents of downloaded PDF/Excel files.
+- Absent-parent SMS/email delivery.
+- Waitlist and full-capacity behaviour in the UI (API tests only).
+- The same workflow on the real `neondb` data.
+
+**Remaining issues:**
+- **Report wording:** the afternoon boarding-register report labels its column "Boarded" rather than "Dropped".
+- **Migrations:** they still can't build a fresh database on either engine.
+- **Home page:** two widgets outside Transport call missing endpoints (`/api/calendar/week-ahead/`, `/api/exams/readiness/`, both 404).
+
+**Cleanup:** test records exist only in the throwaway database file, so nothing was written to `neondb` and nothing needs deleting there. The isolated backend and test browser were stopped, and the browser profile was deleted.

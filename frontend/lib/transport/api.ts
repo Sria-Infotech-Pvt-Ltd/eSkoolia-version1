@@ -257,7 +257,7 @@ export async function loadTransportData(): Promise<TransportData> {
       return {
         id: ids.stop(s.id), pk: s.id, pickupId: `PP-${pad(s.id, 3)}`, name: s.stop_name, routeCode: code, seq: i + 1,
         landmark: s.landmark ?? "", students: allocatedAtStop.get(s.id) ?? 0, fare: num(s.effective_fare),
-        pickupTime: hhmm(s.scheduled_time), dropTime: hhmm(s.drop_time),
+        pickupTime: hhmm(s.scheduled_time), dropTime: hhmm(s.drop_time), radius: s.geofence_radius ?? null,
         x: projection.x(lat, lng), y: projection.y(lat, lng), lat, lng,
       };
     });
@@ -292,7 +292,7 @@ export async function loadTransportData(): Promise<TransportData> {
   const vehicles: Vehicle[] = vehiclesRaw.map((v) => {
     const driver = v.driver ? driverByStaff.get(v.driver) : undefined;
     return {
-      id: ids.vehicle(v.id), pk: v.id, capacity: num(v.capacity), reg: v.vehicle_no, model: v.vehicle_model ?? "",
+      id: ids.vehicle(v.id), pk: v.id, lastPing: v.last_location_update ?? null, capacity: num(v.capacity), reg: v.vehicle_no, model: v.vehicle_model ?? "",
       type: VEHICLE_TYPE[v.vehicle_type] ?? "Bus · 42-seater",
       routeCode: v.route ? routeCode.get(v.route.id) ?? null : null,
       driverId: driver ? ids.driver(driver.id) : null,
@@ -365,6 +365,7 @@ export async function loadTransportData(): Promise<TransportData> {
         ageMin: at ? Math.max(0, Math.round((now - at.getTime()) / 60000)) : 0,
         state: (a.state ?? (a.is_resolved ? "resolved" : "open")) as AlertState,
         owner: a.resolved_by_name ?? a.acknowledged_by_name ?? undefined,
+        raisedAt: a.created_at ?? null, acknowledgedAt: a.acknowledged_at ?? null, resolvedAt: a.resolved_at ?? null,
         ref: type === "Document expiry" && a.document ? { vehicleId: ids.vehicle(a.vehicle), doc: docLabel[a.document] } : undefined,
       };
     });

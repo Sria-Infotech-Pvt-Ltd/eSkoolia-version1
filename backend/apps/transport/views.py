@@ -13,6 +13,7 @@ import math
 from datetime import date as date_cls
 from datetime import timedelta
 
+from django.db import transaction
 from django.db.models import Avg, Count, Max, Q, Sum
 from django.db.models.functions import TruncMonth
 from django.utils import timezone
@@ -129,10 +130,18 @@ class VehicleViewSet(TenantQueryMixin, PermissionScopedViewSet):
 
     @action(detail=True, methods=["post"], url_path="archive")
     def archive(self, request, pk=None):
-        """Archive (hide) a vehicle without deleting it: active_status=False."""
+        """
+        Archive (hide) a vehicle without deleting it: active_status=False. As the screen's
+        confirmation says, it also leaves its routes and its crew is freed, so archived plates
+        don't linger on routes or block editing the driver / attendant.
+        """
         vehicle = self.get_object()
-        vehicle.active_status = False
-        vehicle.save(update_fields=["active_status", "updated_at"])
+        with transaction.atomic():
+            vehicle.active_status = False
+            vehicle.driver = None
+            vehicle.save(update_fields=["active_status", "driver", "updated_at"])
+            vehicle.assignments.filter(active_status=True).update(active_status=False)
+            TransportStaffProfile.objects.filter(assigned_vehicle=vehicle).update(assigned_vehicle=None)
         return Response(self.get_serializer(vehicle).data)
 
     @action(detail=True, methods=["post"], url_path="mark-breakdown")
@@ -988,6 +997,12 @@ class TransportStaffProfileViewSet(TenantQueryMixin, PermissionScopedViewSet):
             )
         return queryset.order_by("role", "staff__first_name", "id")
 
+    def perform_destroy(self, instance):
+        # A removed driver profile must not stay linked as some vehicle's driver (Routes would still show them).
+        if instance.role == "driver":
+            Vehicle.objects.filter(driver_id=instance.staff_id, school_id=instance.school_id).update(driver=None)
+        instance.delete()
+
     @action(detail=False, methods=["get"], url_path="candidates")
     def candidates(self, request):
         """HR staff of this school without a transport profile (to add as driver/attendant)."""
@@ -1184,6 +1199,7 @@ class TransportAttendanceViewSet(TenantQueryMixin, PermissionScopedViewSet):
         date, shift = self._day_shift(request.data)
         absent = attendance_service.absent_students(request.user.school_id, date, shift)
         shift_label = "morning pickup" if shift == "morning" else "afternoon drop"
+        started = timezone.now()
         sent = 0
         for allocation in absent:
             sent += notify_guardians(
@@ -1191,7 +1207,11 @@ class TransportAttendanceViewSet(TenantQueryMixin, PermissionScopedViewSet):
                 message=f"{allocation.student.first_name} did not board the {shift_label} on {date:%d %b %Y}.",
                 subject="Transport attendance",
             ) if allocation.vehicle else 0
-        return Response({"absent": len(absent), "notifications_logged": sent})
+        # Logged attempts include "skipped" (SMS/email not configured) and "failed"; report actual sends separately.
+        delivered = TransportNotificationLog.objects.filter(
+            student_id__in=[a.student_id for a in absent], created_at__gte=started, status="sent",
+        ).count()
+        return Response({"absent": len(absent), "notifications_logged": sent, "notifications_sent": delivered})
 
 
 # Maintenance
@@ -1350,12 +1370,14 @@ class FuelEntryViewSet(TenantQueryMixin, PermissionScopedViewSet):
             .annotate(spend=Sum("amount"), litres=Sum("litres")).order_by("month")
         )
         km, litres = totals["km"] or 0, totals["litres"] or 0
+        # km/L uses only fills with a measured distance: a vehicle's first fill has no km, so its litres don't count.
+        measured_litres = in_month.filter(distance_km__isnull=False).aggregate(total=Sum("litres"))["total"] or 0
         return Response({
             "month": f"{start:%Y-%m}",
             "spend": totals["spend"] or 0,
             "litres": litres,
             "km": km,
-            "avg_kml": round(km / float(litres), 2) if km and litres else None,
+            "avg_kml": round(km / float(measured_litres), 2) if km and measured_litres else None,
             "entries": totals["entries"],
             "anomalies": totals["anomalies"],
             "unverified": totals["unverified"],

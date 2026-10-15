@@ -7,7 +7,7 @@ import { useCallback, useMemo, useState } from "react";
 import { Eye, Pencil, X } from "lucide-react";
 import { useTransport } from "@/lib/transport/store";
 import { defaultStopFare } from "@/lib/transport/fares";
-import { addMinutes, fmtTime, inr, num, plural } from "@/lib/transport/format";
+import { fmtTime, inr, num, plural } from "@/lib/transport/format";
 import { downloadCsv, type CsvColumn } from "@/lib/transport/csv";
 import type { RouteStop, TransportRoute } from "@/lib/transport/types";
 import {
@@ -283,17 +283,17 @@ export function PickupPointsPage() {
       {drawer && (
         <Drawer open onClose={() => setDrawerId(null)} label={`Pickup point ${drawer.stop.name}`}>
           <DrawerHeader avatar={String(drawer.stop.seq)} title={drawer.stop.name} sub={`${drawer.route.code} · ${drawer.route.name} · Stop ${drawer.stop.seq}`}
-            idLabel={drawer.stop.pickupId} badges={<><Badge tone="green">Active</Badge><Badge tone="purple">{drawer.route.zone} zone</Badge></>} />
+            idLabel={drawer.stop.pickupId} badges={<><Badge tone="green">Active</Badge>{drawer.route.zone && <Badge tone="purple">{drawer.route.zone} zone</Badge>}</>} />
           <DrawerHighlight items={[{ label: "Students boarding", value: String(drawer.stop.students) }, { label: "Monthly fare", value: inr(drawer.stop.fare) }]} />
           <DrawerSection title="Location">
             <InfoRow label="Landmark">{drawer.stop.landmark || "—"}</InfoRow>
             <InfoRow label="Latitude"><span className="tp-mono">{drawer.stop.lat.toFixed(4)}</span></InfoRow>
             <InfoRow label="Longitude"><span className="tp-mono">{drawer.stop.lng.toFixed(4)}</span></InfoRow>
-            <InfoRow label="Geofence radius">80 m</InfoRow>
+            <InfoRow label="Geofence radius">{drawer.stop.radius ? `${drawer.stop.radius} m` : "—"}</InfoRow>
           </DrawerSection>
           <DrawerSection title="Schedule">
-            <InfoRow label="Morning pickup">{fmtTime(addMinutes("07:05", drawer.stop.seq * 4))}</InfoRow>
-            <InfoRow label="Afternoon drop">{fmtTime(addMinutes("15:20", (10 - drawer.stop.seq) * 4))}</InfoRow>
+            <InfoRow label="Morning pickup">{drawer.stop.pickupTime ? fmtTime(drawer.stop.pickupTime) : "Not set"}</InfoRow>
+            <InfoRow label="Afternoon drop">{drawer.stop.dropTime ? fmtTime(drawer.stop.dropTime) : "Not set"}</InfoRow>
           </DrawerSection>
           <DrawerActions>
             <Button type="button" variant="soft" size="sm" onClick={() => setForm({ mode: "edit", id: drawer.stop.id })}>Edit point</Button>

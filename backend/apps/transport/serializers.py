@@ -169,6 +169,18 @@ class VehicleSerializer(SchoolScopedRelationsMixin, serializers.ModelSerializer)
             raise serializers.ValidationError("Seating capacity must be greater than zero.")
         return value
 
+    def validate_vehicle_no(self, value):
+        # Unique per school (archived vehicles included); checked here so a duplicate gets a clear message
+        # instead of a database error (`school` is read-only, so DRF doesn't run the unique check itself).
+        request = self.context.get("request")
+        school_id = getattr(getattr(request, "user", None), "school_id", None)
+        clash = Vehicle.objects.filter(school_id=school_id, vehicle_no=value)
+        if self.instance is not None:
+            clash = clash.exclude(pk=self.instance.pk)
+        if clash.exists():
+            raise serializers.ValidationError("A vehicle with this registration number already exists (it may be archived).")
+        return value
+
 
 class VehicleDocumentRenewalSerializer(serializers.Serializer):
     """Input for POST /vehicles/{id}/renew-document/."""
@@ -264,6 +276,17 @@ class TransportRouteSerializer(serializers.ModelSerializer):
     def get_students_count(self, obj):
         value = getattr(obj, "students_total", None)
         return value if value is not None else obj.students.filter(is_active=True, is_deleted=False).count()
+
+    def validate_title(self, value):
+        # Unique per school (archived routes included), like the route code below.
+        request = self.context.get("request")
+        school_id = getattr(getattr(request, "user", None), "school_id", None)
+        clash = TransportRoute.objects.filter(school_id=school_id, title=value)
+        if self.instance is not None:
+            clash = clash.exclude(pk=self.instance.pk)
+        if clash.exists():
+            raise serializers.ValidationError("A route with this name already exists (it may be archived).")
+        return value
 
     def validate_code(self, value):
         value = (value or "").strip().upper()

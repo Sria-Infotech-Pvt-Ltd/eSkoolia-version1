@@ -74,6 +74,13 @@
 .tp-wrap { background: #FAFAFB; padding: 12px 20px 40px; min-height: 100%; }
 .tp-frame { background: #f8f8fc; border: 1px solid #dfdfea; border-radius: 16px; padding: 18px; }
 .tp-frame--hub { padding: 24px; }
+/* Drivers / Attendants: less stacked wrapper + frame padding (mobile rules below still apply) */
+.tp-wrap--compact { padding: 6px 20px 8px; }
+.tp-frame--compact { padding: 12px; }
+/* styles/student-groups.css (imported globally) also defines a `.tp` chip style: padding, border,
+   radius, background and pointer cursor. Undo it on the layout root of the compact pages only;
+   flow-root keeps the sync banner's top margin inside the root (no phantom scroll). */
+.tp:has(> .tp-wrap--compact) { padding: 0; border: 0; border-radius: 0; background: transparent; cursor: auto; display: flow-root; }
 .tp-inner { max-width: 1400px; margin: 0 auto; }
 
 /* ─── Cards & grids ─── */

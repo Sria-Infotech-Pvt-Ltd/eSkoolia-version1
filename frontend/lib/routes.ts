@@ -35,7 +35,6 @@ import {
   BookOpenCheck,
   BookmarkCheck,
   UserSearch,
-  MapPin,
   Truck,
   Palette,
   Route,
@@ -57,7 +56,6 @@ import {
   UserX,
   IdCard,
   Wrench,
-  Fuel,
   type LucideIcon,
 } from 'lucide-react';
 
@@ -307,23 +305,21 @@ export const MODULES: ModuleRoute[] = [
     bg: '#EFF6FF',
     ic: '#1D4ED8',
     permission: 'transport',
-    // 14-tab Transport module (docs: Transport Module Master Prompt §3.2). The
+    // Transport module (docs: Transport Module Master Prompt §3.2). Attendants,
+    // Pickup Points, Attendance and Fuel are sections of Staff, Routes, Allocation
+    // and Maintenance (their old routes redirect there). The
     // earlier pages (assign-vehicles, bus-tracking, tracking, tracking/buses,
     // tracking/route-builder, student-report) are untouched and still reachable
     // directly; the placeholder screens link to them until their phase lands.
     sub: [
-      { label: 'Dashboard', path: '/transport', icon: LayoutDashboard },
+      { label: 'Home', path: '/transport', icon: LayoutDashboard },
       { label: 'Vehicles', path: '/transport/vehicles', icon: Car },
-      { label: 'Drivers', path: '/transport/drivers', icon: IdCard },
-      { label: 'Attendants', path: '/transport/attendants', icon: UserCheck },
-      { label: 'Routes', path: '/transport/routes', icon: Route },
-      { label: 'Pickup Points', path: '/transport/pickup-points', icon: MapPin },
-      { label: 'Student Allocation', path: '/transport/allocation', icon: Users },
-      { label: 'Attendance', path: '/transport/attendance', icon: ClipboardCheck },
+      { label: 'Staff', path: '/transport/drivers', icon: IdCard },
+      { label: 'Routes & Pickup Points', path: '/transport/routes', icon: Route },
+      { label: 'Allocation & Attendance', path: '/transport/allocation', icon: Users },
       { label: 'Live Tracking', path: '/transport/live', icon: Navigation },
       { label: 'Alerts', path: '/transport/alerts', icon: AlertTriangle },
-      { label: 'Maintenance', path: '/transport/maintenance', icon: Wrench },
-      { label: 'Fuel Management', path: '/transport/fuel', icon: Fuel },
+      { label: 'Maintenance & Fuel', path: '/transport/maintenance', icon: Wrench },
       { label: 'Reports', path: '/transport/reports', icon: FileBarChart },
       { label: 'Settings', path: '/transport/settings', icon: Settings },
     ],

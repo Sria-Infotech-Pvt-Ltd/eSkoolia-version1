@@ -125,12 +125,13 @@ export function FuelPage() {
     setForm(null);
   };
 
-  const runConfirm = () => {
+  const runConfirm = async () => {
     if (!confirm) return;
     const cf = confirm;
     setConfirm(null); setDrawerId(null);
-    if (cf.kind === "delete") { dispatch({ type: "fuel/delete", ids: [cf.id] }); toast(`${cf.id} deleted`); }
-    else { const n = selection.count; dispatch({ type: "fuel/delete", ids: selection.ids }); selection.clear(); toast(`${plural(n, "entry", "entries")} deleted`); }
+    // Confirm only after the backend has saved; on failure the sync banner shows the error.
+    if (cf.kind === "delete") { if (await dispatch({ type: "fuel/delete", ids: [cf.id] })) toast(`${cf.id} deleted`); }
+    else { const n = selection.count; const ids = selection.ids; selection.clear(); if (await dispatch({ type: "fuel/delete", ids })) toast(`${plural(n, "entry", "entries")} deleted`); }
   };
   const confirmText = !confirm ? null : confirm.kind === "bulkDelete"
     ? { title: `Delete ${plural(selection.count, "entry", "entries")}?`, message: "They are removed from spend and efficiency figures.", label: "Delete all" }
@@ -228,12 +229,12 @@ export function FuelPage() {
       </div>
 
       <BulkBar count={selection.count} onClear={selection.clear} actions={[
-        { label: "Mark verified", onClick: () => { const n = selection.count; dispatch({ type: "fuel/verify", ids: selection.ids }); selection.clear(); toast(`${plural(n, "entry", "entries")} marked verified`); } },
+        { label: "Mark verified", onClick: async () => { const n = selection.count; const ids = selection.ids; selection.clear(); if (await dispatch({ type: "fuel/verify", ids })) toast(`${plural(n, "entry", "entries")} marked verified`); } },
         { label: "Export", onClick: () => {
           const list = state.fuel.filter((f) => selection.isSelected(f.id));
           downloadCsv("transport-fuel-selected.csv", csv, list); toast(`Exported ${plural(list.length, "entry", "entries")}`); selection.clear();
         } },
-        { label: "Archive", onClick: () => setConfirm({ kind: "bulkDelete" }) },
+        { label: "Delete", onClick: () => setConfirm({ kind: "bulkDelete" }) },
       ]} />
 
       {drawer && (

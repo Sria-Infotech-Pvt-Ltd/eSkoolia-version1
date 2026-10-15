@@ -22,6 +22,8 @@ export interface RouteStop {
   fare: number;
   pickupTime: string; // "HH:MM", "" when not scheduled
   dropTime: string; // "HH:MM", "" when not scheduled
+  /** Saved arrival geofence radius in metres (null when not set). */
+  radius?: number | null;
   x: number;
   y: number;
   lat: number;
@@ -57,6 +59,8 @@ export type VehicleDoc = "Fitness certificate" | "Insurance" | "Road permit" | "
 export interface Vehicle {
   id: string; // VH-<pk>
   pk: number;
+  /** Last GPS position time (ISO), null when the vehicle has never reported one. */
+  lastPing?: string | null;
   /** Seats: explicit seating capacity, else the default for the vehicle type. */
   capacity: number;
   reg: string;
@@ -161,6 +165,10 @@ export interface TransportAlert {
   ageMin: number;
   state: AlertState;
   owner?: string;
+  /** ISO timestamps from the backend (null when that step hasn't happened). */
+  raisedAt?: string | null;
+  acknowledgedAt?: string | null;
+  resolvedAt?: string | null;
   /** Document-expiry alerts reference the record + document they are about. */
   ref?: { vehicleId?: string; driverId?: string; doc?: VehicleDoc | "Licence" };
 }

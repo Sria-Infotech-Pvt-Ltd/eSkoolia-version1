@@ -217,7 +217,7 @@ export function LiveTrackingPage() {
     const ok = await dispatch({
       type: "alert/raise",
       input: {
-        title: `${type} — ${sel.plate} on Route ${sel.route.code}`, type, severity, routeCode: sel.route.code, state: "open",
+        title: `${type} — ${sel.plate} on Route ${sel.route.code}`, type, severity, routeCode: sel.route.code, vehicleReg: sel.plate, state: "open",
         detail: `Raised from Live Tracking by ${owner} · ${sel.speed} km/h · next ${sel.nextStopName}`,
       },
     });

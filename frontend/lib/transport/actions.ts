@@ -44,6 +44,8 @@ export interface FuelInput { vehicleId: string; date: string; litres: number; ra
 export interface RaiseAlertInput {
   title: string; type: AlertType; severity: AlertSeverity; routeCode: string; detail: string;
   state: TransportAlert["state"]; owner?: string;
+  /** The bus the alert is about (Live Tracking); otherwise the route's bus is used. */
+  vehicleReg?: string;
 }
 
 export type TransportAction =
@@ -292,6 +294,15 @@ export async function performAction(action: TransportAction, state: TransportDat
       const { patch } = action;
       await tsend(`/transport-routes/${route.pk}/`, "PATCH", { title: patch.name, zone: patch.zone, first_pickup_time: patch.firstPickup || null });
       if (patch.busReg !== route.busReg || patch.driverName !== route.driverName || patch.attendantName !== route.attendantName) {
+        // The bus chosen in the form replaces the route's previous bus (other buses on the route are left alone).
+        const previousBus = route.busReg ? state.vehicles.find((v) => v.reg === route.busReg) : undefined;
+        if (previousBus && patch.busReg && patch.busReg !== route.busReg) {
+          const stale = (await tlist("/assign-vehicles/")).filter((a) => a.vehicle === previousBus.pk && a.route === route.pk && a.active_status);
+          for (const a of stale) await tsend(`/assign-vehicles/${a.id}/`, "PATCH", { active_status: false });
+        }
+        // Likewise the chosen attendant replaces the previous one on that bus.
+        const previousAttendant = route.attendantName ? state.attendants.find((a) => a.name === route.attendantName && a.busReg === route.busReg) : undefined;
+        if (previousAttendant && patch.attendantName !== route.attendantName) await tsend(`/transport-staff/${previousAttendant.pk}/`, "PATCH", { vehicle: null });
         await applyCrew(state, route.pk, patch);
       }
       return;
@@ -413,7 +424,8 @@ export async function performAction(action: TransportAction, state: TransportDat
     case "alert/raise": {
       const { input } = action;
       const route = routeByCode(state, input.routeCode);
-      const vehicle = state.vehicles.find((v) => !v.archived && v.reg === route?.busReg)
+      const vehicle = (input.vehicleReg ? state.vehicles.find((v) => !v.archived && v.reg === input.vehicleReg) : undefined)
+        ?? state.vehicles.find((v) => !v.archived && v.reg === route?.busReg)
         ?? state.vehicles.find((v) => !v.archived && v.routeCode === input.routeCode);
       if (!vehicle) throw new Error("Alerts need a vehicle: assign a bus to this route first.");
       const created = await tsend<{ id: number }>("/transport-alerts/", "POST", {

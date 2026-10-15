@@ -72,13 +72,15 @@ export function AttendancePage() {
   const lines: Line[] = useMemo(() => {
     const out: Line[] = [];
     routes.forEach((route) => {
+      // A route that doesn't run this shift has no register lines for it (same rule as the backend).
+      if ((shift === "morning" && route.shift === "Afternoon only") || (shift === "afternoon" && route.shift === "Morning only")) return;
       students.forEach((s) => {
         if (s.status !== "Allocated" || s.routeCode !== route.code) return;
         out.push({ student: s, route, stop: route.stops.find((x) => x.id === s.stopId) ?? null, entry: register?.[s.id] ?? UNMARKED });
       });
     });
     return out;
-  }, [routes, students, register]);
+  }, [routes, students, register, shift]);
   const classes = useMemo(() => sortClasses([...new Set(lines.map((l) => l.student.cls))]), [lines]);
 
   const byId = useCallback((id: string | null) => lines.find((l) => l.student.id === id) ?? null, [lines]);
@@ -177,8 +179,11 @@ export function AttendancePage() {
   const notifyAbsent = async () => {
     setNotifyOpen(false); setDrawerId(null);
     try {
-      const res = await tsend<{ absent: number; notifications_logged: number }>("/transport-attendance/notify-absent/", "POST", { date, shift });
-      toast(`${plural(res.absent, "student")} not boarded · ${plural(res.notifications_logged, "message")} sent to guardians`, "info");
+      const res = await tsend<{ absent: number; notifications_logged: number; notifications_sent?: number }>("/transport-attendance/notify-absent/", "POST", { date, shift });
+      // Attempts that were skipped (SMS/email not configured) or failed are not reported as sent.
+      const sent = res.notifications_sent ?? 0;
+      const notSent = res.notifications_logged - sent;
+      toast(`${plural(res.absent, "student")} not boarded · ${plural(sent, "message")} sent to guardians${notSent > 0 ? ` · ${notSent} not sent (SMS/email not configured or failed)` : ""}`, "info");
     } catch (e) {
       toast(e instanceof Error ? e.message : "Couldn't send notifications", "error");
     }

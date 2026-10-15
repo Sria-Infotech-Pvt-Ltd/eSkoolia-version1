@@ -42,7 +42,8 @@ export function TransportDashboard() {
   // Fleet
   const idle = vehicles.filter((v) => v.status === "Idle").length;
   const inService = vehicles.filter((v) => v.status === "Under maintenance").length;
-  const onRoad = vehicles.length - idle - inService;
+  const brokenDown = vehicles.filter((v) => v.status === "Breakdown").length;
+  const onRoad = vehicles.length - idle - inService - brokenDown;
   const seatsUsed = vehicles.reduce((s, v) => s + v.occupied, 0);
   const seatsTotal = vehicles.reduce((s, v) => s + capacityOf(v), 0);
 
@@ -64,7 +65,9 @@ export function TransportDashboard() {
   const docExpiries = open.filter((a) => a.type === "Document expiry").length;
 
   // Maintenance & fuel
-  const openService = state.maintenance.filter((r) => r.status !== "Completed");
+  // Archived vehicles' service records are not shown on Maintenance, so they don't count here either.
+  const activeVehicleIds = new Set(vehicles.map((v) => v.id));
+  const openService = state.maintenance.filter((r) => r.status !== "Completed" && activeVehicleIds.has(r.vehicleId));
   const dueThisWeek = openService.filter((r) => (r.status === "Due soon" || r.status === "Scheduled") && daysLeft(r.date) >= 0 && daysLeft(r.date) <= 7).length;
   const overdue = openService.filter((r) => r.status === "Overdue");
   const overduePlates = overdue.map((r) => state.vehicles.find((v) => v.id === r.vehicleId)?.reg).filter(Boolean).join(", ");
@@ -113,7 +116,7 @@ export function TransportDashboard() {
 
       <div className="tp-stat-grid">
         <StatTile loading={loading} icon={Bus} tone="neutral" label="Buses on road now" value={`${onRoad} / ${vehicles.length}`}
-          note={`${idle} in depot · ${inService} under maintenance`} />
+          note={`${idle} in depot · ${inService} under maintenance${brokenDown ? ` · ${brokenDown} broken down` : ""}`} />
         <StatTile loading={loading} icon={Users} tone="ok" label="Students onboard" value={num(boarded)}
           note={`of ${num(allocated.length)} allocated · today's ${shiftName}`} />
         <StatTile loading={loading} icon={Clock} tone={late.length ? "danger" : "ok"} label="Late buses" value={String(late.length)} note={lateNote} />
@@ -121,7 +124,7 @@ export function TransportDashboard() {
           note={`${critOverspeed} critical overspeed, ${plural(docExpiries, "document expiry", "document expiries")}`} />
         <StatTile loading={loading} icon={Gauge} tone="neutral" label="Seat utilisation" value={`${seatsTotal ? Math.round((seatsUsed / seatsTotal) * 100) : 0}%`}
           note={`${num(seatsUsed)} seats used of ${num(seatsTotal)} across fleet`} />
-        <StatTile loading={loading} icon={Wrench} tone={openService.length ? "warn" : "ok"} label="Maintenance due" value={String(openService.length)}
+        <StatTile loading={loading} icon={Wrench} tone={dueThisWeek + overdue.length ? "warn" : "ok"} label="Maintenance due" value={String(dueThisWeek + overdue.length)}
           note={`${dueThisWeek} this week · ${plural(overdue.length, "overdue service")}`} />
       </div>
 
@@ -132,16 +135,16 @@ export function TransportDashboard() {
             ctas={[{ label: "Manage vehicles", href: "/transport/vehicles", variant: "primary" }, { label: "Drivers", href: "/transport/drivers", variant: "outline" }]} />
           <ModuleCard icon={Route} rhythm="Per term" title="Routes & Pickup Points" dot="ok"
             description={`${state.routes.length} routes and ${stops} pickup points published.${avgRoute ? ` Avg route time ${avgRoute} min.` : ""}`}
-            ctas={[{ label: "Plan routes", href: "/transport/routes", variant: "primary" }, { label: "Pickup points", href: "/transport/pickup-points", variant: "outline" }]} />
+            ctas={[{ label: "Plan routes", href: "/transport/routes", variant: "primary" }, { label: "Pickup points", href: "/transport/routes?section=pickup-points", variant: "outline" }]} />
           <ModuleCard icon={Users} rhythm="Per term" title="Student Allocation" dot={pending + waitlisted ? "warn" : "ok"}
             description={`${num(allocated.length)} students allocated · ${pending} pending a pickup point · ${waitlisted} on the waitlist.`}
             ctas={[{ label: "Resolve pending", href: "/transport/allocation", variant: "primary" }]} />
           <ModuleCard icon={ClipboardCheck} rhythm="Daily" title="Daily Operations" dot={late.length ? "danger" : notBoarded ? "warn" : "ok"}
             description={`${plural(late.length, "late-arrival alert")} open. ${plural(notBoarded, "student")} not yet boarded on today's ${shiftName}.`}
-            ctas={[{ label: "Open live tracking", href: "/transport/live", variant: late.length ? "danger" : "primary" }, { label: "Attendance", href: "/transport/attendance", variant: "outline" }]} />
+            ctas={[{ label: "Open live tracking", href: "/transport/live", variant: late.length ? "danger" : "primary" }, { label: "Attendance", href: "/transport/allocation?section=attendance", variant: "outline" }]} />
           <ModuleCard icon={Wrench} rhythm="Monthly" title="Cost & Upkeep" dot={overdue.length ? "warn" : "ok"}
             description={`Fuel spend ${inr(fuelMtd)} MTD · ${overdue.length ? `${plural(overdue.length, "service")} overdue on ${overduePlates}.` : "no services overdue."}`}
-            ctas={[{ label: "Maintenance", href: "/transport/maintenance", variant: "outline" }, { label: "Fuel log", href: "/transport/fuel", variant: "outline" }]} />
+            ctas={[{ label: "Maintenance", href: "/transport/maintenance", variant: "outline" }, { label: "Fuel log", href: "/transport/maintenance?section=fuel", variant: "outline" }]} />
           <ModuleCard icon={FileBarChart} rhythm="Live" title="Reports" dot="ok" span2
             description="Route-wise strength, vehicle utilisation, fee collection, duty roster, boarding register and cost reports — generated as PDF or Excel."
             ctas={[{ label: "Open reports", href: "/transport/reports", variant: "outline" }]} />
@@ -171,7 +174,7 @@ export function TransportDashboard() {
               <QuickAction icon={Plus} label="Add a vehicle" href="/transport/vehicles?new=1" />
               <QuickAction icon={Route} label="Create a route" href="/transport/routes?new=1" />
               <QuickAction icon={Users} label="Bulk allocate students" href="/transport/allocation?new=1" />
-              <QuickAction icon={ClipboardCheck} label="Mark today's attendance" href="/transport/attendance" />
+              <QuickAction icon={ClipboardCheck} label="Mark today's attendance" href="/transport/allocation?section=attendance" />
               <QuickAction icon={Wrench} label="Log a service" href="/transport/maintenance?new=1" />
               <QuickAction icon={FileBarChart} label="Generate boarding register" href={`/transport/reports?id=${encodeURIComponent("Daily boarding register")}`} />
             </div>
