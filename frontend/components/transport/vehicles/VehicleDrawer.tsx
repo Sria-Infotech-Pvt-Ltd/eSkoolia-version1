@@ -2,7 +2,7 @@
 /** Vehicle drawer (Master Prompt §7.2 → ProfileDrawer pattern §4.16). */
 import { Bus, Car } from "lucide-react";
 import { capacityOf, routeLabel } from "@/lib/transport/catalog";
-import { fmtDate, inr, num } from "@/lib/transport/format";
+import { clockOf, fmtDate, inr, num } from "@/lib/transport/format";
 import type { Driver, TransportRoute, Vehicle } from "@/lib/transport/types";
 import {
   Button, Drawer, DrawerActions, DrawerHeader, DrawerHighlight, DrawerSection, InfoRow, StatusBadge,
@@ -31,7 +31,7 @@ export function VehicleDrawer({
         <InfoRow label="Route">{routeLabel(routes, vehicle.routeCode)}</InfoRow>
         <InfoRow label="Driver">{driver?.name ?? "Unassigned"}</InfoRow>
         <InfoRow label="Odometer"><span className="tp-mono">{vehicle.odometer ? `${num(vehicle.odometer)} km` : "Not recorded"}</span></InfoRow>
-        <InfoRow label="GPS device">Online · last ping 08:41 AM</InfoRow>
+        <InfoRow label="GPS device">{vehicle.lastPing ? `Last ping ${new Date(vehicle.lastPing).toLocaleDateString("en-IN", { day: "2-digit", month: "short" })} · ${clockOf(vehicle.lastPing)}` : "No GPS data received"}</InfoRow>
       </DrawerSection>
       <DrawerSection title="Compliance documents">
         <InfoRow label="Fitness certificate"><ComplianceValue iso={vehicle.fitness} /></InfoRow>

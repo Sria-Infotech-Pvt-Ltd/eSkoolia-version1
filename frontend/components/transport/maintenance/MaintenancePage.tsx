@@ -91,11 +91,13 @@ export function MaintenancePage() {
     ...(applied ? [{ label: `Search: "${applied}"`, tone: "blue" as const }] : []),
   ];
 
-  // KPIs
-  const dueWeek = records.filter((r) => (r.status === "Due soon" || r.status === "Scheduled") && daysLeft(r.date) >= 0 && daysLeft(r.date) <= 7).length;
-  const overdue = records.filter((r) => r.status === "Overdue").length;
-  const workshop = records.filter((r) => r.status === "In workshop").length;
-  const spendMtd = records.filter((r) => isThisMonth(r.date) && r.status === "Completed").reduce((s, r) => s + r.cost, 0);
+  // KPIs - archived vehicles' records have no group on this page, so they are left out here too.
+  const activeIds = new Set(vehicles.map((v) => v.id));
+  const kpiRecords = records.filter((r) => activeIds.has(r.vehicleId));
+  const dueWeek = kpiRecords.filter((r) => (r.status === "Due soon" || r.status === "Scheduled") && daysLeft(r.date) >= 0 && daysLeft(r.date) <= 7).length;
+  const overdue = kpiRecords.filter((r) => r.status === "Overdue").length;
+  const workshop = kpiRecords.filter((r) => r.status === "In workshop").length;
+  const spendMtd = kpiRecords.filter((r) => isThisMonth(r.date) && r.status === "Completed").reduce((s, r) => s + r.cost, 0);
 
   const csv: CsvColumn<ServiceRecord>[] = [
     { header: "Record ID", value: (r) => r.id }, { header: "Vehicle", value: (r) => vehicleOf(r.vehicleId)?.reg ?? "" },
@@ -133,12 +135,13 @@ export function MaintenancePage() {
     setForm(null);
   };
 
-  const runConfirm = () => {
+  const runConfirm = async () => {
     if (!confirm) return;
     const cf = confirm;
     setConfirm(null); setDrawerId(null);
-    if (cf.kind === "delete") { dispatch({ type: "service/delete", ids: [cf.id] }); toast(`${cf.id} deleted`); }
-    else { const n = selection.count; dispatch({ type: "service/delete", ids: selection.ids }); selection.clear(); toast(`${plural(n, "record")} deleted`); }
+    // Confirm only after the backend has saved; on failure the sync banner shows the error.
+    if (cf.kind === "delete") { if (await dispatch({ type: "service/delete", ids: [cf.id] })) toast(`${cf.id} deleted`); }
+    else { const n = selection.count; const ids = selection.ids; selection.clear(); if (await dispatch({ type: "service/delete", ids })) toast(`${plural(n, "record")} deleted`); }
   };
   const confirmText = !confirm ? null : confirm.kind === "bulkDelete"
     ? { title: `Delete ${plural(selection.count, "record")}?`, message: "Their cost is removed from monthly spend.", label: "Delete all" }
@@ -161,7 +164,7 @@ export function MaintenancePage() {
         <KpiCard loading={loading} label="Due this week" value={dueWeek} sub="Scheduled or due within 7 days" color={T.amber} />
         <KpiCard loading={loading} label="Overdue" value={overdue} sub="Past interval — vehicle restricted" color={T.red} />
         <KpiCard loading={loading} label="In workshop" value={workshop} sub="Off the road today" />
-        <KpiCard loading={loading} label="Spend MTD" value={inr(spendMtd)} sub={`${TODAY.toLocaleDateString("en-IN", { month: "long", year: "numeric" })} · completed services`} color={T.pu} />
+        <KpiCard loading={loading} label="Spend MTD" value={inr(spendMtd)} sub={`${TODAY.toLocaleDateString("en-IN", { month: "long", year: "numeric" })} · completed services, parts + labour`} color={T.pu} />
       </KpiGrid>
 
       <SmartFilter chips={chips} groupingChip="Grouped by vehicle" onReset={resetFilters} fields={[
@@ -257,12 +260,12 @@ export function MaintenancePage() {
       </GroupedList>
 
       <BulkBar count={selection.count} onClear={selection.clear} actions={[
-        { label: "Mark completed", onClick: () => { const n = selection.count; dispatch({ type: "service/complete", ids: selection.ids }); selection.clear(); toast(`${plural(n, "record")} marked completed`); } },
+        { label: "Mark completed", onClick: async () => { const n = selection.count; const ids = selection.ids; selection.clear(); if (await dispatch({ type: "service/complete", ids })) toast(`${plural(n, "record")} marked completed`); } },
         { label: "Export", onClick: () => {
           const list = records.filter((r) => selection.isSelected(r.id));
           downloadCsv("transport-maintenance-selected.csv", csv, list); toast(`Exported ${plural(list.length, "record")}`); selection.clear();
         } },
-        { label: "Archive", onClick: () => setConfirm({ kind: "bulkDelete" }) },
+        { label: "Delete", onClick: () => setConfirm({ kind: "bulkDelete" }) },
       ]} />
 
       {drawer && (() => {

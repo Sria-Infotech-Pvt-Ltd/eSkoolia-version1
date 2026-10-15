@@ -72,13 +72,15 @@ export function AttendancePage() {
   const lines: Line[] = useMemo(() => {
     const out: Line[] = [];
     routes.forEach((route) => {
+      // A route that doesn't run this shift has no register lines for it (same rule as the backend).
+      if ((shift === "morning" && route.shift === "Afternoon only") || (shift === "afternoon" && route.shift === "Morning only")) return;
       students.forEach((s) => {
         if (s.status !== "Allocated" || s.routeCode !== route.code) return;
         out.push({ student: s, route, stop: route.stops.find((x) => x.id === s.stopId) ?? null, entry: register?.[s.id] ?? UNMARKED });
       });
     });
     return out;
-  }, [routes, students, register]);
+  }, [routes, students, register, shift]);
   const classes = useMemo(() => sortClasses([...new Set(lines.map((l) => l.student.cls))]), [lines]);
 
   const byId = useCallback((id: string | null) => lines.find((l) => l.student.id === id) ?? null, [lines]);
@@ -178,7 +180,8 @@ export function AttendancePage() {
     setNotifyOpen(false); setDrawerId(null);
     try {
       const res = await tsend<{ absent: number; sent: number; skipped: number; failed: number }>("/transport-attendance/notify-absent/", "POST", { date, shift });
-      const parts = [`${plural(res.absent, "student")} not boarded`, `${plural(res.sent, "message")} sent`];
+      // Attempts that were skipped (SMS/email not configured) or failed are not reported as sent.
+      const parts = [`${plural(res.absent, "student")} not boarded`, `${plural(res.sent, "message")} sent to guardians`];
       if (res.skipped) parts.push(`${res.skipped} skipped — SMS/email not configured`);
       if (res.failed) parts.push(`${res.failed} failed`);
       toast(parts.join(" · "), res.failed || (res.skipped && !res.sent) ? "error" : "info");

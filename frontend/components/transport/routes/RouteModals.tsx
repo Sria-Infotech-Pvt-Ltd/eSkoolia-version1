@@ -191,6 +191,11 @@ export function AddRouteWizard({
       setErrors((e) => ({ ...e, stops: "Enter the stop name, latitude and longitude." }));
       return;
     }
+    // Stop names are unique per route; a duplicate would fail midway through Create route.
+    if (stops.some((s) => s.name === n)) {
+      setErrors((e) => ({ ...e, stops: `"${n}" is already a stop on this route.` }));
+      return;
+    }
     setStops((s) => [...s, { name: n, lat, lng }]);
     setStopInput(""); setLatInput(""); setLngInput("");
     setErrors((e) => ({ ...e, stops: undefined }));

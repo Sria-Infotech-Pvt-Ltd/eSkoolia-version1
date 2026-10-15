@@ -11,10 +11,14 @@ from django.db import transaction
 from ..models import StudentTransportAllocation, TransportAttendance
 
 
-def allocated_queryset(school_id, route_id=None, vehicle_id=None):
+def allocated_queryset(school_id, route_id=None, vehicle_id=None, shift=None):
     queryset = StudentTransportAllocation.objects.filter(
         school_id=school_id, status="allocated", student__is_active=True, student__is_deleted=False
-    ).select_related(
+    )
+    if shift:
+        # Only routes that run this shift: a morning-only route has no afternoon drop register.
+        queryset = queryset.filter(route__shift__in=[shift, "both"])
+    queryset = queryset.select_related(
         "student", "student__current_class", "student__current_section", "route", "stop", "vehicle"
     )
     if route_id:
@@ -26,7 +30,7 @@ def allocated_queryset(school_id, route_id=None, vehicle_id=None):
 
 def build_register(school_id, date, shift, route_id=None, vehicle_id=None):
     """One row per allocated student for the given date and shift."""
-    allocations = list(allocated_queryset(school_id, route_id, vehicle_id))
+    allocations = list(allocated_queryset(school_id, route_id, vehicle_id, shift=shift))
     lines = {
         line.student_id: line
         for line in TransportAttendance.objects.filter(
@@ -115,4 +119,4 @@ def absent_students(school_id, date, shift):
         TransportAttendance.objects.filter(school_id=school_id, date=date, shift=shift, boarded=True)
         .values_list("student_id", flat=True)
     )
-    return [a for a in allocated_queryset(school_id) if a.student_id not in boarded_ids]
+    return [a for a in allocated_queryset(school_id, shift=shift) if a.student_id not in boarded_ids]

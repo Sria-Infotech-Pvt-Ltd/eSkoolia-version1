@@ -75,6 +75,10 @@ def test_service_record_status_is_derived_and_filterable(admin_client, school, a
     assert done.data["completed"] == 2
     record = VehicleServiceRecord.objects.get(pk=overdue.data["id"])
     assert record.status == "completed" and record.completed_at is not None
+    # Completed ahead of schedule: dated today, so the record stays editable.
+    early = VehicleServiceRecord.objects.get(pk=soon.data["id"])
+    assert early.status == "completed" and early.service_date == today
+    assert admin_client.patch(f"{MAINT}{soon.data['id']}/", {"vendor": "Depot"}, format="json").status_code == 200
 
 
 def test_service_record_validation_and_school_scope(admin_client, school, academic_year, fleet, other_school):
@@ -137,7 +141,8 @@ def test_fuel_verify_summary_and_permissions(admin_client, school, academic_year
     ids = [log_fuel(admin_client, vehicle, SEPT + timedelta(days=d), odo).data["id"] for d, odo in ((0, 1000), (4, 1300))]
     assert admin_client.post(f"{FUEL}verify/", {"ids": ids}, format="json").data["verified"] == 2
     summary = admin_client.get(f"{FUEL}summary/?month=2026-09").data
-    assert float(summary["spend"]) == 10000 and summary["km"] == 300 and summary["avg_kml"] == 3.0
+    # 300 km on the second fill's 50 L = 6.0 km/L; the first fill has no measured distance, so its litres don't count.
+    assert float(summary["spend"]) == 10000 and summary["km"] == 300 and summary["avg_kml"] == 6.0
     assert summary["per_vehicle"][0]["vehicle_no"] == vehicle.vehicle_no
     assert summary["trend"][-1]["month"] == "2026-09"
 

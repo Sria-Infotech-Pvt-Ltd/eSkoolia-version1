@@ -1,12 +1,7 @@
-"use client";
+import { redirect } from "next/navigation";
+import { sectionHref } from "@/lib/transport/sections";
 
-import { Suspense } from "react";
-import { PickupPointsPage } from "@/components/transport/pickup/PickupPointsPage";
-
-export default function TransportPickupPointsPage() {
-  return (
-    <Suspense fallback={null}>
-      <PickupPointsPage />
-    </Suspense>
-  );
+/** Pickup Points now live as a section of the Routes page (/transport/routes). Old links and bookmarks (incl. ?id= / ?new=1) are redirected to that section. */
+export default function TransportPickupPointsPage({ searchParams }: { searchParams: Record<string, string | string[] | undefined> }) {
+  redirect(sectionHref("/transport/routes", "pickup-points", searchParams));
 }

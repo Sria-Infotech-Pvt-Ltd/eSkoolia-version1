@@ -321,13 +321,15 @@ export function AllocationPage() {
       {assignOpen && (
         <MoveStopsModal title="Assign route" subtitle="Students get the first stop on the route; refine per student afterwards" fieldLabel="Route"
           cta="Assign route" routes={routes} onClose={() => setAssignOpen(false)}
-          onSubmit={(code) => {
+          onSubmit={async (code) => {
             const r = routes.find((x) => x.code === code);
             const first = r?.stops[0];
+            // Students need a pickup point: a route without stops can't take them.
+            if (!r || !first) { toast(`${r ? `${r.code} · ${r.name}` : code} has no pickup points yet - add stops first`, "error"); return; }
             const n = selection.count;
-            if (r && first) dispatch({ type: "student/allocate", ids: selection.ids, routeCode: code, stopId: first.id });
+            const ids = selection.ids;
             selection.clear(); setAssignOpen(false);
-            toast(`${plural(n, "student")} assigned to ${r ? `${r.code} · ${r.name}` : code}`);
+            if (await dispatch({ type: "student/allocate", ids, routeCode: code, stopId: first.id })) toast(`${plural(n, "student")} assigned to ${r.code} · ${r.name}`);
           }} />
       )}
 

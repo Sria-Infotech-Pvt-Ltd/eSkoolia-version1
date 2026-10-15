@@ -46,14 +46,19 @@ export function SettingsPage() {
   // When saved settings change (first load, or after a save), sections the user
   // hasn't edited follow the new saved values; edited sections keep the draft.
   const prevSaved = useRef(saved);
+  // Settings just saved from this page: their draft adopts the stored values, which the backend
+  // may have normalised (e.g. fare slabs sorted, fares rounded), so they don't stay "unsaved".
+  const justSaved = useRef<Set<string>>(new Set());
   useEffect(() => {
     const before = prevSaved.current;
     prevSaved.current = saved;
     if (before === saved) return;
+    const adopt = justSaved.current;
+    justSaved.current = new Set();
     setDraft((d) => {
       const next = { ...d };
       (Object.keys(saved) as (keyof TransportSettings)[]).forEach((k) => {
-        if (JSON.stringify(d[k]) === JSON.stringify(before[k])) (next as Record<string, unknown>)[k] = structuredClone(saved[k]);
+        if (adopt.has(k) || JSON.stringify(d[k]) === JSON.stringify(before[k])) (next as Record<string, unknown>)[k] = structuredClone(saved[k]);
       });
       return next;
     });
@@ -96,8 +101,10 @@ export function SettingsPage() {
   };
   const saveSection = async (key: SectionKey, title: string) => {
     if (!validate([key])) return;
-    if (await dispatch({ type: "settings/save", patch: pick(draft, key) })) toast(`${title} saved`);
-    else toast("Not saved — see the message above", "error");
+    const patch = pick(draft, key);
+    justSaved.current = new Set(Object.keys(patch));
+    if (await dispatch({ type: "settings/save", patch })) toast(`${title} saved`);
+    else { justSaved.current = new Set(); toast("Not saved — see the message above", "error"); }
   };
   const discardSection = (key: SectionKey, title: string) => {
     setDraft((d) => ({ ...d, ...structuredClone(pick(saved, key)) }));
@@ -106,8 +113,10 @@ export function SettingsPage() {
   const saveAll = async () => {
     if (dirtyKeys.length === 0) { toast("Nothing to save", "info"); return; }
     if (!validate(dirtyKeys)) return;
-    if (await dispatch({ type: "settings/save", patch: Object.assign({}, ...dirtyKeys.map((k) => pick(draft, k))) })) toast("All changes saved", "info");
-    else toast("Not saved — see the message above", "error");
+    const patch = Object.assign({}, ...dirtyKeys.map((k) => pick(draft, k)));
+    justSaved.current = new Set(Object.keys(patch));
+    if (await dispatch({ type: "settings/save", patch })) toast("All changes saved", "info");
+    else { justSaved.current = new Set(); toast("Not saved — see the message above", "error"); }
   };
   const exportJson = () => {
     const blob = new Blob([JSON.stringify(saved, null, 2)], { type: "application/json" });
@@ -274,7 +283,7 @@ export function SettingsPage() {
       <PageHero eyebrow="Transport · Configuration" title="Transport" accent="settings"
         sub="Geofence, shift timings, safety thresholds, parent notifications, fare slabs and document reminders for this campus."
         actions={<>
-          <HeroSecondary onClick={exportJson}>Export CSV</HeroSecondary>
+          <HeroSecondary onClick={exportJson}>Export JSON</HeroSecondary>
           <HeroPrimary icon={false} onClick={() => { void saveAll(); }}>Save all changes</HeroPrimary>
         </>} />
 

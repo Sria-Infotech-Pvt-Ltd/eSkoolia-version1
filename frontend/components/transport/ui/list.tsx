@@ -62,18 +62,22 @@ export interface FilterField {
 export interface FilterChip { label: string; tone: Tone }
 
 export function SmartFilter({
-  fields, chips, groupingChip, onReset,
-}: { fields: FilterField[]; chips: FilterChip[]; groupingChip?: string; onReset: () => void }) {
+  fields, chips, groupingChip, onReset, compact,
+}: {
+  fields: FilterField[]; chips: FilterChip[]; groupingChip?: string; onReset: () => void;
+  /** Title and chips share one row, with tighter padding (Drivers / Attendants). */
+  compact?: boolean;
+}) {
   const [open, setOpen] = useState(false);
   return (
-    <div className="tp-card" style={{ marginBottom: 12, overflow: "hidden" }}>
+    <div className="tp-card" style={{ marginBottom: compact ? 10 : 12, overflow: "hidden" }}>
       <button type="button" onClick={() => setOpen((o) => !o)} aria-expanded={open} className="tp-link-reset"
-        style={{ width: "100%", display: "flex", alignItems: "center", gap: 12, padding: "12px 16px", borderLeft: `4px solid ${T.puDeep}`, background: T.filterBg }}>
+        style={{ width: "100%", display: "flex", alignItems: "center", gap: 12, padding: compact ? "8px 14px" : "12px 16px", borderLeft: `4px solid ${T.puDeep}`, background: T.filterBg }}>
         <ChevronDown size={16} color={T.pu} strokeWidth={2}
           style={{ transform: open ? "none" : "rotate(-90deg)", transition: "transform 0.15s", flexShrink: 0 }} />
-        <span style={{ flex: 1, minWidth: 0 }}>
+        <span style={compact ? { flex: 1, minWidth: 0, display: "flex", flexWrap: "wrap", alignItems: "center", gap: "6px 12px" } : { flex: 1, minWidth: 0 }}>
           <span style={{ display: "block", fontSize: 14, fontWeight: 800, color: T.ink }}>Smart Filter &amp; Bulk Actions</span>
-          <span style={{ display: "flex", flexWrap: "wrap", gap: 6, marginTop: 6 }}>
+          <span style={{ display: "flex", flexWrap: "wrap", gap: 6, marginTop: compact ? 0 : 6 }}>
             {chips.length === 0 ? <Chip tone="slate">No filters active</Chip> : chips.map((c) => <Chip key={c.label} tone={c.tone}>{c.label}</Chip>)}
             {groupingChip && <Chip tone="slate">{groupingChip}</Chip>}
           </span>
@@ -81,7 +85,7 @@ export function SmartFilter({
         <span style={{ fontSize: 12, color: T.muted, flexShrink: 0 }}>{open ? "Collapse" : "Expand to filter"}</span>
       </button>
       {open && (
-        <div style={{ borderTop: `1px solid ${T.rowBd}`, padding: "14px 16px" }}>
+        <div style={{ borderTop: `1px solid ${T.rowBd}`, padding: compact ? "10px 14px" : "14px 16px" }}>
           <div className="tp-filter-grid">
             {fields.map((f) => (
               <label key={f.key} style={{ display: "flex", flexDirection: "column", gap: 6 }}>
@@ -93,7 +97,7 @@ export function SmartFilter({
               </label>
             ))}
           </div>
-          <div style={{ display: "flex", justifyContent: "flex-end", marginTop: 12 }}>
+          <div style={{ display: "flex", justifyContent: "flex-end", marginTop: compact ? 8 : 12 }}>
             <OutlineButton onClick={onReset}>Reset filters</OutlineButton>
           </div>
         </div>
@@ -105,13 +109,15 @@ export function SmartFilter({
 // ─── Search row ──────────────────────────────────────────────────────────────
 
 export function SearchRow({
-  value, onChange, onSubmit, placeholder, allSelected, onToggleAll, onExport,
+  value, onChange, onSubmit, placeholder, allSelected, onToggleAll, onExport, compact,
 }: {
   value: string; onChange: (v: string) => void; onSubmit: () => void; placeholder: string;
   allSelected: boolean; onToggleAll: () => void; onExport: () => void;
+  /** Tighter padding (Drivers / Attendants). */
+  compact?: boolean;
 }) {
   return (
-    <div className="tp-card" style={{ display: "flex", flexWrap: "wrap", alignItems: "center", gap: 12, padding: "12px 16px", marginBottom: 12 }}>
+    <div className="tp-card" style={{ display: "flex", flexWrap: "wrap", alignItems: "center", gap: compact ? 10 : 12, padding: compact ? "6px 14px" : "12px 16px", marginBottom: compact ? 10 : 12 }}>
       <Search size={16} color={T.pu} strokeWidth={1.8} style={{ flexShrink: 0 }} />
       <input value={value} onChange={(e) => onChange(e.target.value)} onKeyDown={(e) => { if (e.key === "Enter") onSubmit(); }}
         placeholder={placeholder} aria-label={placeholder}
@@ -130,18 +136,20 @@ export function SearchRow({
 // ─── Grouped accordion list ──────────────────────────────────────────────────
 
 export function GroupedList({
-  title, helper, onCollapseAll, onExpandAll, footer, actions, children,
+  title, helper, onCollapseAll, onExpandAll, footer, actions, children, compact,
 }: {
   title: string; helper: string; onCollapseAll: () => void; onExpandAll: () => void; footer?: React.ReactNode;
   /** Extra header buttons shown before Collapse all / Expand all. */
   actions?: React.ReactNode; children: React.ReactNode;
+  /** Tighter header and body padding (Drivers / Attendants). */
+  compact?: boolean;
 }) {
   return (
     <div className="tp-card">
-      <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", flexWrap: "wrap", gap: 12, padding: "14px 16px" }}>
-        <div>
+      <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", flexWrap: "wrap", gap: compact ? 10 : 12, padding: compact ? "8px 14px" : "14px 16px" }}>
+        <div style={compact ? { display: "flex", alignItems: "baseline", flexWrap: "wrap", gap: "2px 10px", minWidth: 0 } : undefined}>
           <div style={{ fontSize: 14, fontWeight: 800, color: T.ink }}>{title}</div>
-          <div style={{ fontSize: 12, color: T.muted, marginTop: 2 }}>{helper}</div>
+          <div style={{ fontSize: 12, color: T.muted, marginTop: compact ? 0 : 2 }}>{helper}</div>
         </div>
         <div style={{ display: "flex", gap: 8, flexWrap: "wrap" }}>
           {actions}
@@ -149,7 +157,7 @@ export function GroupedList({
           <OutlineButton onClick={onExpandAll}>Expand all</OutlineButton>
         </div>
       </div>
-      <div style={{ background: T.page, padding: 12, borderTop: `1px solid ${T.rowBd}`, borderRadius: "0 0 14px 14px" }}>
+      <div style={{ background: T.page, padding: compact ? 10 : 12, borderTop: `1px solid ${T.rowBd}`, borderRadius: "0 0 14px 14px" }}>
         {children}
         {footer}
       </div>
@@ -172,22 +180,25 @@ export function Donut({ pct }: { pct: number }) {
 }
 
 export function GroupCard({
-  name, title, chips, pct, open, onToggle, extra, children,
+  name, title, chips, pct, open, onToggle, extra, children, compact,
 }: {
   name: string; chips: React.ReactNode; pct: number; open: boolean; onToggle: () => void; extra?: React.ReactNode; children: React.ReactNode;
   /** Optional rich title (defaults to `name`, which also labels the toggle for screen readers). */
   title?: React.ReactNode;
+  /** Title and chips share one row, with tighter padding (Drivers / Attendants). */
+  compact?: boolean;
 }) {
   return (
-    <div style={{ background: "#fff", border: `1px solid ${T.cardBd}`, borderRadius: 14, marginBottom: 12, boxShadow: T.shadowAcc, overflow: "hidden" }}>
-      <div style={{ display: "flex", alignItems: "center", gap: 12, padding: "12px 16px", borderLeft: `4px solid ${T.puDeep}`, background: "linear-gradient(135deg,#FFFFFF 60%,#EEEAFF 100%)" }}>
+    <div style={{ background: "#fff", border: `1px solid ${T.cardBd}`, borderRadius: 14, marginBottom: compact ? 6 : 12, boxShadow: T.shadowAcc, overflow: "hidden" }}>
+      <div style={{ display: "flex", alignItems: "center", gap: compact ? 10 : 12, padding: compact ? "6px 14px" : "12px 16px", borderLeft: `4px solid ${T.puDeep}`, background: "linear-gradient(135deg,#FFFFFF 60%,#EEEAFF 100%)" }}>
         <button type="button" onClick={onToggle} aria-label={open ? `Collapse ${name}` : `Expand ${name}`} aria-expanded={open} className="tp-btn-row"
           style={{ width: 24, height: 24, borderRadius: 6 }}>
           <ChevronDown size={16} color={T.pu} strokeWidth={2} style={{ transform: open ? "none" : "rotate(-90deg)", transition: "transform 0.15s" }} />
         </button>
-        <button type="button" onClick={onToggle} className="tp-link-reset" style={{ flex: 1, minWidth: 0 }}>
+        <button type="button" onClick={onToggle} className="tp-link-reset"
+          style={compact ? { flex: 1, minWidth: 0, display: "flex", flexWrap: "wrap", alignItems: "center", gap: "6px 12px" } : { flex: 1, minWidth: 0 }}>
           <span style={{ display: "block", fontSize: 15, fontWeight: 850, color: T.ink }}>{title ?? name}</span>
-          <span style={{ display: "flex", flexWrap: "wrap", gap: 6, marginTop: 6 }}>{chips}</span>
+          <span style={{ display: "flex", flexWrap: "wrap", gap: 6, marginTop: compact ? 0 : 6 }}>{chips}</span>
         </button>
         {extra}
         <Donut pct={pct} />

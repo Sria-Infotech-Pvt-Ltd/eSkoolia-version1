@@ -157,6 +157,7 @@ export function StaffDirectory({ kind }: { kind: StaffKind }) {
   const online = rows.filter((r) => r.online);
   const onRoute = rows.filter((r) => r.status === "On route").length;
   const docAlerts = rows.filter((r) => daysLeft(r.docValid) <= docWindow).length;
+  // Unrated drivers are left out of the average rather than counted as 0.
   const rated = rows.filter((r) => (r.rating ?? 0) > 0);
   const avgRating = rated.length ? rated.reduce((s, r) => s + (r.rating ?? 0), 0) / rated.length : null;
   const routesCovered = new Set(online.map((r) => r.route.match(/^R\d+/)?.[0]).filter(Boolean)).size;
@@ -248,8 +249,8 @@ export function StaffDirectory({ kind }: { kind: StaffKind }) {
   const groupsWithRows = SHIFTS.filter((s) => visible.some((r) => r.shift === s)).length;
 
   return (
-    <TransportPage>
-      <PageHero eyebrow={c.hero.eyebrow} title={c.hero.title} accent={c.hero.accent} sub={c.hero.sub}
+    <TransportPage compact>
+      <PageHero compact eyebrow={c.hero.eyebrow} title={c.hero.title} accent={c.hero.accent} sub={c.hero.sub}
         actions={<>
           <HeroSecondary onClick={exportVisible}>Export CSV</HeroSecondary>
           <HeroPrimary onClick={() => setForm({ mode: "add", shift: "Full day" })}>{c.add}</HeroPrimary>
@@ -258,23 +259,23 @@ export function StaffDirectory({ kind }: { kind: StaffKind }) {
       <KpiGrid>
         {kind === "driver" ? (
           <>
-            <KpiCard loading={loading} label="Drivers" value={activeRows.length} sub={`${activeRows.length} on the transport payroll`} />
-            <KpiCard loading={loading} label="On duty today" value={online.length} sub={`${onRoute} currently on route`} color={T.green} />
-            <KpiCard loading={loading} label={c.docKpi} value={docAlerts} sub={`Within ${docWindow} days or expired`} color={T.amber} />
-            <KpiCard loading={loading} label="Avg rating" value={avgRating === null ? "—" : avgRating.toFixed(1)}
+            <KpiCard loading={loading} compact label="Drivers" value={activeRows.length} sub={`${activeRows.length} on the transport payroll`} />
+            <KpiCard loading={loading} compact label="On duty today" value={online.length} sub={`${onRoute} currently on route`} color={T.green} />
+            <KpiCard loading={loading} compact label={c.docKpi} value={docAlerts} sub={`Within ${docWindow} days or expired`} color={T.amber} />
+            <KpiCard loading={loading} compact label="Avg rating" value={avgRating === null ? "—" : avgRating.toFixed(1)}
               sub={rated.length ? `From ${plural(rated.length, "rated driver profile")}` : "No ratings recorded yet"} color={T.pu} />
           </>
         ) : (
           <>
-            <KpiCard loading={loading} label="Attendants" value={activeRows.length} sub="With a transport profile" />
-            <KpiCard loading={loading} label="On duty today" value={online.length} sub={`${onRoute} currently on route`} color={T.green} />
-            <KpiCard loading={loading} label={c.docKpi} value={docAlerts} sub={`Within ${docWindow} days or expired`} color={T.amber} />
-            <KpiCard loading={loading} label="Routes covered" value={`${routesCovered} / ${state.routes.length}`} sub="Routes with an attendant onboard" color={T.pu} />
+            <KpiCard loading={loading} compact label="Attendants" value={activeRows.length} sub="With a transport profile" />
+            <KpiCard loading={loading} compact label="On duty today" value={online.length} sub={`${onRoute} currently on route`} color={T.green} />
+            <KpiCard loading={loading} compact label={c.docKpi} value={docAlerts} sub={`Within ${docWindow} days or expired`} color={T.amber} />
+            <KpiCard loading={loading} compact label="Routes covered" value={`${routesCovered} / ${state.routes.length}`} sub="Routes with an attendant onboard" color={T.pu} />
           </>
         )}
       </KpiGrid>
 
-      <SmartFilter chips={chips} groupingChip="Grouped by shift" onReset={resetFilters} fields={[
+      <SmartFilter compact chips={chips} groupingChip="Grouped by shift" onReset={resetFilters} fields={[
         { key: "shift", label: "Shift", value: fShift, onChange: setFShift,
           options: [{ value: ALL, label: "All shifts" }, ...SHIFTS.map((s) => ({ value: s, label: SHIFT_LABELS[s] }))] },
         { key: "status", label: "Status", value: fStatus, onChange: setFStatus,
@@ -285,22 +286,22 @@ export function StaffDirectory({ kind }: { kind: StaffKind }) {
           options: [{ value: ALL, label: "Any experience" }, { value: "lt5", label: "Under 5 years" }, { value: "5to10", label: "5–10 years" }, { value: "gt10", label: "Over 10 years" }] },
       ]} />
 
-      <SearchRow value={query} onChange={setQuery} onSubmit={runSearch} placeholder={c.search}
+      <SearchRow compact value={query} onChange={setQuery} onSubmit={runSearch} placeholder={c.search}
         allSelected={allSelected} onToggleAll={() => selection.toggleAll(visibleIds)} onExport={exportVisible} />
 
-      <GroupedList title={`All ${c.noun}s`} helper={c.listHelper}
+      <GroupedList compact title={`All ${c.noun}s`} helper={c.listHelper}
         onCollapseAll={groups.collapseAll} onExpandAll={() => groups.expandAll([...SHIFTS])}
         footer={visible.length > 0 && (
           <ListFooter summary={`Showing ${visible.length} of ${rows.length} ${c.noun}s`} counts={`across ${groupsWithRows} ${groupsWithRows === 1 ? "group" : "groups"}`}
             onCollapseAll={groups.collapseAll} onExportView={() => { exportRows(visible); toast("Current view exported"); }} />
         )}>
         {visible.length === 0 && filtersActive ? (
-          <EmptyLine>No {c.noun}s match these filters. Try clearing the search or resetting filters.</EmptyLine>
+          <EmptyLine compact>No {c.noun}s match these filters. Try clearing the search or resetting filters.</EmptyLine>
         ) : groupsShown.map((shift) => {
           const list = visible.filter((r) => r.shift === shift);
           const on = list.filter((r) => r.online).length;
           return (
-            <GroupCard key={shift} name={SHIFT_LABELS[shift]} open={groups.isOpen(shift)} onToggle={() => groups.toggle(shift)}
+            <GroupCard compact key={shift} name={SHIFT_LABELS[shift]} open={groups.isOpen(shift)} onToggle={() => groups.toggle(shift)}
               pct={list.length ? (on / list.length) * 100 : 0}
               chips={<>
                 <Chip tone="slate">{plural(list.length, c.noun)}</Chip>
@@ -309,7 +310,7 @@ export function StaffDirectory({ kind }: { kind: StaffKind }) {
                 <Chip tone="blue">{list.filter((r) => daysLeft(r.docValid) <= docWindow).length} {c.docAlert}</Chip>
               </>}
               extra={<OutlineButton onClick={() => setForm({ mode: "add", shift })}>+ Add</OutlineButton>}>
-              {list.length === 0 ? <EmptyLine>No {c.noun}s in this group yet.</EmptyLine> : (
+              {list.length === 0 ? <EmptyLine compact>No {c.noun}s in this group yet.</EmptyLine> : (
                 <div className="tp-scroll-x">
                   <table className="tp-table" style={{ minWidth: 1100 }}>
                     <thead>
@@ -364,7 +365,11 @@ export function StaffDirectory({ kind }: { kind: StaffKind }) {
       </GroupedList>
 
       <BulkBar count={selection.count} onClear={selection.clear} actions={[
-        { label: c.assignTitle, onClick: () => setAssignOpen(true) },
+        { label: c.assignTitle, onClick: () => {
+          // A vehicle has one driver, so assigning several drivers to it would keep only the last one.
+          if (kind === "driver" && selection.count > 1) { toast("A vehicle has one driver - select a single driver to assign", "error"); return; }
+          setAssignOpen(true);
+        } },
         { label: "Export", onClick: () => {
           const list = rows.filter((r) => selection.isSelected(r.id));
           exportRows(list); toast(`Exported ${plural(list.length, c.noun)}`); selection.clear();
@@ -448,6 +453,8 @@ function StaffForm({
   candidates: { pk: number; name: string; staffNo: string; role: string | null; licence: string }[]; editing: Row | null;
   onClose: () => void; onSubmit: (v: FormValues) => void;
 }) {
+  // On a slow connection the form can open before the staff list has loaded; don't claim the list is empty yet.
+  const loadingStaff = useTransport().status === "loading";
   const c = CFG[kind];
   const { toast } = useTpToast();
   const [v, setV] = useState<FormValues>(initial);
@@ -473,7 +480,8 @@ function StaffForm({
       <div className="tp-form-grid">
         {mode === "add" ? (
           <Field label="HR staff member" required error={errors.staffPk}
-            hint={candidates.length ? "Name and phone come from the HR record" : "Everyone in HR already has a transport profile - add staff in HR first"}>
+            hint={candidates.length ? "Name and phone come from the HR record"
+              : loadingStaff ? "Loading HR staff…" : "Everyone in HR already has a transport profile - add staff in HR first"}>
             <Select value={v.staffPk} onChange={(e) => {
               const pick = candidates.find((s) => String(s.pk) === e.target.value);
               setV((p) => ({ ...p, staffPk: e.target.value, docNo: kind === "driver" && pick?.licence && !p.docNo ? pick.licence : p.docNo }));

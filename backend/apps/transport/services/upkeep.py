@@ -49,11 +49,18 @@ def due_services(queryset, today=None):
 def complete_services(records, user=None):
     now = timezone.now()
     done = []
+    today = timezone.localdate()
     for record in records:
         if record.status != "completed":
             record.status = "completed"
             record.completed_at = now
-            record.save(update_fields=["status", "completed_at", "updated_at"])
+            fields = ["status", "completed_at", "updated_at"]
+            if record.service_date > today:
+                # Done ahead of schedule: it was carried out today. A completed service can't carry a
+                # future date (the edit form refuses it), so the record would otherwise be uneditable.
+                record.service_date = today
+                fields.append("service_date")
+            record.save(update_fields=fields)
             done.append(record)
     return done
 
