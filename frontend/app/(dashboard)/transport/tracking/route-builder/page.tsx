@@ -1,5 +1,6 @@
 'use client';
 
+import { API_BASE_URL } from '@/lib/api';
 import { useEffect, useState, useCallback } from 'react';
 import dynamic from 'next/dynamic';
 
@@ -92,7 +93,7 @@ export default function RouteBuilderPage() {
       const token = localStorage.getItem('school_erp_access_token');
 
       // Create route
-      const routeRes = await fetch('/api/v1/core/transport-routes/', {
+      const routeRes = await fetch(`${API_BASE_URL}/api/v1/core/transport-routes/`, {
         method: 'POST',
         headers: {
           'Authorization': `Bearer ${token}`,
@@ -110,7 +111,7 @@ export default function RouteBuilderPage() {
 
       // Add stops
       for (const stop of stops) {
-        const stopRes = await fetch('/api/v1/core/bus-stops/', {
+        const stopRes = await fetch(`${API_BASE_URL}/api/v1/core/bus-stops/`, {
           method: 'POST',
           headers: {
             'Authorization': `Bearer ${token}`,

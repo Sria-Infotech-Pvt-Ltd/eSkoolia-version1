@@ -35,7 +35,6 @@ import {
   BookOpenCheck,
   BookmarkCheck,
   UserSearch,
-  MapPin,
   Truck,
   Palette,
   Route,
@@ -55,6 +54,8 @@ import {
   List,
   Navigation,
   UserX,
+  IdCard,
+  Wrench,
   type LucideIcon,
 } from 'lucide-react';
 
@@ -302,8 +303,7 @@ export const MODULES: ModuleRoute[] = [
       { label: 'Settings', path: '/library/settings', icon: Settings, permission: 'library.settings.view' },
     ],
   },
-  // HIDDEN - no backend yet
-  /* {
+  {
     id: 'transport',
     name: 'Transport',
     path: '/transport',
@@ -311,17 +311,25 @@ export const MODULES: ModuleRoute[] = [
     bg: '#EFF6FF',
     ic: '#1D4ED8',
     permission: 'transport',
+    // Transport module (docs: Transport Module Master Prompt §3.2). Attendants,
+    // Pickup Points, Attendance and Fuel are sections of Staff, Routes, Allocation
+    // and Maintenance (their old routes redirect there). The
+    // earlier pages (assign-vehicles, bus-tracking, tracking, tracking/buses,
+    // tracking/route-builder, student-report) are untouched and still reachable
+    // directly; the placeholder screens link to them until their phase lands.
     sub: [
+      { label: 'Home', path: '/transport', icon: LayoutDashboard },
       { label: 'Vehicles', path: '/transport/vehicles', icon: Car },
-      { label: 'Routes', path: '/transport/routes', icon: Route },
-      { label: 'Assign Vehicles', path: '/transport/assign-vehicles', icon: Truck },
-      { label: 'Bus Tracking', path: '/transport/bus-tracking', icon: MapPin },
-      { label: 'Live Tracking', path: '/transport/tracking', icon: Navigation },
-      { label: 'Tracked Buses', path: '/transport/tracking/buses', icon: Bus },
-      { label: 'Route Builder', path: '/transport/tracking/route-builder', icon: Route },
-      { label: 'Student Report', path: '/transport/student-report', icon: FileBarChart },
+      { label: 'Staff', path: '/transport/drivers', icon: IdCard },
+      { label: 'Routes & Pickup Points', path: '/transport/routes', icon: Route },
+      { label: 'Allocation & Attendance', path: '/transport/allocation', icon: Users },
+      { label: 'Live Tracking', path: '/transport/live', icon: Navigation },
+      { label: 'Alerts', path: '/transport/alerts', icon: AlertTriangle },
+      { label: 'Maintenance & Fuel', path: '/transport/maintenance', icon: Wrench },
+      { label: 'Reports', path: '/transport/reports', icon: FileBarChart },
+      { label: 'Settings', path: '/transport/settings', icon: Settings },
     ],
-  }, */
+  },
   // HIDDEN - no backend yet
   /* {
     id: 'inventory',

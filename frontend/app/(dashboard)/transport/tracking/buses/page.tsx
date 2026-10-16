@@ -1,5 +1,6 @@
 'use client';
 
+import { API_BASE_URL } from '@/lib/api';
 import { useEffect, useState } from 'react';
 import Link from 'next/link';
 
@@ -24,7 +25,7 @@ export default function BusListPage() {
     const fetchBuses = async () => {
       try {
         const token = localStorage.getItem('school_erp_access_token');
-        const response = await fetch('/api/v1/core/vehicles/', {
+        const response = await fetch(`${API_BASE_URL}/api/v1/core/vehicles/`, {
           headers: {
             Authorization: `Bearer ${token}`,
           },

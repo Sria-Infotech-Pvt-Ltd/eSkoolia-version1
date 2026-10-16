@@ -9,6 +9,7 @@ import { AlertTriangle, BusFront, CircleDot, Filter, MapPinned, RefreshCw, Route
 import { apiRequestWithRefresh } from "@/lib/api-auth";
 import { extractListData, type ListApiResponse } from "@/lib/pagination";
 import { API_BASE_URL } from "@/lib/api";
+import { getAccessToken } from "@/lib/auth";
 
 const MapContainer = dynamic(() => import("react-leaflet").then((module) => module.MapContainer), { ssr: false });
 const TileLayer = dynamic(() => import("react-leaflet").then((module) => module.TileLayer), { ssr: false });
@@ -269,7 +270,10 @@ function buildWebSocketUrl(path: string): string {
   const parsedBaseUrl = new URL(API_BASE_URL);
   const protocol = parsedBaseUrl.protocol === "https:" ? "wss:" : "ws:";
   const normalizedPath = path.startsWith("/") ? path : `/${path}`;
-  return `${protocol}//${parsedBaseUrl.host}${normalizedPath}`;
+  // Transport sockets require authentication (same ?token= pattern as chat).
+  const token = getAccessToken();
+  const query = token ? `?token=${encodeURIComponent(token)}` : "";
+  return `${protocol}//${parsedBaseUrl.host}${normalizedPath}${query}`;
 }
 
 function buildPolyline(stops: BusStopItem[]): [number, number][] {
@@ -689,12 +693,12 @@ export default function BusTrackingPanel({ hideHeader = false }: BusTrackingPane
       setError(null);
 
       const [routeData, vehicleData, assignmentData, stopData, locationData, alertData, studentData] = await Promise.all([
-        apiRequestWithRefresh<ListApiResponse<RouteItem>>("/api/v1/core/transport-routes/"),
-        apiRequestWithRefresh<ListApiResponse<VehicleItem>>("/api/v1/core/vehicles/"),
-        apiRequestWithRefresh<ListApiResponse<AssignVehicleItem>>("/api/v1/core/assign-vehicles/"),
-        apiRequestWithRefresh<ListApiResponse<BusStopItem>>("/api/v1/core/bus-stops/"),
-        apiRequestWithRefresh<ListApiResponse<BusLocationItem>>("/api/v1/core/bus-locations/"),
-        apiRequestWithRefresh<ListApiResponse<TransportAlertItem>>("/api/v1/core/transport-alerts/"),
+        apiRequestWithRefresh<ListApiResponse<RouteItem>>("/api/v1/core/transport-routes/?page_size=10000"),
+        apiRequestWithRefresh<ListApiResponse<VehicleItem>>("/api/v1/core/vehicles/?page_size=10000"),
+        apiRequestWithRefresh<ListApiResponse<AssignVehicleItem>>("/api/v1/core/assign-vehicles/?page_size=10000"),
+        apiRequestWithRefresh<ListApiResponse<BusStopItem>>("/api/v1/core/bus-stops/?page_size=10000"),
+        apiRequestWithRefresh<ListApiResponse<BusLocationItem>>("/api/v1/core/bus-locations/?page_size=10000"),
+        apiRequestWithRefresh<ListApiResponse<TransportAlertItem>>("/api/v1/core/transport-alerts/?page_size=10000"),
         apiRequestWithRefresh<ListApiResponse<StudentItem>>("/api/v1/students/students/?page_size=500"),
       ]);
 

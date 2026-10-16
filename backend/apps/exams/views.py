@@ -372,20 +372,24 @@ class ExamSetupAnalyticsAPIView(ExamTenantMixin, APIView):
         
         school = self.get_school(request)
         year = self.get_current_academic_year(school.id)
-        
+        # No academic year marked current: `academic_year=None` would match only
+        # year-less rows and report every section as empty. Skip the year filter
+        # instead, so counts match the Students module (active students per section).
+        year_filter = {"academic_year": year} if year else {}
+
         sections = Section.objects.filter(school_class__school=school).select_related("school_class").order_by("school_class__numeric_order", "name")
-        
+
         student_counts = Student.objects.filter(
-            school=school, 
-            academic_year=year,
-            is_active=True
+            school=school,
+            is_active=True,
+            **year_filter,
         ).values("current_class_id", "current_section_id").annotate(count=Count("id"))
         student_map = {(sc["current_class_id"], sc["current_section_id"]): sc["count"] for sc in student_counts}
-        
+
         teachers = ClassTeacherAssignment.objects.filter(
-            school=school, 
-            academic_year=year,
-            active_status=True
+            school=school,
+            active_status=True,
+            **year_filter,
         ).values_list("school_class_id", "section_id")
         teacher_map = {(t[0], t[1]): True for t in teachers}
         
@@ -3097,7 +3101,7 @@ class ExamPlanAdmitCardGenerateAPIView(ExamTenantMixin, APIView):
         year = self.get_current_academic_year(school.id)
         
         # --- Fee Gate Check ---
-        from apps.fees.models import StudentFeeDues
+        from apps.fees.services import FeeService
         from .models import ExamFeeGate, ExamAdmitCardFeeOverride
         
         fee_gate_enabled = ExamFeeGate.objects.filter(school=school, is_enabled=True).exists()
@@ -3106,7 +3110,8 @@ class ExamPlanAdmitCardGenerateAPIView(ExamTenantMixin, APIView):
             # Check for students with pending dues
             blocked_student_ids = []
             for student_id in selected_ids:
-                has_dues = StudentFeeDues.objects.filter(student_id=student_id, amount_due__gt=0).exists()
+                # Ledger balance is the Fees module's source of truth (positive = amount owed).
+                has_dues = FeeService.student_balance(student=Student(pk=student_id)) > 0
                 if has_dues:
                     # Check if there is an override
                     has_override = ExamAdmitCardFeeOverride.objects.filter(

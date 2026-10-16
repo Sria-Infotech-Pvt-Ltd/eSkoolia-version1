@@ -20,7 +20,7 @@ from django.utils import timezone
 
 from apps.communication.models import CommunicationNotification
 from apps.communication.realtime import push_portal_event
-from apps.core.services.parent_notifications import send_email_sendgrid, send_sms_twilio
+from apps.transport.services.parent_notifications import send_email_sendgrid, send_sms_twilio
 from apps.library.models import (
     BookIssue,
     BookRequest,

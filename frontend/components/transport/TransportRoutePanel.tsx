@@ -165,7 +165,7 @@ export function TransportRoutePanel() {
     try {
       setIsLoadingRoutes(true);
       setError("");
-      const payload = await apiRequestWithRefresh<ListApiResponse<TransportRoute>>("/api/v1/core/transport-routes/");
+      const payload = await apiRequestWithRefresh<ListApiResponse<TransportRoute>>("/api/v1/core/transport-routes/?page_size=10000");
       const routeList = extractListData(payload);
       setRoutes(routeList);
 

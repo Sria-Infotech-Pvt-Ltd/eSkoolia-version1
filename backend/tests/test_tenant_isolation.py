@@ -56,7 +56,8 @@ class TestCrossTenantBreach:
 
     def test_bus_location_create_rejects_other_school_vehicle(self, admin_client, school_b):
         """Regression test for the BusLocationViewSet.create() cross-school write fix."""
-        from apps.core.models import Vehicle, AcademicYear
+        from apps.core.models import AcademicYear
+        from apps.transport.models import Vehicle
         from datetime import date
 
         ay_b = AcademicYear.objects.create(

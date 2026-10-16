@@ -200,14 +200,14 @@ class Student(models.Model):
     )
     # Transport Module Fields
     transport_route = models.ForeignKey(
-        "core.TransportRoute",
+        "transport.TransportRoute",
         on_delete=models.SET_NULL,
         null=True,
         blank=True,
         related_name="students",
     )
     vehicle = models.ForeignKey(
-        "core.Vehicle",
+        "transport.Vehicle",
         on_delete=models.SET_NULL,
         null=True,
         blank=True,

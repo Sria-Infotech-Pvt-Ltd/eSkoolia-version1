@@ -15,14 +15,14 @@ from channels.routing import ProtocolTypeRouter, URLRouter
 from django.core.asgi import get_asgi_application
 
 from apps.chat.routing import websocket_urlpatterns as chat_patterns
-from apps.core.routing import websocket_urlpatterns as core_patterns
+from apps.transport.routing import websocket_urlpatterns as transport_patterns
 
 os.environ.setdefault("DJANGO_SETTINGS_MODULE", "config.settings.production")
 
 django_asgi_app = get_asgi_application()
 
 # Combine all WebSocket URL patterns
-all_websocket_patterns = chat_patterns + core_patterns
+all_websocket_patterns = chat_patterns + transport_patterns
 
 application = ProtocolTypeRouter(
 	{

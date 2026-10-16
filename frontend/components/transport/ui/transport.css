@@ -1,0 +1,230 @@
+/* ─── Eskoolia Transport — scoped design tokens & primitives (Master Prompt §1, §3, §4) ───
+   Scoped to .tp (the Transport layout root) so no other module is affected.
+   Values mirror styles/tokens.css, app/globals.css (HR tokens) and lib/examTheme.ts. */
+
+.tp {
+  --tp-pu: #6D4AFF;
+  --tp-pu-deep: #4F35CC;
+  --tp-pu-soft: #EEEAFF;
+  --tp-pu-tint: #F6F3FF;
+  --tp-row-sel: #F4F1FF;
+  --tp-filter-bg: #FBFAFF;
+  --tp-hl-bg: #F8F6FF;
+  --tp-hl-bd: #DDD6FE;
+  --tp-soft-bd: #ddd6fe;
+  --tp-ex-pu: #5B4FCF;
+  --tp-ex-pu-soft: #EEF0FF;
+
+  --tp-ink: #15172A;
+  --tp-ink-top: #0F1222;
+  --tp-ink-2: #5A607A;
+  --tp-ink-chip: #5B5E72;
+  --tp-ink-3: #9197AE;
+  --tp-muted: #64748B;
+  --tp-label: #94A3B8;
+  --tp-th: #53627A;
+  --tp-ghost: #374151;
+  --tp-ex-ink1: #1A1D1F;
+  --tp-ex-ink2: #6F767E;
+  --tp-ex-ink3: #9FA6AD;
+
+  --tp-card-bd: #E8E8EE;
+  --tp-row-bd: #EEF0F4;
+  --tp-ex-bd: #E8ECEF;
+  --tp-ex-bd-strong: #D2D7DC;
+  --tp-modal-bd: #dbe4f0;
+  --tp-shell-bd: #ECECF2;
+
+  --tp-sh-1: 0 1px 2px rgba(15, 18, 34, 0.04);
+  --tp-sh-2: 0 4px 12px -4px rgba(15, 18, 34, 0.08);
+  --tp-sh-3: 0 14px 32px -10px rgba(14, 16, 32, 0.18);
+  --tp-sh-acc: 0 12px 28px -24px rgba(15, 23, 42, 0.38);
+
+  font-family: var(--font-inter), "Inter", "Segoe UI", Arial, sans-serif;
+  color: var(--tp-ink);
+  -webkit-font-smoothing: antialiased;
+}
+
+.tp-mono { font-family: "JetBrains Mono", ui-monospace, monospace; }
+.tp-serif { font-family: "Playfair Display", Georgia, serif; }
+
+/* ─── Animations ─── */
+@keyframes tp-fade-up {
+  from { opacity: 0; transform: translateY(8px) scale(0.98); }
+  to   { opacity: 1; transform: translateY(0) scale(1); }
+}
+@keyframes tp-slide-in {
+  from { transform: translateX(100%); }
+  to   { transform: translateX(0); }
+}
+@keyframes tp-skel {
+  0%, 100% { opacity: 0.45; }
+  50%      { opacity: 1; }
+}
+@keyframes tp-pulse-brand {
+  0%   { box-shadow: 0 0 0 0 rgba(109, 74, 255, 0.55); }
+  100% { box-shadow: 0 0 0 8px rgba(109, 74, 255, 0); }
+}
+.tp-anim-fade { animation: tp-fade-up 0.18s ease-out; }
+.tp-anim-slide { animation: tp-slide-in 0.3s ease-out; }
+.tp-pulse { animation: tp-pulse-brand 1.4s infinite; }
+.tp-skel { background: #E5E7EB; border-radius: 6px; animation: tp-skel 1.2s infinite; }
+
+/* ─── Page frame (§3.3) ─── */
+.tp-wrap { background: #FAFAFB; padding: 12px 20px 40px; min-height: 100%; }
+.tp-frame { background: #f8f8fc; border: 1px solid #dfdfea; border-radius: 16px; padding: 18px; }
+.tp-frame--hub { padding: 24px; }
+/* Drivers / Attendants: less stacked wrapper + frame padding (mobile rules below still apply) */
+.tp-wrap--compact { padding: 6px 20px 8px; }
+.tp-frame--compact { padding: 12px; }
+/* styles/student-groups.css (imported globally) also defines a `.tp` chip style: padding, border,
+   radius, background and pointer cursor. Undo it on the layout root of the compact pages only;
+   flow-root keeps the sync banner's top margin inside the root (no phantom scroll). */
+.tp:has(> .tp-wrap--compact) { padding: 0; border: 0; border-radius: 0; background: transparent; cursor: auto; display: flow-root; }
+.tp-inner { max-width: 1400px; margin: 0 auto; }
+
+/* ─── Cards & grids ─── */
+.tp-card { background: #fff; border: 1px solid var(--tp-card-bd); border-radius: 14px; box-shadow: var(--tp-sh-2); }
+.tp-kpi-grid { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: 12px; margin-bottom: 12px; }
+.tp-stat-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(240px, 1fr)); gap: 14px; margin-bottom: 20px; }
+.tp-hub-cols { display: grid; grid-template-columns: minmax(0, 2fr) minmax(280px, 1fr); gap: 20px; align-items: start; }
+.tp-module-grid { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 16px; }
+.tp-span2 { grid-column: 1 / -1; }
+.tp-filter-grid { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: 12px; }
+.tp-form-grid { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 16px; }
+.tp-scroll-x { overflow-x: auto; }
+/* Split view (Pickup Points, Live Tracking) */
+.tp-split { display: grid; grid-template-columns: minmax(0, 1.15fr) minmax(320px, 1fr); gap: 12px; align-items: start; }
+.tp-split-side { position: sticky; top: 12px; }
+.tp-table--sticky thead th { position: sticky; top: 0; z-index: 1; background: #FBFCFE; }
+.tp-table tbody tr.is-focused { background: #FAFAFD; }
+.tp-table tbody tr.is-focused td:first-child { box-shadow: inset 3px 0 0 var(--tp-pu); }
+.tp-split--live { grid-template-columns: minmax(300px, 0.8fr) minmax(0, 1.6fr); }
+.tp-split--charts { grid-template-columns: minmax(0, 1.3fr) minmax(0, 1fr); }
+/* Attendance: not-boarded rows (selected rows keep the selection tint) */
+.tp-table tbody tr.is-absent { background: #FFF5F7; }
+.tp-table tbody tr.is-absent.is-selected { background: var(--tp-row-sel); }
+.tp-table tbody tr.is-absent td:first-child { box-shadow: inset 3px 0 0 #C2264E; }
+/* Switch (§4.28) */
+.tp-switch {
+  width: 38px; height: 22px; border-radius: 999px; padding: 2px; border: none; cursor: pointer; display: inline-flex;
+  align-items: center; background: #E6E6EC; transition: background 0.15s; justify-content: flex-start;
+}
+.tp-switch[aria-checked="true"] { background: #16A34A; justify-content: flex-end; }
+.tp-switch > span { width: 18px; height: 18px; border-radius: 999px; background: #FFFFFF; box-shadow: 0 1px 2px rgba(15, 18, 34, 0.2); }
+/* Live bus marker */
+.tp-bus { transition: transform 1s linear; cursor: pointer; }
+.tp-bus-card { transition: border-color 0.15s, box-shadow 0.15s; }
+.tp-noscrollbar { scrollbar-width: none; }
+.tp-noscrollbar::-webkit-scrollbar { display: none; }
+
+/* ─── Buttons (§4.1) ─── */
+.tp-btn-hero {
+  height: 40px; padding: 0 16px; border-radius: 11px; border: 1px solid var(--tp-pu); background: var(--tp-pu);
+  color: #fff; font-size: 13.5px; font-weight: 750; display: inline-flex; align-items: center; gap: 7px;
+  box-shadow: 0 8px 18px -10px rgba(108, 60, 225, 0.7); cursor: pointer; transition: background 0.15s, border-color 0.15s;
+  white-space: nowrap;
+}
+.tp-btn-hero:hover { background: var(--tp-pu-deep); border-color: var(--tp-pu-deep); }
+.tp-btn-hero2 {
+  height: 40px; padding: 0 16px; border-radius: 11px; border: 1px solid var(--tp-card-bd); background: #fff;
+  color: var(--tp-ghost); font-size: 13.5px; font-weight: 750; display: inline-flex; align-items: center; gap: 7px;
+  cursor: pointer; transition: color 0.15s, border-color 0.15s; white-space: nowrap;
+}
+.tp-btn-hero2:hover { border-color: var(--tp-pu); color: var(--tp-pu); }
+.tp-btn-outline {
+  height: 32px; padding: 0 12px; border-radius: 9px; border: 1px solid var(--tp-card-bd); background: #fff;
+  color: var(--tp-ghost); font-size: 12.5px; font-weight: 600; display: inline-flex; align-items: center; gap: 6px;
+  cursor: pointer; transition: color 0.15s, border-color 0.15s; white-space: nowrap;
+}
+.tp-btn-outline:hover { border-color: var(--tp-pu); color: var(--tp-pu); }
+.tp-btn-row {
+  width: 28px; height: 28px; border-radius: 8px; border: none; background: transparent; color: var(--tp-muted);
+  display: inline-grid; place-items: center; cursor: pointer; transition: background 0.15s, color 0.15s;
+}
+.tp-btn-row:hover { background: var(--tp-pu-soft); color: var(--tp-pu); }
+.tp-btn-row:disabled { opacity: 0.35; cursor: default; background: transparent; color: var(--tp-muted); }
+.tp-btn-search {
+  height: 36px; padding: 0 16px; border-radius: 10px; border: none; background: var(--tp-pu); color: #fff;
+  font-size: 13px; font-weight: 700; cursor: pointer;
+}
+.tp-btn-search:hover { background: var(--tp-pu-deep); }
+.tp-chip-export {
+  height: 32px; padding: 0 12px; border-radius: 8px; border: none; background: var(--tp-pu-soft); color: var(--tp-pu);
+  font-size: 12px; font-weight: 700; cursor: pointer; white-space: nowrap;
+}
+.tp-cta {
+  flex: 1 1 160px; height: 40px; border-radius: 10px; font-size: 13px; font-weight: 600; display: inline-flex;
+  align-items: center; justify-content: center; gap: 6px; text-decoration: none; transition: opacity 0.15s; padding: 0 12px;
+}
+.tp-cta:hover { opacity: 0.85; }
+.tp-cta--primary { background: var(--tp-ex-pu); border: 1px solid var(--tp-ex-pu); color: #fff; }
+.tp-cta--danger { background: #DC2626; border: 1px solid #DC2626; color: #fff; }
+.tp-cta--outline { background: #fff; border: 1px solid var(--tp-ex-bd-strong); color: var(--tp-ex-ink1); }
+.tp-bulk-btn {
+  height: 28px; padding: 0 12px; border-radius: 999px; border: none; background: rgba(255, 255, 255, 0.1);
+  color: #fff; font-size: 12px; font-weight: 700; cursor: pointer; white-space: nowrap;
+}
+.tp-bulk-btn:hover { background: rgba(255, 255, 255, 0.2); }
+.tp-link-reset { background: none; border: none; padding: 0; cursor: pointer; text-align: left; font: inherit; color: inherit; }
+
+/* ─── Hub rows ─── */
+.tp-qa {
+  display: flex; align-items: center; gap: 10px; padding: 9px 10px; border-radius: 8px; text-decoration: none;
+  color: var(--tp-ex-ink1); font-size: 12.5px; font-weight: 500; transition: background 0.15s;
+}
+.tp-qa:hover { background: #F0F2F5; }
+.tp-attn { display: flex; gap: 10px; padding: 10px 12px; border-radius: 10px; text-decoration: none; transition: filter 0.15s; }
+.tp-attn:hover { filter: brightness(0.98); }
+
+/* ─── Table (§4.14) ─── */
+.tp-table { width: 100%; border-collapse: collapse; font-size: 13px; color: var(--tp-ink); }
+.tp-table thead tr { background: #FBFCFE; }
+.tp-table th {
+  padding: 10px 8px; text-align: left; font-size: 11px; font-weight: 800; letter-spacing: 0.06em;
+  text-transform: uppercase; color: var(--tp-th); white-space: nowrap;
+}
+.tp-table td { padding: 12px 8px; vertical-align: middle; }
+.tp-table th:first-child, .tp-table td:first-child { padding-left: 16px; }
+.tp-table th:last-child, .tp-table td:last-child { padding-right: 16px; }
+.tp-table tbody tr { border-top: 1px solid var(--tp-row-bd); }
+.tp-table tbody tr:hover { background: #FAFAFD; }
+.tp-table tbody tr.is-selected { background: var(--tp-row-sel); }
+.tp-check { accent-color: var(--tp-pu); width: 14px; height: 14px; cursor: pointer; }
+
+.tp-menu-item {
+  width: 100%; text-align: left; padding: 8px 10px; border-radius: 8px; border: none; background: transparent;
+  font-size: 12.5px; cursor: pointer; color: var(--tp-ink);
+}
+.tp-menu-item:hover { background: #F5F5FB; }
+
+/* ─── Overlays ─── */
+.tp-backdrop { position: absolute; inset: 0; border: none; padding: 0; margin: 0; cursor: default; width: 100%; height: 100%; }
+.tp-overlay-root:focus { outline: none; }
+.tp-close {
+  display: grid; place-items: center; background: #fff; border: 1px solid var(--tp-card-bd); color: var(--tp-muted);
+  cursor: pointer; transition: background 0.15s, color 0.15s;
+}
+.tp-close:hover { background: var(--tp-pu-soft); color: var(--tp-pu); }
+.tp-file-input {
+  width: 100%; border: 1px solid var(--tp-modal-bd); border-radius: 11px; background: #fff; padding: 10px 16px;
+  font-size: 13px; color: var(--tp-ink);
+}
+
+/* ─── Responsive (§3.4) ─── */
+@media (max-width: 1024px) {
+  .tp-kpi-grid, .tp-filter-grid { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+  .tp-hub-cols { grid-template-columns: minmax(0, 1fr); }
+  .tp-split { grid-template-columns: minmax(0, 1fr); }
+  .tp-split-side { position: static; }
+  .tp-split--live, .tp-split--charts { grid-template-columns: minmax(0, 1fr); }
+}
+@media (max-width: 700px) {
+  .tp-module-grid { grid-template-columns: minmax(0, 1fr); }
+  .tp-span2 { grid-column: auto; }
+}
+@media (max-width: 640px) {
+  .tp-kpi-grid, .tp-filter-grid, .tp-form-grid { grid-template-columns: minmax(0, 1fr); }
+  .tp-wrap { padding: 8px; }
+  .tp-frame, .tp-frame--hub { padding: 8px; }
+}

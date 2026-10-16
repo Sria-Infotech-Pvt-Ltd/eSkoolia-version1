@@ -171,7 +171,9 @@ export default function ConductAndMarksPage() {
       .catch((e) => {
         setMarksStudents([]);
         setMarksComponents([]);
-        setMarksError(e instanceof ExamsApiError ? e.message : "Failed to load marks entry roster.");
+        // Non-OK responses reach here as a plain Error from lib/api-auth (not ExamsApiError);
+        // both carry the backend's gate message (attendance not taken / setup not done).
+        setMarksError(e instanceof Error ? e.message : "Failed to load marks entry roster.");
       })
       .finally(() => setMarksSearching(false));
   }, [examId, marksSubjectId, marksClassId, marksSectionId]);
@@ -616,7 +618,7 @@ export default function ConductAndMarksPage() {
                           onClick={() => setMarksAbsent((m) => ({ ...m, [s.student_record_id]: !absent }))}
                           style={{
                             height: 26, padding: "0 10px", borderRadius: 999, fontSize: 11, fontWeight: 700, cursor: "pointer",
-                            border: `1px solid ${absent ? T.danger : T.borderStrong}`, background: absent ? T.dangerSoft : "#fff", color: absent ? T.danger : T.ink3,
+                            border: `1px solid ${absent ? T.danger : T.ok}`, background: absent ? T.dangerSoft : T.okSoft, color: absent ? T.danger : T.ok,
                           }}
                         >
                           {absent ? "Absent" : "Present"}

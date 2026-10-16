@@ -1,5 +1,6 @@
 'use client';
 
+import { API_BASE_URL } from '@/lib/api';
 import { useEffect, useState, useCallback } from 'react';
 import dynamic from 'next/dynamic';
 
@@ -42,7 +43,7 @@ export default function LiveTrackingPage() {
     const fetchBuses = async () => {
       try {
         const token = localStorage.getItem('school_erp_access_token');
-        const response = await fetch('/api/v1/core/vehicles/', {
+        const response = await fetch(`${API_BASE_URL}/api/v1/core/vehicles/`, {
           headers: { Authorization: `Bearer ${token}` },
         });
         const data = await response.json();
@@ -62,7 +63,7 @@ export default function LiveTrackingPage() {
     const fetchAlerts = async () => {
       try {
         const token = localStorage.getItem('school_erp_access_token');
-        const response = await fetch('/api/v1/core/transport-alerts/?limit=10', {
+        const response = await fetch(`${API_BASE_URL}/api/v1/core/transport-alerts/?limit=10`, {
           headers: { Authorization: `Bearer ${token}` },
         });
         const data = await response.json();
@@ -77,27 +78,34 @@ export default function LiveTrackingPage() {
     return () => clearInterval(alertInterval);
   }, []);
 
-  // Setup WebSocket for real-time updates
+  // Real-time updates from the backend's transport sockets (JWT in ?token=, school-scoped).
   useEffect(() => {
-    const protocol = window.location.protocol === 'https:' ? 'wss:' : 'ws:';
-    const ws = new WebSocket(`${protocol}//${window.location.host}/ws/tracking/`);
+    const base = new URL(API_BASE_URL);
+    const protocol = base.protocol === 'https:' ? 'wss:' : 'ws:';
+    const token = encodeURIComponent(localStorage.getItem('school_erp_access_token') || '');
+    const locationWs = new WebSocket(`${protocol}//${base.host}/ws/bus-tracking/location/?token=${token}`);
+    const alertWs = new WebSocket(`${protocol}//${base.host}/ws/bus-alerts/?token=${token}`);
 
-    ws.onmessage = (event) => {
+    locationWs.onmessage = (event) => {
       const data = JSON.parse(event.data);
-      if (data.type === 'bus_location_update') {
+      if (data.type === 'bus_location_update' && data.location) {
         setBuses((prev) =>
           prev.map((bus) =>
-            bus.id === data.location.vehicle_id
-              ? { ...bus, ...data.location, current_latitude: data.location.latitude, current_longitude: data.location.longitude }
+            bus.id === data.location.vehicle
+              ? { ...bus, current_speed: data.location.speed, current_latitude: data.location.latitude, current_longitude: data.location.longitude }
               : bus
           )
         );
-      } else if (data.type === 'alert_message') {
+      }
+    };
+    alertWs.onmessage = (event) => {
+      const data = JSON.parse(event.data);
+      if (data.type === 'bus_alert' && data.alert) {
         setAlerts((prev) => [data.alert, ...prev.slice(0, 9)]);
       }
     };
 
-    return () => ws.close();
+    return () => { locationWs.close(); alertWs.close(); };
   }, []);
 
   const selectedBus = buses.find((b) => b.id === selectedBusId);

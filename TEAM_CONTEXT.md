@@ -1,5 +1,43 @@
 ﻿# TEAM_CONTEXT — Eskoolia ERP (Combined)
 
+## Update — Sravani G (16/10/2026)
+
+**Area:** Merged `library-r` (Library module) and `demo-mulugu` (Transport module) into `demo2`
+
+### 0. Shape of the merge
+- Both branches forked from the same `demo2` commit (`d9158284`), so `demo2` had nothing they lacked. `library-r` merged cleanly first (16 commits, 274 files). `demo-mulugu` (15 commits, 141 files) then conflicted in 5 files, all caused by one thing: `demo-mulugu` **moved every transport model, view, serializer, consumer, routing and `parent_notifications` service out of `apps/core` into a new `apps/transport` app** (migration `core/0029_move_transport_models_to_transport_app`), while `library-r` had edited some of that same code where it used to live.
+- **The two branches' team notes are in different files**: `demo-mulugu` appended its Transport notes to the end of this file ("Eskoolia Transport Module — Development Summary" and the "Srinadh Yalagandula" entries). `library-r` put its Library entry at the top of `docs/TEAM_CONTEXT.md` ("Update: Claude (08/10/2026)"). Read both before working on either module.
+
+### 1. Conflict resolutions (judgement calls, so they can be checked)
+- **`backend/apps/core/serializers.py`, `core/views.py`**: took `demo-mulugu`'s deletion of the old transport classes. `library-r` had added two cross-school fixes inside them (`VehicleSerializer.validate()` driver-school check; `BusLocationViewSet` vehicle lookup scoped to `school_id`). Both already exist in `apps/transport` in stricter form (`SchoolScopedRelationsMixin` with `{"driver": "school_id"}`; `transport/views.py` vehicle lookup), so nothing was lost. `library-r`'s unrelated Holiday-name validation in `core/serializers.py` was kept.
+- **`frontend/lib/routes.ts`**: each branch had un-hidden only its own module. Both are now visible (Library, then Transport).
+- **`frontend/components/students/StudentAddPanel.tsx`**: both branches had independently fixed the same bug (student photo `<img>` 403s because `/media/*` needs the JWT) with two duplicate `useEffect`s fetching the same blob. Kept `demo-mulugu`'s `photoSrc` version (handles relative paths via `toMediaApiPath`, and reuses the local preview for a just-uploaded, not-yet-saved photo that `serve_media` would 404), ported in `library-r`'s `res.ok` check, and removed `library-r`'s `photoDisplayUrl` state and effect. Kept `library-r`'s `apiDeleteJson` helper (used by the guardian-create rollback).
+- **`frontend/tsconfig.tsbuildinfo`**: generated build cache, took `demo-mulugu`'s copy. It is tracked in git on this branch, so it will keep conflicting on every merge; worth untracking and adding to `.gitignore`.
+
+### 2. Breakages git did not flag (would have failed at startup or in tests)
+- **`backend/apps/library/services/notifications.py`** imported `apps.core.services.parent_notifications`, which no longer exists after the move, and **Django would not start** (`ModuleNotFoundError` from `library/urls.py`). Repointed to `apps.transport.services.parent_notifications`; `send_sms_twilio`/`send_email_sendgrid` signatures are identical.
+- **`backend/tests/test_tenant_isolation.py`** (new in `library-r`) imported `Vehicle` from `apps.core.models`. It now imports it from `apps.transport.models`. The URL it posts to (`/api/v1/core/bus-locations/`) still works, because `config/urls.py` mounts `apps.transport.urls` under `/api/v1/core/`.
+- **Migration graph had two leaves in `access_control`**: `library-r` added `0017_seed_academics_crud_permissions`, `0018_seed_campaign_permissions`, and `demo-mulugu` added `0017`–`0020` transport permission seeds. Both branches say they applied theirs to the shared DB, so **nothing was renumbered**. Added a no-op merge migration, `access_control/0021_merge_library_transport_seeds.py`. Safe because all six are idempotent `update_or_create` permission seeds on disjoint codes. No other app had a migration collision.
+
+### 3. Completeness check
+- Scripted check: every file either branch changed is byte-identical to that branch's version in the merge, except the 8 files both branches touched (and the 2 import fixes above). For those 8, every line each branch added is present, except the ones deliberately dropped in §1 (the duplicate photo effect and the transport code that moved).
+
+### Files changed (beyond the two branches' own content)
+- `backend/apps/core/serializers.py`, `backend/apps/core/views.py`, `frontend/lib/routes.ts`, `frontend/components/students/StudentAddPanel.tsx`, `frontend/tsconfig.tsbuildinfo` (conflict resolution)
+- `backend/apps/library/services/notifications.py`, `backend/tests/test_tenant_isolation.py` (import paths after the transport move)
+- `backend/apps/access_control/migrations/0021_merge_library_transport_seeds.py` (new, no-op merge migration)
+
+### Status
+✅ `manage.py check` clean (only the usual tenancy/`fees` URL-namespace warnings). `makemigrations --check` reports "No changes detected". ESLint 0 errors on the hand-resolved frontend files. `pytest apps/transport/tests apps/library/tests` on an isolated SQLite DB (`DATABASE_URL_TEST`, `--nomigrations`; the shared Neon DB was not touched): **709 passed, 3 skipped**. `tests/test_tenant_isolation.py`: 8 passed.
+
+⚠️ **`celery` is not installed in the local `backend/venv`**, even though it is in `requirements/base.txt`. Four library test files plus `test_console_reminders.py` (10 errors) could not run because `apps/library/tasks.py` imports it. Run `pip install -r requirements/base.txt` in the venv, then rerun those.
+
+⚠️ **`tsc --noEmit` still fails on 11 errors in `app/(dashboard)/exams/marks-register-create` and `result-publish`.** These predate this merge: the base `demo2` commit already imports a non-existent `ExamMarksStoreRow`, and both branches' notes report the same errors. They also block `next build`.
+
+⚠️ **Migrations not applied by me.** On any DB that already has both branches' migrations, `migrate access_control` only records `0021`. Library's own release order still applies (`docs/LIBRARY_PROGRESS.md` → "Release steps"; back up before `library/0014`, which drops the old `quantity` columns). Not browser-verified; I didn't start dev servers.
+
+---
+
 ## Update — Swetha D (17/09/2026)
 
 **Area:** Admissions → Complaints module — per-school Complaint Source dropdown empty, Admin Setup UI not wired to the real model, and complaint creation completely broken end to end (three stacked bugs, found one at a time as each fix exposed the next)
@@ -5977,3 +6015,1009 @@ Login at localhost:3000
 1. `frontend/.env` — removed `NEXT_PUBLIC_API_URL=http://127.0.0.1:8765` (was added for local machine testing), reverted `NEXT_PUBLIC_BACKEND_PORT` from `8765` → `8000`, reverted `NEXT_PUBLIC_BASE_DOMAIN` from `eskoolia.local` → `eskoolia.com`.
 2. `backend/.env` — removed `192.168.1.40` and `localtesting.eskoolia.local` from `DJANGO_ALLOWED_HOSTS`; restored to `127.0.0.1,localhost` only.
 3. Both `.env` files are gitignored — these changes are local only, not pushed to repo.
+
+
+29/09/2026 (Jampala Kavya — Roles & Permissions → New Role UI)
+
+**Developer:** Jampala Kavya
+**Date:** 29/09/2026
+**Area:** Roles & Permissions → New Role UI
+
+### New Role panel overlapping the Roles & Permissions page — Fixed
+
+**Root cause:** The role-card grid used a fixed `repeat(4, 1fr)` layout. Each card has a 108px right padding for its action icons, so it has a minimum width of about 160px. Opening the 290px New/Edit Role panel narrowed the card area below what 4 columns need. The grid then overflowed its container, and because the cards are `position: relative`, they were painted on top of the panel.
+
+**File changed:** `frontend/components/access-control/RoleManagementPanel.tsx` (layout/styling only)
+
+1. Added a `ROLE_GRID_COLUMNS` constant: `repeat(auto-fill, minmax(max(200px, calc((100% - 32px) / 4)), 1fr))`. It keeps at most 4 columns at full width, as before, and drops to fewer columns when the editor panel narrows the card area. Applied to both the role grid and the loading skeleton grid.
+2. Page header row and its controls (Active-only toggle, search, + New Role) now use `flexWrap: "wrap"` so they wrap instead of being squeezed on narrow screens.
+3. Added `role-split` / `role-editor` classNames and a `@media (max-width: 1024px)` rule in the component's existing `<style jsx global>` block. On narrow screens the editor panel stacks full-width above the role cards instead of sitting beside them.
+
+**Backend/API changes: None.**
+
+Existing role-management functionality was preserved: role creation, portal selection, permission assignment (🔑 → assign-permission page), role editing, role deletion, active/inactive toggling, pagination/search, and all API requests/payloads are unchanged. No new dependencies were added.
+
+
+### Update — 30/09/2026
+
+**Developer:** Jampala Kavya
+**Area:** Admissions → Command Center → New Enquiry
+
+**Original issue:** Saving a Full (3-step) New Enquiry showed "Please enter a meaningful description.", even when Parent's Message / Notes contained valid text (e.g. "about the school").
+
+**Root cause:**
+- The error is raised by the backend, in `AdmissionInquirySerializer.validate()` (`backend/apps/admissions/serializers.py`). It is not a frontend validation.
+- The field mapping is correct. "Parent's Message / Notes" → `drawerForm.description` → `description` in the payload.
+- However, the Full form's `submitDrawer` (`frontend/components/admissions/AdmissionsCommandCenter.tsx`) appends an auto-generated line to `description`. That line holds all Step 1/2/3 detail fields: `Child: … | DOB: … | Area: … | Visit Date: … | …`. These fields have no model columns, and the edit form parses them back out with `parseLegacyInquiryDescription`.
+- The backend ran its anti-spam check `_is_meaningful_text` on the whole combined string. The check rejects 3+ repeated characters and keyboard patterns such as `abcd`/`jkl`, checked with whitespace removed. So structured values the user never typed as a message could fail it. Examples: DOB `2000-02-02` ("000"), or a previous school named "ABCD Public School".
+- Quick Add sends only the typed message as `description`, so it was not affected by the appended line.
+
+**Fix (backend, validation only):** `backend/apps/admissions/serializers.py`
+1. Added `_INQUIRY_DETAIL_SEGMENT` (regex of the known detail labels) and a `_inquiry_free_text(description)` helper. The helper drops lines made up entirely of known `Label: value | Label: value` segments.
+2. The `description` check in `AdmissionInquirySerializer.validate()` now runs `_is_meaningful_text(_inquiry_free_text(description))`. The parent's typed message is still spam-checked with the same rule and the same error message. Only the auto-generated detail line is excluded.
+
+**Not changed:** API contract, request/response shape, the stored `description` value (still saved in full, so edit/detail parsing is unchanged), model/DB, `note`/`address`/name validation, duplicate detection, and all frontend files.
+
+**Frontend changes: None.**
+**Backend/API changes:** `backend/apps/admissions/serializers.py` validation logic only (no endpoint, field or schema change).
+
+**Quick Enquiry:** behaviour unchanged. **Full Enquiry:** now saves when the message is valid, whatever values are in the Step 1/2/3 detail fields.
+
+**Testing performed:** ran payloads through `AdmissionInquirySerializer(data=...).is_valid()` in the Django shell (validation only, nothing saved):
+- Message + details containing DOB `2000-02-02`: failed before the fix, valid after.
+- Message + details containing "ABCD Public School": failed before the fix, valid after.
+- Normal message + details: valid.
+- Details only: valid.
+- Quick plain message: valid.
+- Empty description: valid.
+- Gibberish message `aaaaaa` + details: still rejected with "Please enter a meaningful description."
+- `qwerty asdf`: still rejected.
+
+An end-to-end UI test (browser save, list refresh, edit) still needs to be done manually.
+
+
+### Update — 30/09/2026
+
+**Developer:** Jampala Kavya
+**Area:** Students → Enroll Student → Student Photo Upload & Preview
+
+**Original issue:** In Student Identity, uploading a student photo reported success, but the image did not show in the Student Photo circle. "View image" opened the preview modal with a broken image (only the alt text "Student full preview" was visible).
+
+**Root cause:**
+- The upload itself works. `POST /api/v1/students/students/upload-photo/` (`backend/apps/students/views.py::upload_photo`) saves the file to `MEDIA_ROOT/student_photos/<uuid>.jpg` and returns 201 with an absolute URL, e.g. `http://127.0.0.1:8000/media/student_photos/<uuid>.jpg`. The files are present on disk.
+- The frontend (`StudentAddPanel.tsx`) put that URL directly into `<img src={photo}>` in both the photo circle and the preview modal.
+- `/media/*` is served by `apps/core/media_views.py::serve_media`, which requires a JWT. A plain `<img>` request sends no Authorization header, so it gets **403 "Authentication required."** (verified against the running backend with an existing file in `media/student_photos/`).
+- In addition, even with a token, a freshly uploaded photo is not linked to any `Student` row until enrollment is saved. So `_school_owns_path` returns 404 for it. This ownership check is correct security behaviour and was left unchanged.
+
+**Fix (frontend only):** `frontend/components/students/StudentAddPanel.tsx`
+1. Added a `toMediaApiPath()` helper that converts the stored absolute or relative media URL into an API path. It follows the same approach as `toApiPath` in `PlanningStudioWorkspace.tsx`.
+2. Added a `photoSrc` state and `uploadedPhotoPreviewRef`. `photo` is still the backend URL that is submitted with the student, so the payload is unchanged. `photoSrc` is what `<img>` renders.
+3. On successful upload, a local `blob:` preview of the uploaded (compressed) file is created and shown immediately. It does not depend on media auth or ownership.
+4. For photos loaded from a saved student, edit/view mode, or a draft, a `useEffect` on `photo` fetches the file with `apiRequestWithRefreshResponse(..., { silent401: true })` (auth header) and renders it as a `blob:` URL. Object URLs are revoked on change, on Remove, and on unmount.
+5. The photo circle and preview modal now use `photoSrc`. If the image cannot be loaded, the modal shows "Photo could not be loaded." instead of a broken image. Existing modal layout and CSS (`object-fit: contain`, `max-height: 80vh`) and the X/overlay close are unchanged.
+
+**Preserved:** upload endpoint and response, file-type/size checks (JPEG/PNG, 4MB/5MB client and 2MB server), the 400×400 hint, compression, Change, Remove (`clearStudentPhoto` also releases the preview), Take photo / camera capture (uses the same `uploadStudentPhoto`), the save payload (`photo` URL), and all other enrollment steps.
+
+**Backend/API changes: None.**
+
+**Known limitation (unchanged behaviour, not fixed here):** a photo stored in a draft that was never saved as a student is not linked to a Student row, so after a page reload `serve_media` returns 404 for it. The UI shows the "ADD PHOTO" placeholder instead of a broken image. Fixing this would need a backend change to the media ownership rules.
+
+**Testing performed:**
+- Verified that `media/student_photos/` contains uploaded files.
+- Verified that an unauthenticated GET of one of them returns 403 "Authentication required." (the root cause).
+- `npx tsc --noEmit`: no errors in `StudentAddPanel.tsx`. The existing errors in other files are unchanged.
+- Browser tests (upload, preview, Change, Remove, save/reload, invalid file) still need to be done manually.
+
+
+## Srinadh Yalagandula
+
+Date: 2026-09-29
+
+Module:
+Examination
+
+Issue:
+School Admin was unable to open Exam Setup page.
+
+Error:
+TypeError: useExamSetupAnalytics is not a function
+
+Root Cause:
+`frontend/app/(dashboard)/exams/setup/page.tsx` imports five members from `@/hooks/useExamsApi` that were never implemented there: `useExamSetupAnalytics`, `fetchConfiguredExams`, `deleteExamSetup`, `openExamForMarksEntry` and the type `ConfiguredExamRow`. Commit `a61d62a1` ("examination enhancements and portal flow implementation") added the page code that uses them but did not add the hook functions, on any branch. The backend endpoints already existed. An import of a missing ES module export resolves to `undefined`, so calling `useExamSetupAnalytics()` during render threw the TypeError. If only that hook had been added, `fetchConfiguredExams()`, which runs on page mount, would have crashed the page next the same way.
+
+Files Modified:
+- frontend/hooks/useExamsApi.ts (Exam Setup section only, additive)
+
+Solution:
+Added the missing members to `useExamsApi.ts`, following the file's existing `useFetch` / `postJson` / `deleteRequest` patterns and wiring each one to its existing backend endpoint:
+- `useExamSetupAnalytics()` → GET `/api/v1/exams/exam-setup/analytics/` (type `ExamSetupAnalyticsRow[]`)
+- `fetchConfiguredExams()` → GET `/api/v1/exams/exam-setup/list/` (returns `{ items: ConfiguredExamRow[] }`)
+- `deleteExamSetup(examTermId)` → DELETE `/api/v1/exams/exam-setup/delete/<exam_term_id>/`
+- `openExamForMarksEntry(examTermId)` → POST `/api/v1/exams/exam-open-marks-entry/` with `{ exam_term_id }`
+- Interfaces `ExamSetupAnalyticsRow` and `ConfiguredExamRow`, typed from the backend view responses
+No page, UI, backend or API-contract changes. No existing function was modified.
+
+Testing Performed:
+- TypeScript check (`tsc --noEmit`): `exams/setup/page.tsx` has no remaining errors
+- Verified all four backend routes exist and are auth-protected (401 without token, not 404)
+- Verified response shapes against `ExamSetupAnalyticsAPIView`, `ExamSetupListAPIView`, `ExamSetupDeleteAPIView` and `ExamOpenForMarksEntryAPIView`
+- Pending: manual browser check (log in as School Admin → Examination → Exam Setup)
+
+Known pre-existing issues (not changed by this fix):
+- `exams/schedule/page.tsx` imports `useOnlineExamIndex`, `createOnlineExam`, `updateOnlineExam`, `deleteOnlineExam`, `publishOnlineExam` and `cancelPublishOnlineExam`, none of which `useExamsApi.ts` exports. `useOnlineExamIndex()` is called during render (line 600), so this page is expected to crash in the same way.
+- `exams/marks-register-create/page.tsx` imports a missing type `ExamMarksStoreRow` (type-only, compile-time error).
+- `exams/result-publish/page.tsx` uses fields not declared on `ExamPlanStudentRecord` (type-only).
+
+
+
+Why it crashed
+
+The Exam Setup page needs a few helper functions to fetch its data from the backend: the class analytics, the list of set-up exams, and the delete and "open for marks" actions. Someone wrote the page code that uses these functions but never wrote the functions themselves.
+
+It's like a phone contact with no number saved: the page tried to call useExamSetupAnalytics, but it didn't exist, so the page crashed with "is not a function".
+
+The backend part was already built and working. Only the small frontend link between the page and the backend was missing.
+
+How I fixed it
+
+I wrote the missing functions in the file the page loads them from, hooks/useExamsApi.ts. Each one sends its request to the backend address that already existed:
+
+class analytics → gets class and section readiness
+list of set-up exams → gets the exams already set up
+delete → removes an exam's setup
+open for marks entry → opens an exam so teachers can enter marks
+I didn't change the page, the design or the backend. I only added the missing piece.
+
+Why I added four functions, not one
+
+The error message named only the first missing function. Three more were missing too, and one of them runs as soon as the page opens. Fixing only the first would have swapped one crash for another, so I added all four.
+
+
+Status:
+Resolved (Exam Setup).
+
+## Srinadh Yalagandula
+
+Date: 2026-09-29
+
+Module:
+Examination
+
+Issue:
+Save Exam Setup button was not working.
+
+Observed Behavior:
+Clicking "Save Exam Setup" did not create or save an exam configuration.
+
+Root Cause:
+The save code works end-to-end: frontend handler → `storeExamSetup` → POST `/api/v1/exams/exam-setup/store/` → DB. It returned 201 and the record appeared in Configured Exams when tested against a school with complete data. The click did run, but the save was rejected for data reasons, and the rejection message was invisible:
+1. The success/error banner (`saveError` / `saveSuccess`) renders at the TOP of the page, above the form. The Save button sits at the BOTTOM, and the dashboard scrolls in an inner container, so the message appeared off-screen and the click looked like it did nothing.
+2. The school being tested (newest school with exam types, school_id 178) has no subjects and no current academic year:
+   - With no subjects, no class can have a subject selected, so the handler's validation stops with "Can't save yet — … (missing subject(s))".
+   - Even with subjects, the backend returns 400 "No active academic year found for this school." (`ExamSetupStoreAPIView` requires `AcademicYear.is_current=True`).
+
+Files Modified:
+- frontend/app/(dashboard)/exams/setup/page.tsx
+
+Solution:
+Added a `feedbackRef` on an unstyled wrapper around the existing save/error banners, plus a `useEffect` that scrolls the banner into view (`scrollIntoView`, smooth, centered) whenever `saveError` or `saveSuccess` is set. Every click now shows its outcome: the success message, the backend error, or the validation message naming what is missing. No change to validation, payload, API, backend or visual design.
+Data setup still needed for the affected school (not a code change): create the school's subjects and mark one academic year as current.
+
+Testing Performed:
+- Traced the button → `handleSave` → `storeExamSetup` → backend view/serializer; payload fields match the serializer
+- Reproduced via Django test client, with every DB change rolled back:
+  - School with current academic year + classes/sections/subjects (temporary exam type): store → 201, record appears in Configured Exams
+  - School 178 (temporary subject): store → 400 "No active academic year found for this school."
+- TypeScript check: no errors in `exams/setup/page.tsx`
+- Pending: manual browser check as School Admin (fill fields → Save → message visible → record in Configured Exams)
+
+Status:
+Resolved (feedback now visible). Saving for school 178 needs its subjects and a current academic year to be set up first.
+
+
+## Srinadh Yalagandula
+
+Date: 2026-09-29
+
+Issue:
+Exam Setup Class Readiness Analytics displayed 0 students even though students were enrolled and visible in Student List.
+
+Root Cause:
+The two modules count students differently:
+- Students module (`SectionSerializer.student_count`): active students per section, no academic-year filter.
+- Exam Setup analytics (`ExamSetupAnalyticsAPIView`): additionally filters `academic_year = <school's current academic year>`, for both students and class teachers.
+The affected school (school_id 178) has one academic year, and its student belongs to that year, but the year is not marked `is_current=True`. `get_current_academic_year()` therefore returned `None`, and the query became `academic_year=None`. That matches only students with no year set, so every section showed "0 Students". The same filter made the class-teacher lookup show "No Teacher", although an active class teacher is assigned to Grade 1-A. Class/section mapping and the frontend hook/UI were correct.
+
+Files Modified:
+- backend/apps/exams/views.py (`ExamSetupAnalyticsAPIView.get` only)
+
+Solution:
+The academic-year filter is now applied only when the school has a current academic year (`year_filter = {"academic_year": year} if year else {}`). With no current year, analytics counts active students per section and active class-teacher assignments, the same way the Students module counts. Schools that have a current year keep exactly the previous behaviour. No API contract, response shape, frontend or other module changed.
+Recommended data fix (separate from code): mark school 178's academic year as current. Exam Setup saving still requires it ("No active academic year found for this school.").
+
+Testing Performed:
+- Verified student enrollment records: school 178 has 1 active student in Grade 1-A, linked to its only (non-current) academic year
+- Verified class and section mapping: analytics groups by `current_class_id` / `current_section_id`, matching the section the student is enrolled in
+- Verified Exam Setup analytics counts: school 178 Grade 1-A now returns 1 student + Teacher Assigned (was 0 / No Teacher)
+- Verified multiple scenarios across 8 schools with enrolled students: per-section counts match the Students module (multi-student sections e.g. 18 students/6 sections; empty sections still 0)
+- Known remaining difference (unchanged, pre-existing): school 123 Grade 10-A has a student with no academic year; since the school has a current year, analytics still excludes that student (shows 1 vs 2)
+- Verified no impact on other Examination functionality: only this view changed; all other endpoints untouched
+- Pending: manual browser check (Examination → Exam Setup → Class Readiness Analytics)
+
+Status:
+Resolved
+
+
+## Srinadh Yalagandula
+
+Date: 2026-09-29
+
+Module:
+Examination – Schedule & Logistics
+
+Issue:
+Schedule & Logistics page crashed on load.
+
+Error:
+TypeError: useOnlineExamIndex is not a function
+
+Root Cause:
+`frontend/app/(dashboard)/exams/schedule/page.tsx` imports six online-exam functions from `@/hooks/useExamsApi` (`frontend/hooks/useExamsApi.ts`): `useOnlineExamIndex`, `createOnlineExam`, `updateOnlineExam`, `deleteOnlineExam`, `publishOnlineExam`, `cancelPublishOnlineExam`. None of them was implemented in `useExamsApi.ts` or anywhere else in the frontend, on any branch.
+- Introduced by commit `a61d62a1` (rohanaarup, 2026-09-18, "examination enhancements and portal flow implementation", merged into demo2 via `origin/examination-R`). It added the Online Exam step to `schedule/page.tsx` (+892 lines) and the `OnlineExamRow` / `OnlineExamIndexResponse` types to `types/exams.ts`, but never touched `useExamsApi.ts`. This was an incomplete feature, not a merge loss, rename or wrong import path. It is the same commit and the same pattern as the earlier Exam Setup crash (`useExamSetupAnalytics`).
+- A missing named ES-module export resolves to `undefined`. `useOnlineExamIndex()` is a hook called at the top level of `ScheduleLogisticsPage` (line 600), so every render called `undefined()`, threw the TypeError, and React unmounted the whole page. The other five functions are only called from event handlers (save/edit/delete/publish), so they would have failed on click.
+- Why it reached the browser: `next dev` does not block on TypeScript errors. `tsc --noEmit` did report the six missing exports.
+- The backend endpoints already existed (`backend/apps/exams/urls.py`, `OnlineExam*APIView` in `views.py`). Only the frontend API layer was missing.
+
+Files Modified:
+- frontend/hooks/useExamsApi.ts (additive only: new functions at the end of the "Schedule & Logistics" section + `OnlineExamIndexResponse` added to the existing type import)
+
+Solution:
+Added the six missing functions using the file's existing helpers (`useFetch`, `postJson`, `apiRequestWithRefresh`), each matching the HTTP method and body of its backend view:
+- `useOnlineExamIndex()` → GET `/api/v1/exams/online-exam/` → `OnlineExamIndexResponse` { classes, sections, subjects, online_exams } (type already existed)
+- `createOnlineExam(payload)` → POST `/api/v1/exams/online-exam/store/`
+- `updateOnlineExam({ id, ...payload })` → POST `/api/v1/exams/online-exam/update/`
+- `deleteOnlineExam(id)` → POST `/api/v1/exams/online-exam/delete/` with `{ id }` (backend uses POST, not DELETE)
+- `publishOnlineExam(id)` → GET `/api/v1/exams/online-exam/publish/<id>/` (backend uses GET)
+- `cancelPublishOnlineExam(id)` → GET `/api/v1/exams/online-exam/publish-cancel/<id>/`
+- New type `OnlineExamPayload` (title, class_id, section[], subject, date, start_time, end_time, percentage?, instruction?, auto_mark), matching `OnlineExamStoreRequestSerializer` and following the existing `ExamRoutinePayload` pattern.
+Methods and payloads were confirmed against the backend views/serializers and the legacy `components/exams/OnlineExamPanel.tsx`, which calls the same endpoints. No existing function, page, UI, API contract, backend code or Exam Setup functionality was changed.
+
+Testing Performed:
+- TypeScript validation (`tsc --noEmit`): `exams/schedule/page.tsx` went from 9 errors (6 missing exports + 3 knock-on implicit-any) to 0. Remaining project errors are only the pre-existing ones listed below.
+- Verification of all imported functions used by schedule/page.tsx: all 22 imports now resolve to real exports (16 already existed; the 6 above added). Types `OnlineExamRow`, `ExamPlanStudentRecord`, `ExamRoutineRow`, `AdmitCardSetting`, `SeatPlanSetting` exist in `types/exams.ts`.
+- Verification that backend endpoints exist and are reachable: ran the full cycle as a School Admin for school 178 and school 118 with the page's exact payload shape, inside a DB transaction that was rolled back: index GET 200 (classes/sections/subjects/online_exams), store 201, update 200, publish 200, publish-cancel 200, delete 200.
+- Page load verification (partial): the running Next.js dev server (port 3000) serves `/exams/schedule` with HTTP 200, and its compiled page bundle now contains `function useOnlineExamIndex` with no compile errors. Pending: logged-in browser check (School Admin → Examination → Schedule & Logistics).
+- Verification that no other Examination pages were affected: the change is additive only (no existing export modified); `exams/setup/page.tsx` still type-checks clean and `/exams/setup` still serves HTTP 200.
+
+Known Remaining Issues:
+- Generic error messages: the page shows specific errors only for `err instanceof ExamsApiError`, but `requestWithRefreshResponse` in `frontend/lib/api-auth.ts` throws a plain `Error` for any non-OK response. Backend messages (e.g. "Duplicate name found!") therefore appear as "Failed to save online exam." / "Delete failed." / "Operation failed.". This is the same cause as the generic "Failed to save exam setup." message in Exam Setup.
+- `exams/marks-register-create/page.tsx` imports a missing type `ExamMarksStoreRow` (type-only; fails `next build`, no runtime crash).
+- `exams/result-publish/page.tsx` uses `class_id`, `section_id`, `id` not declared on `ExamPlanStudentRecord` (type-only; fails `next build`).
+
+Status:
+Resolved (pending logged-in browser confirmation)
+
+
+## Srinadh Yalagandula
+
+Date: 2026-09-30
+
+Module:
+Examination – Schedule & Logistics → Admit Cards
+
+Issue:
+Admit Card Generation API was failing with ImportError for StudentFeeDues.
+(`POST /api/v1/exams/exam-plan/admit-card/generate/` → HTTP 500: `ImportError: cannot import name 'StudentFeeDues' from 'apps.fees.models'`)
+
+Root Cause:
+Admit card generation logic referenced a non-existing fees model. `ExamPlanAdmitCardGenerateAPIView.post` (`backend/apps/exams/views.py`) imported `StudentFeeDues` for its fee-gate check. That model has never existed on any branch; it was introduced as a reference only in commit `a61d62a1` (2026-09-18, "examination enhancements and portal flow implementation"). The import runs before the `if fee_gate_enabled:` check, so every generate request failed, whether or not the school uses the fee gate. The Fees module tracks dues through `FeeAssignment` / `Payment` / `LedgerEntry`, with `FeeService.student_balance()` documented as "the ONLY source of truth for a student's balance".
+
+Files Modified:
+- backend/apps/exams/views.py (`ExamPlanAdmitCardGenerateAPIView.post` only, 2 lines)
+
+Resolution:
+Fixed the model reference/import while preserving existing fee validation behavior.
+- `from apps.fees.models import StudentFeeDues` → `from apps.fees.services import FeeService`
+- `StudentFeeDues.objects.filter(student_id=..., amount_due__gt=0).exists()` → `FeeService.student_balance(student=Student(pk=student_id)) > 0` (ledger: positive = amount owed)
+The rest of the fee-gate flow is unchanged: `ExamFeeGate` enabled check, `ExamAdmitCardFeeOverride` lookup, 403 + `blocked_students` response, admit card creation. No schema, API, Fees module or other Examination changes.
+
+Testing Performed (Django test client as School Admin, school 118, all DB changes rolled back):
+- Fee gate OFF, student with dues → 200, admit card created
+- Fee gate ON, student with dues, no override → 403 "Fee gate is active…" (block preserved)
+- Fee gate ON, student with dues + Principal override → 200
+- Fee gate ON, student with no dues → 200
+- Verified ledger coverage: all 479 `FeeAssignment` rows have a ledger charge, so the balance reflects every fee
+- Scanned all in-function `from apps.* import` statements (336 names): no unresolved imports remain in the Examination module
+
+Impact:
+Schedule & Logistics → Admit Cards now generates successfully without affecting other examination features.
+
+Known Remaining Issues (not changed):
+- `backend/apps/students/views.py` `StudentViewSet._linked_record_exists` (line ~2207) imports `FeesAssignment` and `FeesPayment` from `apps.fees.models`, which do not exist (actual models: `FeeAssignment`, `Payment`). This would raise ImportError wherever that check runs. It is the likely cause of the earlier QA finding "DELETE /api/v1/students/students/{id}/ → 500".
+- Pending: browser check (Schedule & Logistics → Admit Cards → Generate Admit Cards).
+
+Status:
+Resolved
+
+
+## Srinadh Yalagandula
+
+Date: 2026-09-30
+
+Module:
+Examination – Conduct & Marks → Step 2 (Marks Entry)
+
+Bug Title:
+Marks Entry shows "Failed to load marks entry roster." for Unit Test / Social / Grade 1-A
+
+Root Cause:
+Two parts: a data-configuration mismatch that the backend correctly rejects, hidden by a frontend error-handling defect.
+1. Data (school 178, exam "unit test", exam_type_id 14, Grade 1-A): the Examination records are split across different subjects.
+   | Subject     | Exam schedule | Exam Setup (mark components) | Exam attendance taken |
+   |-------------|---------------|------------------------------|-----------------------|
+   | Social      | yes           | NO                           | NO                    |
+   | Telugu      | yes           | no                           | yes                   |
+   | Mathematics | no            | yes (Written 60 / Practical 20) | no                 |
+   `ExamMarksRegisterCreateSearchAPIView` (backend/apps/exams/views.py) intentionally requires, for the same exam/class/section/subject, (a) an `ExamAttendance` record and then (b) `ExamSetup` rows. For Social it returns 400 "Exam attendance has not been taken yet for this subject. Attendance must be recorded before entering marks.", and would next return 400 "No result found or exam setup is not done!". The progress widget ("0/1") is driven by the exam schedule, which is why it lists Social even though Social has no setup. The school also has two separate subjects named "Social" (id 139) and "social" (id 141).
+2. Code: the page's roster `catch` only showed the backend message for `e instanceof ExamsApiError`. `requestWithRefreshResponse` in frontend/lib/api-auth.ts throws a plain `Error` (carrying the backend `message`) for every non-OK response, so the check never matched and the user only saw the generic "Failed to load marks entry roster.". The page's own comment states these backend gates are meant to "surface as plain messages".
+
+Files Modified:
+- frontend/app/(dashboard)/exams/marks-register-create/page.tsx (roster-load `catch` only, 1 line + comment)
+
+Fix Implemented:
+`e instanceof ExamsApiError ? e.message : ...` → `e instanceof Error ? e.message : ...` in the roster-load catch. `ExamsApiError` extends `Error`, so existing behaviour is kept, and the backend's actual reason is now shown. No backend, API, business rule, attendance, exam setup, result or UI-layout change. The attendance and setup gates are unchanged.
+Data action required (not a code change): for Grade 1-A Social, create the Exam Setup (Examination → Exam Setup) and take exam-day attendance for Social (Conduct & Marks → Step 1). The roster will then load.
+
+API Affected:
+- POST /api/v1/exams/exam-marks/create-search/ (read-only investigation; not modified)
+- Related, verified: POST /api/v1/exams/exam-attendance/store/, POST /api/v1/exams/exam-marks/store/, GET /api/v1/exams/exam-marks/progress-summary/
+
+Validation Steps Performed (Django test client as the school's School Admin; all DB changes rolled back):
+- Replayed the page's roster request for Social and Mathematics → both 400 "Exam attendance has not been taken yet…" (the exact reason previously hidden)
+- Confirmed the only exam attendance record for this exam is Grade 1-A Telugu; the only Exam Setup is Grade 1-A Mathematics
+- Full flow with consistent data (Mathematics): attendance store 200 → marks roster 200 (1 student, 2 components) → marks store 200 with the page's `markStore` payload → roster reload returns the saved marks (total 40.00). The marks code path works once attendance + setup exist for the same subject.
+- TypeScript: marks-register-create/page.tsx has the same 7 pre-existing errors (missing `ExamMarksStoreRow` type and knock-on `unknown` types); no new errors
+- Pending: browser check after the Social setup + attendance are created
+
+Assumptions:
+- "Exam-day attendance is already working" refers to the attendance taken for Telugu; no attendance exists for Social.
+- The intended subject is Social id 139 (the one on the exam schedule), not the duplicate "social" id 141.
+- Progress will not reach 1/1 from Mathematics marks, because progress counts only scheduled subjects (Social, Telugu). Observed: after saving Mathematics marks, the Social progress row stayed at 0/1.
+
+Known Remaining Issues (not changed):
+- Other catches on this page (attendance save, marks save) and other Examination pages still use `instanceof ExamsApiError` and show generic messages for backend rejections (same cause as Exam Setup "Failed to save exam setup." and the Online Exam messages).
+- Exam Setup, exam schedule and attendance can be configured for different subjects without any warning, which is what produced this mismatch.
+- Pre-existing type error: `ExamMarksStoreRow` is imported but not exported from hooks/useExamsApi.ts (type-only; fails `next build`).
+
+Status:
+Resolved (code: error now visible). Data setup for Grade 1-A Social still required for the roster to load.
+
+
+## Srinadh Yalagandula
+
+Date: 2026-09-30
+
+Module:
+Examination – Conduct & Marks → Step 2 (Marks Entry)
+
+Change Type:
+UI-only enhancement
+
+Enhancement:
+Per-student Present/Absent toggle in the Marks Entry table now shows its state with the same colours as the page's status badges.
+- Present → green (`T.ok` text + border, `T.okSoft` background), same palette as the "Complete" badge (`Badge tone="ok"`)
+- Absent → red (`T.danger` text + border, `T.dangerSoft` background), same palette as the "Not started" badge (`Badge tone="danger"`). Unchanged; it already used these colours.
+Previously Present was a neutral white/grey pill (`#fff` background, `T.ink3` text, `T.borderStrong` border), so it didn't read as a status.
+
+Files Modified:
+- frontend/app/(dashboard)/exams/marks-register-create/page.tsx (inline `style` of the Present/Absent `<button>` in the Marks Entry student row, 1 line)
+
+Screens Affected:
+- Examination → Conduct & Marks → Step 2 Marks Entry (student rows only). Step 1 attendance buttons, the progress table, and all other screens are unchanged.
+
+Functionality Impact:
+None. `onClick` (toggles `marksAbsent`), labels, state, `absent_students` save payload, API calls, validation and save-marks behaviour are unchanged. Only the three colour values for the Present state changed, using existing theme tokens from lib/examTheme.ts (no new styles or components).
+
+Status:
+Done. 
+
+## Srinadh Yalagandula
+
+## Examination - Results & Reports Template Issue
+ 
+Date: 2026-09-30
+
+# Problem
+- In Examination → Results & Reports, saving the report card template as "SSC Style" failed with 400 Bad Request: `"ssc" is not a valid choice`. "Other Style" failed the same way.
+
+### Root Cause
+- The frontend offers 6 templates (`cbse`, `icse`, `cambridge`, `ib`, `ssc`, `other`, in `frontend/types/exams.ts` and `exams/result-publish/page.tsx`), but the backend model `ReportCardSetting.TEMPLATE_CHOICES` (`backend/apps/exams/models.py`) only allowed 4: `cbse`, `icse`, `cambridge`, `ib`.
+- `ReportCardSettingSerializer` is a ModelSerializer, so it validates `template` against the model choices and rejected `ssc` and `other`. The two options were added to the frontend in commit `a61d62a1` without the matching backend choices.
+
+### Fix Implemented
+- Added `TEMPLATE_SSC = "ssc"` ("SSC style") and `TEMPLATE_OTHER = "other"` ("Other style") to `ReportCardSetting.TEMPLATE_CHOICES` in `backend/apps/exams/models.py`.
+- Added migration `backend/apps/exams/migrations/0014_alter_reportcardsetting_template.py` (choices only). `sqlmigrate` shows it is a no-op: no database/schema change. Run `python manage.py migrate` to record it.
+- No frontend, API, report generation or publishing changes.
+
+### Validation
+- Saved each template via `POST /api/v1/exams/exam-result-publish/report-card-setting/` as School Admin (DB changes rolled back): CBSE, ICSE, Cambridge, IB, SSC, Other → all 200, and each value read back correctly.
+- Invalid value (`xyz`) is still rejected with 400, so validation still works.
+- `makemigrations --check` detected only this one field change; no other pending model changes.
+- Pending: browser check (Results & Reports → select SSC Style → Save).
+
+### Impact
+- All 6 report card templates shown in the UI can now be saved.
+- Only the allowed template values were extended. No other Examination feature, module, API contract or database column was modified.
+
+---
+
+
+
+
+
+## Eskoolia Transport Module — Development Summary
+
+
+**Developer:** Srinadh Yalagandula· 
+
+
+**Date:** 12 October 2026
+
+**Area:** Transport module — re-enabled the hidden module, then rebuilt it as a 14-screen frontend in four phases, following the approved "Eskoolia Transport Module Master Prompt" spec (kept outside the repo at `Downloads/Eskoolia_Transport_Module_Master_Prompt.md`, not at the `docs/transport/MASTER_PROMPT.md` path the phase briefs referenced). **Frontend only, in-memory mock data** — the new screens do not call the backend yet. Commits: `cad62426`, `719fa486` ("Implement Transport module Phase 1"; they contain all four phases).
+
+### 0. Starting point (before this work, commit `4062cb52`)
+- The Transport entry in `frontend/lib/routes.ts` was commented out (`// HIDDEN - no backend yet`), so the module was reachable only by typing URLs.
+- The original module was 9 pages plus 7 API-backed components in `components/transport/`. `VehiclePanel` handled vehicles; `TransportRoutePanel` handled routes and stops; `AssignVehiclePanel` assigned vehicles to routes; `BusTrackingPanel` showed live tracking; `StudentTransportReportPanel` produced the student report; `LiveTrackingMap` and `RouteBuilderMap` drew the `/transport/tracking/*` pages. Together they used `/api/v1/core/{vehicles,transport-routes,bus-stops,assign-vehicles,bus-locations,bus-pickups,transport-alerts}/`, `/api/v1/hr/staff/` and `/api/v1/students/students/` — all of these are registered in `backend/apps/core/urls.py`.
+
+
+
+### 1. Four development phases
+- **Phase 1 — Foundation, Dashboard, Vehicles:** the 14-tab sub-nav in `lib/routes.ts`, the shared UI kit, the store, mock data for all 14 screens, the Dashboard, the full Vehicles page, and placeholders for the other 12 tabs.
+- **Phase 2 — Drivers, Attendants, Routes, Pickup Points:** the 4-step Add Route wizard and the SVG `RouteMap`. Store operations keep crews, buses and stops in sync across screens.
+- **Phase 3 — Student Allocation, Attendance, Live Tracking, Alerts:** the context bar, the attendance KPI card and the switch, per-shift/date boarding registers, the live simulation (`lib/transport/sim.ts`) and alert workflows.
+- **Phase 4 — Maintenance, Fuel, Reports, Settings + final pass:** Recharts charts, report previews and real file downloads, and the Settings editor. Saved settings now drive the rest of the module. The Dashboard is fully derived from the store, and every "Coming in Phase N" placeholder was removed.
+
+
+
+### 2. Shared architecture (reuse first)
+- **Shell — reused unchanged:** the existing top bar, `ModuleSubNav`, ⌘K `CommandPalette`, `NotificationBell`, notes and logout. Transport only registered its 14 tabs. `app/(dashboard)/transport/layout.tsx` mounts the store, the Esc-aware overlay stack and the toast, all scoped under the CSS class `.tp`.
+- **Reused HR/Exam components:** `HrButton`, `HrBadge` (wrapped to add a slate tone), `HrField`, `HrInput`, `HrSelect`, `HrTextarea` and `HrStepWizard`; `ProgressBar` and `StepPills` from `ExamUi`.
+- **New kit, `components/transport/ui/`:**
+  - **Rebuilt to the same visual spec:** modal, drawer and confirm dialog. Each HR overlay installs its own Esc listener, so one Esc closed every layer; here one stack closes only the topmost.
+  - **Generic list template:** Smart Filter, search row, grouped accordion with a conic donut, table cells, More menu, bulk bar and "Show N more".
+  - **Hub pieces from the Exam Command Center:** StatTile, ModuleCard, Needs-attention item and Quick action.
+  - **Other new pieces:** `ContextBar`, `AttendanceKpi`, `Switch`, `SimpleAccordion`, `RouteMap`, the toast, and the `?id=` / `?new=1` deep-link hook.
+- **Store:** `lib/transport/store.tsx` (React context + reducer, 40 actions; Zustand isn't installed). The pure operations live in `ops.ts`, `ops3.ts` and `ops4.ts`. Formatting helpers (`inr`, `fmtDate`, `daysLeft`, `maskPhone`) are in `format.ts`, with `TODAY` = 06 Oct 2026. `csv.ts` builds real client-side CSV; `reports.ts` holds the report tables and real XLSX/PDF output via the existing `xlsx` and `jspdf` packages.
+- **Mock data, `lib/transport/mock/`:** 9 routes with 70 stops, 18 vehicles, 16 drivers, 14 attendants, 541 students (513 allocated, 14 pending, 14 waitlisted), 12 alerts, 54 service records, 49 fuel entries, 6 reports and the settings defaults. All of it is fictional, phones are masked, and it resets on page reload.
+
+### 3. The 14 screens
+**3.1 Dashboard — `/transport`** (`components/transport/dashboard/`)
+- Transport Command Center, built in the Examination Command Center style: breadcrumb, Georgia/Playfair hero, "Last synced".
+- Six StatTiles: buses on road, students onboard, late buses, open alerts, seat utilisation, maintenance due.
+- Six module cards grouped by rhythm (Set once / Per term / Daily / Monthly / Live). The Daily Operations CTA turns danger while buses are late.
+- Needs attention lists the store's open alerts by severity, plus a "students awaiting a pickup point" item.
+- Quick actions deep-link into create flows (`?new=1`). The Recharts "Boardings this week" area chart shows the hover value in the card header.
+- All figures come from the store, so this screen moves away from the spec's static seed numbers. At seed: 487 of 513 students onboard, 10 open alerts, 67% seat utilisation, 6 maintenance due.
+- Renewing a vehicle document removes its alert from Needs attention.
+- Replaced the old 3-card landing page.
+- Status: ✅ built.
+
+**3.2 Vehicles — `/transport/vehicles`** (`components/transport/vehicles/`)
+- The reference list page: hero, 4 KPIs, Smart Filter (type, status, route, compliance) with live chips, search on Enter or button.
+- Accordion groups by vehicle type, with one group open at a time and a seat-occupancy donut.
+- Fitness and insurance badges: green date, amber "Due in Nd", red "Expired". The window follows Settings' saved vehicle-document reminder days.
+- Row actions: View, Edit, Upload document, plus a More menu with Mark breakdown and Archive (both confirmed).
+- Drawer: details, compliance documents and actions.
+- Add/Edit modal with validation. Uploading a document rejects past dates and clears the matching alert.
+- Bulk actions: Assign route, Message drivers, Export, Archive. Exports are real CSV.
+- Deep links: `?id=VH-001` and `?new=1`.
+- The route now renders this mock page. The old API-backed `VehiclePanel.tsx` is still in the repo, but nothing imports it.
+- Status: ✅ built (mock).
+
+**3.3 Drivers — `/transport/drivers`** (`components/transport/staff/StaffDirectory.tsx`, kind "driver")
+- One shared component renders both Drivers and Attendants from a per-kind config.
+- KPIs: drivers, on duty, licences expiring, average rating.
+- Filters: shift, status, licence, experience. Groups by shift with an on-duty donut.
+- Rows: avatar with presence dot, staff ID pill, licence number with a Valid / "Expires in Nd" / Expired badge, assigned vehicle and route.
+- More menu: Edit, Mark on leave (immediate), Deactivate (confirmed — the driver becomes Inactive and their vehicle unassigned).
+- Drawer: Contact, Licence and Assignment sections, plus a "★ rating" tag.
+- Add/Edit form with validation. New drivers get the next ID (DR-117 onwards) and appear in the Vehicles driver select.
+- Bulk actions: Assign vehicle, Message, Export, Archive.
+- The licence window follows Settings' saved licence reminder days.
+- Status: ✅ built (mock).
+
+**3.4 Attendants — `/transport/attendants`** (same component, kind "attendant")
+- Same template as Drivers, with first-aid certification in place of the licence.
+- KPIs include "Routes covered N / 9", counted from online attendants.
+- Drawer: a "First-aid certified" or "First-aid expired" tag, a first-aid section and a Students-on-bus highlight.
+- Bulk action "Assign bus". New attendants get the next ID (AT-215 onwards).
+- Crews are reconciled to the canonical route table (for example, the R9 attendant follows the R9 bus).
+- The first-aid window follows Settings' saved first-aid reminder days.
+- Status: ✅ built (mock).
+
+**3.5 Routes — `/transport/routes`** (`components/transport/routes/`)
+- KPIs: routes, stops, average route time, students. Filters: zone, utilisation, vehicle, length.
+- Search filters stop rows and opens the routes that match.
+- One accordion per route (R3 open by default) with edit-route and view buttons, "+ Add stop" and a utilisation donut.
+- Stop table: moving a stop up or down recalculates pickup and drop times. Edit stop; Remove stop (confirmed, students become Pending).
+- Edit route warns when another route already uses the same vehicle or driver. Bus and crew changes update Vehicles, Drivers and Attendants.
+- Route drawer: crew, timing and the first 6 stops; Message parents; Archive route (students become Pending).
+- 4-step Add Route wizard (`HrStepWizard`): Basics → Stops (at least 2) → Vehicle & Staff → Review.
+- Bulk actions: Move to route, Message, Export, Remove.
+- The old `TransportRoutePanel` (API route and stop builder) moved unchanged to `/transport/routes/stop-builder`.
+- Status: ✅ built (mock); the old builder is still reachable.
+
+**3.6 Pickup Points — `/transport/pickup-points`** (`components/transport/pickup/`)
+- Pickup points and route stops are the same store records, so an edit on either page shows on both.
+- KPIs: points, students served, average fare, low-strength stops. Filters: route, zone, strength, fare.
+- Split view: a scrollable table with a sticky header beside the SVG `RouteMap` (viewBox 600×480, roads, water, dashed route paths, school marker).
+- Clicking a row focuses its marker; clicking a marker focuses its row. The focused marker shows a tooltip card that flips below near the top edge.
+- "Highlight route" dims the other routes using the spec's opacities.
+- Add/Edit form: a new point is placed by the geometry rule, or at the coordinates entered if they were changed.
+- Delete is confirmed and affected students become Pending.
+- The default fare for new points comes from the saved fare slabs.
+- Bulk actions: Move to route, Message, Export, Delete. The map stacks under the table at ≤1024px.
+- Status: ✅ built (mock).
+
+**3.7 Student Allocation — `/transport/allocation`** (`components/transport/allocation/`)
+- Context bar above the hero with Class and Section selects. Picking a class opens only that group.
+- KPIs: Allocated 513, Pending 14, Waitlisted 14, Monthly fees.
+- Filters: status, route, bus, fare. Context values show as chips, and Reset clears the context too.
+- Groups for Class 1–10 show 40 rows each, then "Show 40 more students".
+- Edit allocation: the pickup-point list follows the chosen route and resets when it changes; bus and fare are recalculated.
+- Remove from transport (confirmed) makes the student Pending.
+- 3-step Bulk Allocate wizard (Exam `StepPills`): at least 1 student → route & stop → review → "Allocate N students".
+- Bulk actions: Assign route (to its first stop), Message, Export, Remove. Drawer has Allocation and Parent sections.
+- Changes here feed the Attendance register and the Dashboard.
+- Status: ✅ built (mock).
+
+**3.8 Transport Attendance — `/transport/attendance`** (`components/transport/attendance/`)
+- Context bar with Shift (morning/afternoon) and Date (4 dates) and a dynamic note.
+- Attendance KPI cards: BD (boarded), NS (no-show), LT (late), DR (dropped), each with a trend.
+- One register per shift and date, generated by the spec's rule. Today's morning register includes 5 forced R3 no-shows.
+- Edits are stored, so switching shift or date and back keeps them. Edits to past dates are recorded in a change log.
+- The register is built from whoever is allocated in the store right now.
+- One group per route bus showing 25 rows each, with "Mark all boarded".
+- Rows: scheduled time, scanned-at, a Boarded switch, and LATE / NOTE / NO-SHOW tags. Not-boarded rows get a tinted background with a left bar.
+- Row actions: Toggle late (also marks boarded) and Add note.
+- This page's own bulk bar: Mark boarded, Mark absent, Notify parents, Export. "Notify absent parents" uses the safe confirm.
+- Status: ✅ built (mock).
+
+**3.9 Live Tracking — `/transport/live`** (`components/transport/live/`, `lib/transport/sim.ts`)
+- Context bar route select; picking a route also selects its bus.
+- Hero with a pulsing LIVE pill (shows PAUSED when paused), Pause/Resume feed, and Share ETA.
+- Simulation: a 1-second interval using the spec's progress and speed formulas. It stops while paused and is cleared when you leave the page.
+- R5 overspeed spikes; R3 (+14 min) and R7 (+9 min) run late; every bus eventually reaches "At school".
+- Overspeed and late states follow the saved Settings thresholds: overspeed is limit + 5, late is minutes beyond the late threshold.
+- Bus cards are sorted by status. Map markers move with a 1-second transition. The stop timeline stays in sync with the selected bus.
+- Call driver (info toast). Raise alert creates a real alert in the store, visible on Alerts.
+- Buses and crews come from Routes, so Phase 2 edits show here.
+- This is simulated GPS. The old real-GPS `BusTrackingPanel` (`/transport/bus-tracking`) and the `/transport/tracking/*` pages are unchanged but no longer in the nav.
+- Status: ✅ built (simulated).
+
+**3.10 Alerts — `/transport/alerts`** (`components/transport/alerts/`)
+- KPIs: Open, Critical, Resolved today, Avg response.
+- Filters: type, route, state (defaults to "Open alerts only"), raised time.
+- Critical, Warning and Info groups toggle independently; Critical and Warning are open by default.
+- Each group has "Acknowledge all" and an acknowledged-share donut.
+- Items use the needs-attention style with a type icon and badges.
+- Acknowledge records the signed-in user as owner. Resolve uses the safe confirm.
+- Raise alert form: new alerts get the next ID (AL-5413 onwards) and start acknowledged.
+- Drawer: Incident and Timeline sections.
+- Bulk actions: Acknowledge, Message, Export, Resolve. Alerts raised from Live Tracking show here, and resolving them updates the Dashboard.
+- Status: ✅ built (mock).
+
+**3.11 Maintenance — `/transport/maintenance`** (`components/transport/maintenance/`)
+- KPIs: Due this week, Overdue, In workshop, Spend MTD.
+- Filters: status, service type, vendor, date.
+- While any filter or search is active, vehicles with no matches are hidden and the matching groups open automatically.
+- One group per vehicle in the store (TS 09 EZ 2214 open by default), with a worst-status chip and a 10,000 km service-interval donut.
+- Rows: date, service type with record ID, odometer, vendor, cost, status.
+- Row actions: View, Edit, Mark completed (dated today), Delete (confirmed).
+- Log/Edit form: odometer and cost are required; new records are prepended and their group opens.
+- Drawer billing splits cost 62% parts / 38% labour and shows the next service due at odometer + 10,000 km.
+- Bulk actions: Mark completed, Message, Export, Delete.
+- Status: ✅ built (mock).
+
+**3.12 Fuel Management — `/transport/fuel`** (`components/transport/fuel/`)
+- KPIs: Litres MTD, Spend MTD, Avg km/L, Anomalies.
+- Filters: vehicle, check, period (defaults to "This month"), station.
+- Charts row: "Spend by vehicle · MTD" bar chart (18 bars, darker on hover, ₹k gridlines) and "Fleet efficiency trend" line chart (W34–W41, y-axis 5–7). Both show the hover value in the card header.
+- Fuel log, newest first: 20 rows, then "Show N more entries".
+- Anomaly badge ("Anomaly −28%") and red km/L when km/L is below 80% of the vehicle's normal.
+- Log/Edit form with litres, rate and odometer required. New entries get km/L = base × 0.97 and update the KPIs and charts.
+- Drawer: Fill-up and Benchmark sections.
+- Bulk actions: Mark verified, Message, Export, Delete.
+- Status: ✅ built (mock).
+
+**3.13 Reports — `/transport/reports`** (`components/transport/reports/`, `lib/transport/reports.ts`)
+- Six report cards: Route-wise strength, Vehicle utilisation, Transport fee collection, Driver duty roster, Daily boarding register, Fuel & maintenance cost.
+- KPIs, plus filters for category, frequency, status and default format. The default format feeds the Generate form.
+- Generate form checks that To isn't before From. Generating adds a "Recently generated" row, opens the Preview and shows a toast.
+- "Schedule a report" uses the same form with the schedule defaults; it adds a row but opens no preview.
+- Preview modal: 3 stat boxes, a table with right-aligned numbers and a totals row, and Close / Change filters / Download Excel / Download PDF.
+- The tables apply the spec's formulas to live store inputs (routes, stops, buses, crews, allocated students, fares).
+- Downloads are real XLSX and PDF files, falling back to CSV. PDFs show "Rs" instead of ₹ because jsPDF's built-in fonts have no rupee glyph.
+- The old `StudentTransportReportPanel` (`/transport/student-report`) is unchanged but no longer in the nav.
+- Status: ✅ built (mock data).
+
+**3.14 Settings — `/transport/settings`** (`components/transport/settings/`)
+- Five sections, each a `SimpleAccordion`: General, Alerts & thresholds, Parent notifications, Fare rules, Documents.
+- Each section shows an "Unsaved changes" badge while edited, with Discard (info toast) and Save changes.
+- "Save all changes" saves every edited section, or shows "Nothing to save".
+- An overspeed limit above 60 is rejected with the error toast "Overspeed limit can't exceed 60 km/h".
+- Fare slab editor: inline inputs, remove, and "+ Add slab" (from = last "to", to + 5, fare + 400).
+- KPIs reflect saved values only.
+- Filters: category, unsaved only, collapse/expand all. Search covers section titles and field labels.
+- Saved values drive the rest of the module:
+  - overspeed and late threshold → Live Tracking status and the Dashboard's late buses;
+  - reminder days → expiry badges in Vehicles, Drivers and Attendants;
+  - fare slabs → the default fare for new stops and pickup points.
+- The hero's "Export CSV" button downloads the saved settings as JSON, as the spec requires.
+- Status: ✅ built (mock).
+
+### 4. Old Transport code — what happened to it
+- **Kept byte-identical:** all 7 old components, and the old pages at `assign-vehicles`, `bus-tracking`, `student-report`, `tracking`, `tracking/buses` and `tracking/route-builder`. They still work by URL and still call the real APIs, but they're no longer in the Transport sub-nav.
+- **Replaced at the same URL:**
+  - `/transport`: the 3-card landing page became the Dashboard.
+  - `/transport/vehicles`: `VehiclePanel` replaced by the mock Vehicles page. **`VehiclePanel.tsx` is no longer reachable from any page.**
+  - `/transport/routes`: `TransportRoutePanel` moved to `/transport/routes/stop-builder`.
+- **Not merged:** the new screens don't import the old components or call their APIs. Data entered in the new screens isn't saved and isn't visible to the old API-backed pages.
+
+### Files changed
+- `frontend/lib/routes.ts` (Transport module un-hidden; sub-tabs replaced with the 14 new tabs; 3 icon imports). Its comment about "placeholder screens link to them" is now out of date.
+- `frontend/app/(dashboard)/transport/page.tsx`, `vehicles/page.tsx`, `routes/page.tsx` (now render the new screens)
+- New: `frontend/app/(dashboard)/transport/layout.tsx`, 11 new screen pages and `routes/stop-builder/page.tsx`
+- New: `frontend/components/transport/{ui,dashboard,vehicles,staff,routes,pickup,allocation,attendance,live,alerts,maintenance,fuel,reports,settings}/`
+- New: `frontend/lib/transport/` (store, operations, simulation, reports, formatting, CSV, IDs, types, `mock/`)
+- No backend files, no other modules and no shared components were modified.
+
+### Status
+✅ `tsc --noEmit`: no new errors. The only 11 errors are pre-existing ones in `exams/marks-register-create` and `exams/result-publish`, outside this work. `next lint` is clean on all Transport folders.
+
+✅ All 14 Transport routes plus `/transport/routes/stop-builder` returned HTTP 200 with no error markers from the running dev server.
+
+✅ Store, simulation, register, report and settings logic were checked in Node against the spec: reorder retiming, students moving to Pending, crew sync, wizards, forced no-shows, overspeed and late thresholds, all 6 report tables, and the fare-slab defaults.
+
+⚠️ **`next build` not completed:** it compiles successfully, then fails type-checking on the 11 Examination errors above. These need fixing before a production build.
+
+⚠️ **Not browser-verified by me** (per this project's convention I don't start dev servers). Interactive behaviour, the Esc order, responsive layout at 1024/700/640 and the live animation still need a click-through.
+
+⚠️ **Known gaps:**
+- The ⌘K palette finds the 14 pages but not vehicle, driver or route records, and the notification bell shows app notifications rather than Transport items. Both are shared components that were left untouched.
+- The Fuel & maintenance cost report uses the spec's formulas, so its figures won't match the Fuel and Maintenance pages.
+
+⚠️ **Next step — backend integration:** wire the store actions to the existing `/api/v1/core/*` transport endpoints, and decide whether to retire or relink the old pages, including restoring access to `VehiclePanel`.
+
+
+### Update — 14/10/2026
+
+**Developer:** Jampala Kavya
+**Area:** Eskoolia → Transport Module
+
+**Change:** Renamed the Transport Module's dashboard navigation label from "Dashboard" to "Home".
+
+**File changed:** `frontend/lib/routes.ts` (UI text only)
+
+1. In the `transport` module's `sub` list, changed `{ label: 'Dashboard', path: '/transport', icon: LayoutDashboard }` to `{ label: 'Home', path: '/transport', icon: LayoutDashboard }`. This is the label shown in the Transport module's navigation menu, and in the ⌘K command palette, which reads the same `FLAT_INDEX`.
+2. "Home" matches the existing label used for the Fees module's landing page in the same file.
+
+**Route:** `/transport` — unchanged. The icon, permission and all other Transport navigation labels are unchanged.
+
+**Not changed:**
+- The `/transport` page heading is "Command Center" and does not show "Dashboard", so it was left as is.
+- The breadcrumb in `frontend/components/transport/dashboard/TransportDashboard.tsx` starts with "Dashboard". That crumb links to the main app dashboard (`/dashboard`), not to the Transport page, so it was left as is.
+- The legacy `components/layout/sidebar-menu.data.ts` Transport section has no "Dashboard" item.
+
+**Backend/API changes: None.** No changes to routes, permissions, data fetching, styling or business logic.
+
+**Testing performed:**
+- `tsc --noEmit` (frontend): no errors in `lib/routes.ts`. The 11 existing errors in `exams/marks-register-create` and `exams/result-publish` are unchanged.
+- `eslint lib/routes.ts`: clean.
+- Browser check (Transport menu shows "Home" and opens `/transport`) still needs to be done manually.
+
+
+### Update — 14/10/2026
+
+**Developer:** Jampala Kavya
+**Area:** Eskoolia School ERP → Transport → Drivers & Attendants (`/transport/drivers`, `/transport/attendants`)
+
+**Change:** Compact layout for the Drivers and Attendants pages. Reduced vertical spacing; summary-card, filter, search and shift-group spacing tightened; existing responsive wrapping kept.
+
+**How it is scoped:** Both pages render the same `StaffDirectory` component (`kind="driver"` / `kind="attendant"`). The page header, summary cards, Smart Filter, search row, grouped list, shift cards and empty-state line are shared components used by 12 Transport pages. So instead of changing their default spacing, I added an optional `compact` prop to each shared component. It defaults to off, so the other Transport pages render exactly as before. Only `StaffDirectory` passes `compact`.
+
+**Files changed:**
+1. `frontend/components/transport/ui/page.tsx`: `compact` prop on `PageHero`, `KpiCard` and `EmptyLine`.
+   - `PageHero`: bottom margin 18 → 12px, eyebrow margin 8 → 4px, description top margin 10 → 6px.
+   - `KpiCard`: padding 14 → 12/14px, minimum height 96 → 84px, value/sub spacing 10/8 → 6/4px.
+   - `EmptyLine`: vertical padding 32 → 14px. This removes the oversized empty area in shift groups with no records.
+2. `frontend/components/transport/ui/list.tsx`: `compact` prop on `SmartFilter`, `SearchRow`, `GroupedList` and `GroupCard`.
+   - `SmartFilter`: the title and filter chips sit on one row and wrap on narrow screens. Header padding 12/16 → 8/14px, expanded panel padding 14/16 → 10/14px.
+   - `SearchRow`: padding 12/16 → 6/14px.
+   - `GroupedList`: header padding 14/16 → 10/14px, body padding 12 → 10px.
+   - `GroupCard` (Full day / Morning shift / Relief & reserve): the title and count chips sit on one row and wrap on narrow screens. Header padding 12/16 → 8/14px, gap between groups 12 → 8px.
+3. `frontend/components/transport/staff/StaffDirectory.tsx`: passes `compact` to the components above. No other changes.
+
+**Not changed:**
+- Font sizes, colours, icons, borders, shadows, card styling and all text labels.
+- All actions and controls: Add Driver / Add Attendant, Edit, View, Documents, More menu (Mark on leave, Deactivate), Search, Export CSV, Select All, the four filters and Reset, bulk actions (Assign, Export, Archive), shift grouping, per-group "+ Add", Collapse all / Expand all, and Export view.
+- State, API calls, store actions, validation, permissions and routes.
+- The four summary cards were already one row on desktop. The existing breakpoints are unchanged: 2 columns at ≤1024px, 1 column at ≤640px. The search row already wraps with `flex-wrap`. The staff table keeps its existing horizontal scroll container on narrow screens.
+
+**Backend/API changes: None.**
+
+**Testing performed:**
+- `tsc --noEmit` (frontend): no errors in the three changed files. The 11 existing errors in `exams/marks-register-create` and `exams/result-publish` are unchanged.
+- `eslint` on the three changed files: clean.
+- Confirmed that only `StaffDirectory.tsx` passes `compact`, so other Transport pages keep their default spacing.
+- Browser check not done (no dev server was running). Still needs a manual check on both pages:
+  - desktop and mobile layout;
+  - filter expand/collapse;
+  - search;
+  - Select All and bulk actions;
+  - Export CSV;
+  - group expand/collapse;
+  - empty shift groups.
+
+
+### Update — 14/10/2026
+
+**Developer:** Jampala Kavya
+**Area:** Eskoolia School ERP → Transport → Drivers & Attendants (`/transport/drivers`, `/transport/attendants`) — layout fix, second pass
+
+**Original issue:** After the first compact pass (entry above), both pages still used too much vertical space.
+
+**Causes found (measured in a rendered page, not guessed):**
+1. **CSS class collision.** `styles/student-groups.css` is imported globally from `app/globals.css`. It defines a `.tp` chip style: `padding: 5px 12px; border: 1.5px; border-radius: 20px; background; cursor: pointer`. The Transport layout root (`app/(dashboard)/transport/layout.tsx`) also uses `className="tp"`. So every Transport page got an extra rounded border, padding and a pointer cursor over the whole page. The Transport modal/drawer container in `components/transport/ui/overlays.tsx` also uses `tp`.
+2. **Stacked padding.** `<main>` 18px + `.tp-wrap` 12px top / 40px bottom + `.tp-frame` 18px on every side.
+3. **Header description** was capped at 640px wide, so it wrapped to two lines.
+4. **Summary cards** stacked label, value and sub-text on three lines.
+5. **List and shift-group headers.** "All drivers" and its helper text were on two lines, and shift-group headers had 8px padding with 8px gaps between groups.
+
+**Files changed:**
+1. `frontend/components/transport/ui/transport.css`:
+   - Added `.tp-wrap--compact` (padding 6px 20px 8px) and `.tp-frame--compact` (padding 12px). The existing ≤640px mobile rules still override them.
+   - Added `.tp:has(> .tp-wrap--compact)`, which undoes the Student Groups `.tp` chip style (padding, border, radius, background, cursor) on Drivers/Attendants only. It also sets `display: flow-root`, so the sync banner's top margin doesn't cause a 12px phantom scroll.
+2. `frontend/components/transport/ui/page.tsx`:
+   - `TransportPage`: new optional `compact` prop that applies the classes above.
+   - `PageHero` (compact): description max width 640 → 1000px, so it fits on one line on desktop.
+   - `KpiCard` (compact): value and sub-text share one row and wrap on narrow cards. Minimum height removed; the four cards stay equal height through the grid.
+   - `EmptyLine` (compact): padding 14 → 12px.
+3. `frontend/components/transport/ui/list.tsx`:
+   - `GroupedList` (compact): title and helper text on one row, header padding 10 → 8px.
+   - `GroupCard` (compact): header padding 8 → 6px, gap between groups 8 → 6px.
+4. `frontend/components/transport/staff/StaffDirectory.tsx`: passes `compact` to `TransportPage`.
+
+All new behaviour is behind the opt-in `compact` prop. Only `StaffDirectory` passes it, so the other Transport pages are unchanged.
+
+**Not changed:**
+- Fonts and font sizes, colours, icons, borders, shadows and button styles.
+- All controls and behaviour: Add, Edit, View, Documents, More menu, Search, Export CSV, Select All, filters and Reset, bulk actions, shift grouping, per-group "+ Add", expand/collapse (Full day still opens by default), and empty-state messages.
+- API calls, store and data loading, routes and permissions.
+- "Loading transport records…" banner (`SyncBanner.tsx`): left unchanged. It shows only while the first `loadTransportData()` call (16 parallel requests) is pending, and is replaced by the ready state or by the error bar with Retry. It does not stay after loading finishes. If it stays visible for a long time, one of those backend requests is slow or never responds.
+
+**Backend/API changes: None.**
+
+**Testing performed:**
+- `tsc --noEmit` (frontend): no errors in the changed files. The 11 existing errors in `exams/marks-register-create` and `exams/result-publish` are unchanged.
+- `eslint` on the three changed `.tsx` files: clean.
+- **Rendered check in headless Chrome** against the running dev server:
+  - Setup: a temporary, unauthenticated page rendered the real `StaffDirectory` with the real Transport store, providers, CSS and `SyncBanner`, inside placeholder bars matching the app shell (56px top bar, 46px sub-nav, `<main>` 18px/32px padding). The page was deleted afterwards.
+  - Data: with no login, the API returns no data, so every shift group was empty. The real Transport layout, top bar and sub-nav were not rendered.
+  - Results, with the error banner dismissed (the normal loaded state):
+    - 1920×940 viewport: everything fits with no page scroll, including when all three groups are expanded.
+    - 1536×730 (1080p at 125% scaling): all three shift-group headers are visible. The last one ends at 714px of 730, and about 40px of bottom padding needs scrolling.
+    - Tablet 1024×768: cards wrap to 2 columns.
+    - Mobile 390×844: everything stacks into 1 column.
+    - No horizontal overflow at any size.
+  - Interactions on both pages:
+    - Expand all, Collapse all and single-group toggle work.
+    - Smart Filter expands with 4 filters; setting a filter adds its chip, and Reset works.
+    - Search shows the "no matches" message and a search chip.
+    - Export CSV shows its toast.
+    - Add Driver / Add Attendant opens the correct modal.
+    - The search toolbar is one row.
+- **Not verified:** the signed-in app with real records (populated tables, bulk bar with selected rows). This still needs a manual browser check.
+
+
+### Update — 14/10/2026
+
+**Developer:** Jampala Kavya
+**Area:** Eskoolia School ERP → Transport → screen consolidation (4 pairs of pages combined)
+
+**Change:** Each pair of related Transport screens is now one page, with the two sections stacked vertically. The sub-navigation went from 14 items to 10.
+
+| Combined page (route kept) | Top section | Section below (old route now redirects here) | Sub-nav label |
+|---|---|---|---|
+| `/transport/drivers` | Drivers | Attendants (`/transport/attendants`) | Staff |
+| `/transport/routes` | Routes | Pickup Points (`/transport/pickup-points`) | Routes & Pickup Points |
+| `/transport/allocation` | Student Allocation | Transport Attendance (`/transport/attendance`) | Allocation & Attendance |
+| `/transport/maintenance` | Maintenance & service | Fuel Management (`/transport/fuel`) | Maintenance & Fuel |
+
+**How it works:**
+- The existing screen components are reused unchanged as sections: `StaffDirectory` (driver/attendant), `RoutesPage`, `PickupPointsPage`, `AllocationPage`, `AttendancePage`, `MaintenancePage` and `FuelPage`. Each section keeps its own state, API calls, validation, filters, search, exports, modals, bulk actions, map and charts. No business logic or state was merged.
+- New `TransportSections` component (`components/transport/ui/sections.tsx`) draws one page frame and stacks the sections. The lower section is separated by a dashed divider.
+- New `TransportSectionContext` (`components/transport/ui/sectionContext.ts`):
+  - A section's own `TransportPage` renders its content only, so there is no nested page frame.
+  - The lower section's `PageHero` renders as a smaller `<h2>` (28px), so each page keeps a single `<h1>`.
+- **Deep links:** `useDeepLink` (`components/transport/ui/deeplink.ts`) is now section-aware:
+  - `?id=` / `?new=1` go to the top section by default, or to the section named in `?section=<key>`. Before this, both sections would have reacted to the same link.
+  - `?section=<key>` scrolls to that section once data has loaded, and the URL is then cleaned.
+- **Old routes:** `/transport/attendants`, `/pickup-points`, `/attendance` and `/fuel` are now server redirects to the combined page with `?section=…`. Their query string (e.g. `?id=`, `?new=1`) is kept. The component files were not deleted.
+
+**Files changed:**
+- New: `frontend/components/transport/ui/sectionContext.ts`, `frontend/components/transport/ui/sections.tsx`, `frontend/lib/transport/sections.ts` (the `sectionHref` helper for the redirects).
+- `frontend/components/transport/ui/page.tsx`: section-aware `TransportPage` and `PageHero`.
+- `frontend/components/transport/ui/deeplink.ts`: section-scoped deep links.
+- `frontend/components/transport/ui/index.ts`: exports the two new UI modules.
+- `frontend/app/(dashboard)/transport/{drivers,routes,allocation,maintenance}/page.tsx`: the combined pages.
+- `frontend/app/(dashboard)/transport/{attendants,pickup-points,attendance,fuel}/page.tsx`: now redirects.
+- `frontend/lib/routes.ts`: Transport sub-nav (4 items removed, 4 relabelled, unused `MapPin` / `Fuel` icon imports removed).
+- `frontend/components/transport/dashboard/TransportDashboard.tsx`: 4 links (Pickup points, Attendance ×2, Fuel log) now point straight at the new section URLs.
+
+**Not changed:**
+- Backend, API endpoints, models, permissions (the Transport module permission is unchanged and the sub-items have none).
+- The other Transport pages.
+- `/transport/routes/stop-builder` and the older pages listed in `lib/routes.ts`.
+
+**Backend/API changes: None.**
+
+**Testing performed:**
+- `tsc --noEmit` (frontend): no new errors. The 11 existing errors in `exams/marks-register-create` and `exams/result-publish` are unchanged.
+- `eslint` on all changed files: clean.
+- **Redirects** (HTTP against the running dev server): all four old routes return Next's redirect to the right section with the query kept. Example: `/transport/attendance?id=42&x=a&x=b` → `/transport/allocation?section=attendance&id=42&x=a&x=b`. Next applies it in the browser (HTTP 200 with a redirect marker, not a 307).
+- **Combined pages** in headless Chrome:
+  - Setup: a temporary, unauthenticated page imported the four real route files inside the real Transport providers, CSS and `SyncBanner`. It was deleted afterwards. Without a login the API returns no data, so every section was empty.
+  - Results for all four pages:
+    - One page frame, one `<h1>`, and the lower section as `<h2>`. Both sections show their 4 KPI cards, Smart Filter, search and Export CSV.
+    - Each section's main action opens its own dialog: Add Driver / Add Attendant, Add Route / Add Pickup Point, Bulk Allocate / Notify absent parents (confirmation dialog), Log Service / Log Fuel. Esc closes them.
+    - The Smart Filter of one section opens without opening the other's.
+    - Export CSV in each section shows its own toast.
+    - `?new=1` opens only the top section's dialog, and `?section=<lower>&new=1` opens only the lower one (Attendance has no `?new` flow).
+    - `?section=<lower>` scrolls to that section and cleans the URL.
+    - The Pickup Points map and the 4 Fuel charts render; Allocation's class/section bar and Attendance's shift/date bar each stay in their own section.
+    - No horizontal overflow at 1024px or 390px. No browser console errors.
+- **Not verified:**
+  - Real data in the signed-in app (no test login was available). Still needs a manual check: lists with records, `?id=` record deep links, edit/delete/archive, bulk actions, register marking, saving.
+- **Known limitation:** each section has its own floating bulk-action bar at the same spot at the bottom. If rows are selected in both sections at once, the two bars overlap.
+
+
+### Update — 14/10/2026 (functional audit)
+
+**Developer:** Jampala Kavya
+**Area:** Eskoolia School ERP → Transport → full functional audit and bug fixes (all 14 screens)
+
+**Scope and method:**
+- Every Transport screen was traced end to end: component → store action (`lib/transport/actions.ts`) → API → serializer/view/service → reload adapter (`lib/transport/api.ts`).
+  - Screens: Home, Vehicles, Drivers, Attendants, Routes (and the legacy stop-builder), Pickup Points, Student Allocation, Attendance, Live Tracking (and the legacy Bus Tracking), Alerts, Maintenance, Fuel, Reports, Settings.
+- Create/read/update/delete and the five workflows (fleet setup, route setup, student transport, daily operations, maintenance & fuel) were run as automated API tests, using the same request shapes the screens send.
+- Test data: an **isolated throwaway SQLite test database**. The shared `neondb` database was not written to, and no browser sign-in was used.
+
+**Bugs found and fixed:**
+
+| # | Screen / action | Problem | Fix |
+|---|---|---|---|
+| 1 | Routes › Edit route › change bus | Old bus stayed active on the route; switching back appeared to do nothing | Old bus's assignment on that route is switched off (`actions.ts`) |
+| 2 | Routes › Edit route › change attendant | Previous attendant stayed on the bus, so the change often didn't show | Previous attendant is unassigned (`actions.ts`) |
+| 3 | Vehicles › Archive | Archived bus stayed on its route with its crew; later crew edits failed with "Vehicle … was not found" | Archive also ends route assignments and frees driver/attendants (`views.py`) |
+| 4 | Drivers › Archive | Removed driver still shown as the route's driver | Removing a driver profile clears `Vehicle.driver` (`views.py`) |
+| 5 | Add vehicle / Add or rename route | Duplicate registration or route name hit a database error (generic 409/500) | Clear 400 messages from serializer checks (`serializers.py`) |
+| 6 | Add Route wizard | Duplicate stop names created a half-built route, and the retry was blocked by "code in use" | Duplicate stop names are refused while adding (`RouteModals.tsx`) |
+| 7 | Drivers › bulk Assign vehicle | With several drivers selected, only the last one was assigned (toast claimed all) | Driver bulk assign limited to one driver, with a message (`StaffDirectory.tsx`) |
+| 8 | Attendance (register + Notify absent parents) | Students on morning-only routes were listed (and parents messaged) for the afternoon drop, and vice versa | Register and notifications follow the route's shift (`services/attendance.py`, `AttendancePage.tsx`) |
+| 9 | Attendance › Notify absent parents | Toast counted skipped/failed SMS/email as "sent" | API returns `notifications_sent`; toast shows sent vs not sent (`views.py`, `AttendancePage.tsx`) |
+| 10 | Live Tracking › Raise alert | Alert recorded against the route's first bus, not the selected bus | Selected bus is sent (`LiveTrackingPage.tsx`, `actions.ts`) |
+| 11 | Maintenance › Mark completed (early) | Completing a future-dated job left a record every later edit refused | Early completion is dated today (`services/upkeep.py`) |
+| 12 | Fuel › Avg km/L KPI | First fill's litres (no distance) were included, so the figure was too low (e.g. 4.4 instead of 10.0) | Only fills with a measured distance count (`views.py`) |
+| 13 | Home › Buses on road now | Broken-down buses counted as on the road | Subtracted and shown in the note (`TransportDashboard.tsx`) |
+| 14 | Home › Maintenance due; Maintenance KPIs | Counted every open job, including archived vehicles and jobs months away | Due this week + overdue, active vehicles only (`TransportDashboard.tsx`, `MaintenancePage.tsx`) |
+| 15 | Deep links (`?id=`, `?new=1`) opened in a new tab | Ran before data loaded, so the record wasn't found and the link was cleared | Handled after the first load (`ui/deeplink.ts`) |
+| 16 | Pickup Points drawer | Schedule times and the 80 m radius were invented | Saved pickup/drop times and saved radius shown, or "Not set" (`PickupPointsPage.tsx`, `api.ts`, `types.ts`) |
+| 17 | Vehicle drawer | Fixed "Online · last ping 08:41 AM" | Real last GPS time, or "No GPS data received" (`VehicleDrawer.tsx`, `api.ts`, `types.ts`) |
+| 18 | Alerts KPIs, drawer, actions | Fake "4.2 min" response time; "Resolved today" counted all time; "Parents notified: Yes" for critical alerts; Message / Re-assign / Call claimed success | Computed from stored timestamps; honest labels; unconnected actions say nothing was sent (`AlertsPage.tsx`, `api.ts`, `types.ts`) |
+| 19 | Maintenance, Fuel, Alerts bulk actions | Success toasts shown before (and even without) a successful save | Toast after the API succeeds; "Archive" relabelled "Delete", which is what it does |
+| 20 | Allocation › bulk Assign route | Route with no stops: nothing sent, toast said success | Refused with a message (`AllocationPage.tsx`) |
+| 21 | Reports › download | When the PDF/Excel library was unavailable and CSV was downloaded, the log still said PDF/Excel | Not logged as PDF/Excel; toast says CSV (`ReportsPage.tsx`) |
+| 22 | Settings | Fare slabs stayed "Unsaved changes" after saving (backend sorts/rounds them); "Export CSV" downloaded JSON | Draft adopts saved values; button relabelled "Export JSON" (`SettingsPage.tsx`) |
+| 23 | Maintenance KPI | "Spend MTD" subtitle hardcoded to "October 2026" | Current month (`MaintenancePage.tsx`) |
+| 24 | Legacy Bus Tracking and stop-builder pages | Requests without `page_size` returned only the first 10 rows | All rows requested (`BusTrackingPanel.tsx`, `TransportRoutePanel.tsx`) |
+
+**Files modified:**
+- Backend:
+  - `apps/transport/views.py`, `serializers.py`, `services/attendance.py`, `services/upkeep.py`.
+  - `tests/test_phase3_api.py`: fuel average expectation corrected from 3.0 to 6.0 km/L; early-completion check added.
+  - New `tests/test_e2e_workflows.py` (40 tests).
+- Frontend:
+  - `lib/transport/actions.ts`, `api.ts`, `types.ts`.
+  - `components/transport/ui/deeplink.ts`.
+  - Screens: `dashboard/TransportDashboard.tsx`, `staff/StaffDirectory.tsx`, `routes/RouteModals.tsx`, `pickup/PickupPointsPage.tsx`, `vehicles/VehicleDrawer.tsx`, `allocation/AllocationPage.tsx`, `attendance/AttendancePage.tsx`, `live/LiveTrackingPage.tsx`, `alerts/AlertsPage.tsx`, `maintenance/MaintenancePage.tsx`, `fuel/FuelPage.tsx`, `reports/ReportsPage.tsx`, `settings/SettingsPage.tsx`.
+  - Legacy pages: `BusTrackingPanel.tsx`, `TransportRoutePanel.tsx`.
+- No schema or migration changes. No API endpoints removed or renamed; one response field added (`notifications_sent`).
+
+**Tests executed:**
+- Backend `pytest apps/transport/tests`: **97 passed** (57 existing + 40 new).
+  - The new tests cover the five workflows, validation and duplicate handling, every report (preview + PDF/Excel log), settings persistence, anonymous and role-without-permission access, and regressions for fixes 3, 4, 5, 8, 9, 11 and 12.
+  - Run on a throwaway SQLite file with `--nomigrations` (see blocked items).
+- Frontend: `tsc --noEmit` gives no new errors (the 11 existing Examination errors are unchanged); `eslint` is clean on all Transport code.
+
+**Blocked / not verified:**
+- **Migrations can't build a fresh test database** on either engine:
+  - `students/0012_repair_missing_district_column.py` runs SQLite-only `PRAGMA` on PostgreSQL.
+  - Another migration uses PostgreSQL-only `IF EXISTS` on SQLite.
+  - Belongs to Students, not changed. CI on a fresh database will hit the same problem.
+- **Signed-in browser testing:** not done (no test account was used). Still to check manually: every screen with real data, the dialogs and toasts changed above, and real PDF/Excel files.
+- **Live GPS:** not verified (no GPS source). Only the "no GPS" paths were tested.
+- **Real SMS/email delivery:** not verified (no provider credentials in the test environment).
+- **Jest:** finds no test files on this machine (config issue). No existing Jest test covers Transport.
+
+**Known remaining issues (not fixed):**
+- **Stop-builder:** deleting a stop doesn't release its students first.
+- **Moved stop order:** moving a stop to another route in the Pickup edit form keeps its old position number.
+- **Driver/attendant dropped without a bus:** choosing a driver/attendant in Add/Edit route with no bus doesn't save them.
+- **Vehicle edit:** setting a driver doesn't free that driver's previous vehicle on screen until reload.
+- **Staff "Routes covered" KPI:** only counts codes like `R1`.
+- **Reports:** the Generate modal's "Format" choice is not used, and PDF/Excel files omit the stats and notes shown in the preview.
+- **Alerts:** "Message", "Re-assign" and "Call driver" have no backend yet.
+- **Allocation:** per-class "+ Allocate" can preselect students from other classes.
+- **Existing data:** attendants already linked to an archived bus (before fix 3) still fail on edit until their bus is changed.
+
+
+### Update — 14/10/2026 (end-to-end workflow run)
+
+**Developer:** Jampala Kavya
+**Area:** Eskoolia School ERP → Transport → one complete workflow executed through the real UI (vehicle → crew → route → pickup point → student → morning pickup → afternoon drop)
+
+**How it was run:**
+- **Frontend:** the running Next.js dev server, driven by headless Chrome. Every action was a real click or keystroke, and sign-in went through the real login page.
+- **Backend:** a second copy of the Django backend (same code, settings and auth) on port 8765, with its own throwaway SQLite database and its own signing secret.
+- **Isolation:** the test browser's API calls were redirected there. **The shared `neondb` database was not written to.**
+- **Seed data:** one test school, academic year, Grade 5-A, one student (`E2E-001`) with a guardian, two HR staff, and one school-admin login.
+
+**Steps and results (all PASS):**
+
+| Step | Screen | Result |
+|---|---|---|
+| 1 Add vehicle `TS 09 EZ 2026` | Vehicles | 201; listed after reload; DB row. Required-field check also confirmed. |
+| 2 Add driver + assign vehicle | Staff › Drivers | 201; licence `TS0920260000123`; vehicle shows the driver |
+| 3 Add attendant + assign bus | Staff › Attendants | 201; certificate `FA-E2E-2026-01`; bus assigned |
+| 5 Create route `E2E1` (run before 4) | Routes › Add Route wizard | Route, 2 ordered stops, bus, driver and attendant saved; drawer shows the crew. Duplicate stop name refused. |
+| 4 Pickup/drop point "E2E Temple Pickup" | Pickup Points | Stop 3 with pickup 07:20 and drop 15:35, ₹1,500; drawer shows the saved values |
+| 6 Allocate student | Allocation › Bulk Allocate | Route 1 / stop 3 / bus 1 / ₹1,500; seat and stop counts updated |
+| 7 Morning pickup | Attendance › Morning pickup | Boarded; "Boarded 1 of 1" after reload; DB row (manual) |
+| 8 Drop-off | Attendance › Afternoon drop | Separate afternoon record; "Dropped 1" after reload |
+| 9 Verify chain | Home, Vehicles, Routes, Reports, API | Dashboard, route summary, boarding register (morning and afternoon) and route-strength reports consistent; independent API read consistent |
+
+**Implementation notes:**
+- **Pickup / drop-off points:** not separate records. They are ordered route stops with an optional morning pickup time and afternoon drop time, so the route is created first.
+- **Drop-off:** the "Afternoon drop" attendance register; "boarded" there means dropped.
+
+**Bugs found and fixed:**
+- **Pickup Points drawer:** showed an empty "zone" badge for routes without a zone. It now shows only when a zone is set.
+  - File: `frontend/components/transport/pickup/PickupPointsPage.tsx`.
+  - Retested: PASS (screenshot 04c).
+- **"Failed to fetch" on one page load:** traced to the test environment, not the app. The isolated dev server refused connections when ~20 requests arrived at once. The test proxy retries (logged); no app change.
+
+**Files modified:**
+- `frontend/components/transport/pickup/PickupPointsPage.tsx`
+- `backend/apps/transport/tests/test_e2e_workflows.py`: new test `test_morning_pickup_and_afternoon_drop_are_separate_records`.
+- No schema, migration or API changes.
+
+**Tests executed:**
+- Backend `pytest apps/transport/tests`: **98 passed** (isolated SQLite, `--nomigrations`).
+- Frontend: `tsc` gives no new errors (the 11 existing Examination errors are unchanged); `eslint` is clean.
+
+**Evidence:** `transport-e2e-evidence-2026-10-14/` next to the project. It contains `report.html`, 31 screenshots, `api_log.jsonl` (2,327 calls; login and tokens redacted) and `proxy_retries.jsonl`.
+
+**Not verified:**
+- GPS automatic boarding and live positions (no GPS source).
+- Contents of downloaded PDF/Excel files.
+- Absent-parent SMS/email delivery.
+- Waitlist and full-capacity behaviour in the UI (API tests only).
+- The same workflow on the real `neondb` data.
+
+**Remaining issues:**
+- **Report wording:** the afternoon boarding-register report labels its column "Boarded" rather than "Dropped".
+- **Migrations:** they still can't build a fresh database on either engine.
+- **Home page:** two widgets outside Transport call missing endpoints (`/api/calendar/week-ahead/`, `/api/exams/readiness/`, both 404).
+
+**Cleanup:** test records exist only in the throwaway database file, so nothing was written to `neondb` and nothing needs deleting there. The isolated backend and test browser were stopped, and the browser profile was deleted.
