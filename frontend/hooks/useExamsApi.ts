@@ -13,8 +13,11 @@ import type {
   ExamGradeScaleGroup,
   ExamGradeScale,
   ExamMarkRegisterRow,
+  ExamMarksCreateStudentRow,
+  ExamMarksEntryComponent,
   ExamMarksProgressSummary,
   ExamPlanStudentRecord,
+  ExamReportStudentOption,
   ExamResultPublish,
   ExamResultPublishSearchResponse,
   ExamRoutineRow,
@@ -415,14 +418,23 @@ export async function searchExamMarksReport(payload: { exam: number; subject: nu
 }
 
 export async function searchExamMarksCreate(payload: { exam: number; subject: number; class_id: number; section?: number }) {
-  return postJson<{ students: unknown[]; marks_entry_form: { id: number; exam_title: string; exam_mark: string }[]; search_info: Record<string, string> }>(
+  return postJson<{ students: ExamMarksCreateStudentRow[]; marks_entry_form: ExamMarksEntryComponent[]; search_info: Record<string, string> }>(
     "/exam-marks/create-search/",
     { exam: payload.exam, subject: payload.subject, class_id: payload.class_id, section: payload.section },
   );
 }
 
+/** One student's row in the `markStore` map read by ExamMarksRegisterStoreAPIView. */
+export interface ExamMarksStoreRow {
+  student: number;
+  section: number | null;
+  marks: Record<string, string>;
+  teacher_remarks: string;
+  absent_students: number[];
+}
+
 export async function storeExamMarks(payload: {
-  exam_id: number; class_id: number; section_id?: number | null; subject_id: number; markStore: Record<string, unknown>;
+  exam_id: number; class_id: number; section_id?: number | null; subject_id: number; markStore: Record<string, ExamMarksStoreRow>;
 }) {
   return postJson<{ message: string }>("/exam-marks/store/", payload);
 }
@@ -483,7 +495,7 @@ export async function rejectModerationFlag(id: number) {
 }
 
 export function useExamReportIndex() {
-  return useFetch<{ exams: ExamTypeOption[]; classes: ClassOption[]; sections: SectionOption[]; students: ExamPlanStudentRecord[] }>(
+  return useFetch<{ exams: ExamTypeOption[]; classes: ClassOption[]; sections: SectionOption[]; students: ExamReportStudentOption[] }>(
     `${BASE}/exam-report/index/`,
   );
 }
