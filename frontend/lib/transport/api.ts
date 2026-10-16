@@ -149,7 +149,8 @@ export interface TransportData {
   /** School students without an allocation - candidates for Bulk Allocate. */
   studentPool: Student[];
   /** HR staff without a transport profile - candidates for Add driver / attendant. */
-  staffPool: { pk: number; name: string; staffNo: string; role: string | null; licence: string }[];
+  /** Eligible HR staff (Transport department) without a profile; `roles` = what their designation allows. */
+  staffPool: { pk: number; name: string; staffNo: string; role: string | null; licence: string; designation: string | null; roles: ("driver" | "attendant")[] }[];
   alerts: TransportAlert[];
   maintenance: ServiceRecord[];
   fuel: FuelEntry[];
@@ -408,7 +409,10 @@ export async function loadTransportData(): Promise<TransportData> {
 
   return {
     routes, archivedRoutes, vehicles, drivers, attendants, students, studentPool,
-    staffPool: staffPoolRaw.map((s) => ({ pk: s.id, name: s.name, staffNo: s.staff_no ?? "", role: s.role ?? null, licence: s.driving_license ?? "" })),
+    staffPool: staffPoolRaw.map((s) => ({
+      pk: s.id, name: s.name, staffNo: s.staff_no ?? "", role: s.role ?? null, licence: s.driving_license ?? "",
+      designation: s.designation ?? null, roles: Array.isArray(s.eligible_roles) ? s.eligible_roles : [],
+    })),
     alerts, maintenance, fuel, fuelSummary, reports, recentReports, settings,
     dashboard: dashboardRaw ? toDashboard(dashboardRaw) : null,
     attendance: {}, projection, unavailable: [...new Set(unavailable)],

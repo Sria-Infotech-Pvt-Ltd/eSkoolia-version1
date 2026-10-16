@@ -31,6 +31,7 @@ from .models import (
     VehicleDriverAssignment,
     VehicleServiceRecord,
 )
+from .services import staff_eligibility
 from .services.allocations import academic_year_for, default_fare, mirror_to_student, route_vehicle
 from .services.reports import REPORT_KEYS
 from .services.settings import DEFAULTS as SETTINGS_DEFAULTS
@@ -532,6 +533,17 @@ class TransportStaffProfileSerializer(SchoolScopedRelationsMixin, serializers.Mo
             raise serializers.ValidationError({"staff": "This staff member already has a transport profile."})
         if self.instance is not None and staff is not None and staff != self.instance.staff:
             raise serializers.ValidationError({"staff": "The staff member of a profile can't be changed."})
+        # Only Transport-department staff with a fitting designation may be drivers / attendants.
+        # Checked on create, and on update when the role changes (existing profiles stay editable).
+        role = attrs.get("role", getattr(self.instance, "role", None))
+        checked_staff = staff if self.instance is None else self.instance.staff
+        role_changed = self.instance is not None and "role" in attrs and attrs["role"] != self.instance.role
+        if checked_staff is not None and role and (self.instance is None or role_changed):
+            if not staff_eligibility.is_eligible(checked_staff, role, school_id):
+                raise serializers.ValidationError({"staff": (
+                    f"This staff member can't be a transport {role}: they must be active in the HR department "
+                    f"\"Transport\" with a {role} designation (or no designation)."
+                )})
         return attrs
 
     def to_representation(self, instance):

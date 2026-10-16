@@ -14,6 +14,7 @@ from django.utils import timezone
 
 from apps.core.models import AcademicYear
 from apps.hr.models import Staff
+from apps.transport.tests.test_phase1_api import transport_dept
 from apps.students.models import Guardian, Student
 from apps.transport.models import (
     AssignVehicle, StudentTransportAllocation, TransportAttendance, TransportRoute, TransportStaffProfile, Vehicle,
@@ -46,8 +47,8 @@ def fleet(admin_client, school, academic_year):
         "driver": None, "active_status": True,
     }, format="json")
     assert vehicle.status_code == 201, vehicle.data
-    driver_staff = Staff.objects.create(school=school, staff_no="ZD1", first_name="Test", last_name="Driver", join_date="2024-01-01")
-    attendant_staff = Staff.objects.create(school=school, staff_no="ZA1", first_name="Test", last_name="Attendant", join_date="2024-01-01")
+    driver_staff = Staff.objects.create(school=school, staff_no="ZD1", first_name="Test", last_name="Driver", join_date="2024-01-01", department=transport_dept(school))
+    attendant_staff = Staff.objects.create(school=school, staff_no="ZA1", first_name="Test", last_name="Attendant", join_date="2024-01-01", department=transport_dept(school))
     driver = admin_client.post(f"{B}/transport-staff/", {
         "staff": driver_staff.id, "role": "driver", "shift": "full_day", "duty_status": "on_duty", "experience_years": 6,
         "licence_number": "TS0920240000001", "licence_valid_till": iso(400), "vehicle": vehicle.data["id"],

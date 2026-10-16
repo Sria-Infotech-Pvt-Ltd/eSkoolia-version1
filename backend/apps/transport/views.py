@@ -43,6 +43,7 @@ from .serializers import (
 )
 from .services import allocations as allocation_service
 from .services import attendance as attendance_service
+from .services import staff_eligibility
 from .services import upkeep as upkeep_service
 from .services.dashboard import build_summary
 from .services.reports import REPORT_KEYS, REPORTS, build_report
@@ -1005,10 +1006,16 @@ class TransportStaffProfileViewSet(TenantQueryMixin, PermissionScopedViewSet):
 
     @action(detail=False, methods=["get"], url_path="candidates")
     def candidates(self, request):
-        """HR staff of this school without a transport profile (to add as driver/attendant)."""
-        from apps.hr.models import Staff
-
-        staff = Staff.objects.filter(school_id=request.user.school_id).exclude(transport_profile__isnull=False)
+        """
+        HR staff of this school who may be added as driver / attendant and have no transport
+        profile yet: active, in the HR department "Transport" (any letter case), with a fitting
+        designation (services/staff_eligibility.py). ?role=driver|attendant narrows the list;
+        each row lists the roles it is eligible for.
+        """
+        role = request.query_params.get("role")
+        if role not in (None, "", "driver", "attendant"):
+            raise ValidationError({"role": "Use driver or attendant."})
+        staff = staff_eligibility.eligible_staff(request.user.school_id, role or None).exclude(transport_profile__isnull=False)
         search = (request.query_params.get("search") or "").strip()
         if search:
             staff = staff.filter(Q(first_name__icontains=search) | Q(last_name__icontains=search) | Q(staff_no__icontains=search))
@@ -1019,8 +1026,10 @@ class TransportStaffProfileViewSet(TenantQueryMixin, PermissionScopedViewSet):
                 "staff_no": member.staff_no,
                 "role": member.role.name if member.role_id else None,
                 "driving_license": member.driving_license,
+                "designation": member.designation.name if member.designation_id else None,
+                "eligible_roles": staff_eligibility.eligible_roles(member),
             }
-            for member in staff.select_related("role").order_by("first_name")[:200]
+            for member in staff.select_related("role", "designation").order_by("first_name")[:200]
         ])
 
 

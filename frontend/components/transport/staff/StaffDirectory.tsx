@@ -423,7 +423,7 @@ export function StaffDirectory({ kind }: { kind: StaffKind }) {
 
       {form && (
         <StaffForm key={form.mode === "edit" ? form.id : `add-${form.shift}`} kind={kind} plates={plates}
-          mode={form.mode} candidates={state.staffPool} editing={form.mode === "edit" ? byId(form.id) : null}
+          mode={form.mode} candidates={state.staffPool.filter((s) => s.roles.includes(kind))} editing={form.mode === "edit" ? byId(form.id) : null}
           initial={form.mode === "edit"
             ? (() => { const r = byId(form.id)!; return { staffPk: "", docNo: r.docNo, docValid: r.docValid, shift: r.shift, status: r.status, plate: r.plate, experience: String(r.experience) }; })()
             : { staffPk: "", docNo: "", docValid: "", shift: form.shift, status: "On duty", plate: "Unassigned", experience: "0" }}
@@ -483,13 +483,14 @@ function StaffForm({
         {mode === "add" ? (
           <Field label="HR staff member" required error={errors.staffPk}
             hint={candidates.length ? "Name and phone come from the HR record"
-              : loadingStaff ? "Loading HR staff…" : "Everyone in HR already has a transport profile - add staff in HR first"}>
+              : loadingStaff ? "Loading HR staff…"
+              : `No eligible staff. Only active HR staff in the "Transport" department with a ${c.noun} designation (or none) can be added - set this up in HR.`}>
             <Select value={v.staffPk} onChange={(e) => {
               const pick = candidates.find((s) => String(s.pk) === e.target.value);
               setV((p) => ({ ...p, staffPk: e.target.value, docNo: kind === "driver" && pick?.licence && !p.docNo ? pick.licence : p.docNo }));
               if (errors.staffPk) setErrors((er) => ({ ...er, staffPk: undefined }));
             }}>
-              <option value="">Choose a staff member</option>
+              <option value="">{candidates.length || loadingStaff ? "Choose a staff member" : `No eligible Transport ${c.noun}s`}</option>
               {candidates.map((s) => <option key={s.pk} value={s.pk}>{s.name}{s.staffNo ? ` · ${s.staffNo}` : ""}{s.role ? ` · ${s.role}` : ""}</option>)}
             </Select>
           </Field>

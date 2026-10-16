@@ -29,8 +29,16 @@ User = get_user_model()
 
 
 # Helpers (the other_school fixture lives in conftest.py)
+def transport_dept(school):
+    """The school's HR "Transport" department (only its staff can become drivers / attendants)."""
+    from apps.hr.models import Department
+
+    return Department.objects.get_or_create(school=school, name="Transport")[0]
+
+
 def make_staff(school, staff_no, first_name="Ravi"):
-    return Staff.objects.create(school=school, staff_no=staff_no, first_name=first_name, join_date="2024-01-01")
+    return Staff.objects.create(school=school, staff_no=staff_no, first_name=first_name, join_date="2024-01-01",
+                                department=transport_dept(school))
 
 
 def make_vehicle(school, number="TS 07 UB 4421", **extra):

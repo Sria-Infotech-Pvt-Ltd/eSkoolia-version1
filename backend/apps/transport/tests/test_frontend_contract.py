@@ -14,6 +14,8 @@ from apps.hr.models import Staff
 from apps.students.models import Guardian, Student
 from apps.transport.models import BusStop, TransportAlert
 
+from .test_phase1_api import transport_dept
+
 B = "/api/v1/core"
 PAGE = "page_size=10000"
 
@@ -94,8 +96,8 @@ def test_store_actions_round_trip(admin_client, school, academic_year):
     assert admin_client.delete(f"{B}/bus-stops/{stop_ids[2]}/").status_code == 204
 
     # driver/add and attendant/add from HR staff, then assignVehicle via PATCH
-    driver_staff = Staff.objects.create(school=school, staff_no="D1", first_name="Ravi", join_date="2024-01-01")
-    attendant_staff = Staff.objects.create(school=school, staff_no="A1", first_name="Asha", join_date="2024-01-01")
+    driver_staff = Staff.objects.create(school=school, staff_no="D1", first_name="Ravi", join_date="2024-01-01", department=transport_dept(school))
+    attendant_staff = Staff.objects.create(school=school, staff_no="A1", first_name="Asha", join_date="2024-01-01", department=transport_dept(school))
     candidates = admin_client.get(f"{B}/transport-staff/candidates/").data
     assert {c["id"] for c in candidates} == {driver_staff.id, attendant_staff.id}
     driver = admin_client.post(f"{B}/transport-staff/", {
