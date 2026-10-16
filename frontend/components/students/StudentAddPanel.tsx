@@ -378,21 +378,24 @@ const COMMON_VACCINATIONS = [
 
 type NavItemId = 'identity' | 'academic' | 'contact' | 'guardians' | 'apaar' | 'documents' | 'medical' | 'speciallyAbled' | 'identityMarks' | 'fees' | 'review';
 
-const CLASS_AGE_RULES_STRICT: Record<string, { min: number; max: number }> = {
-  LKG: { min: 3.5, max: 5.5 },
-  UKG: { min: 4.5, max: 6.5 },
-  "1": { min: 5.5, max: 7.5 },
-  "2": { min: 6.5, max: 8.5 },
-  "3": { min: 7.5, max: 9.5 },
-  "4": { min: 8.5, max: 10.5 },
-  "5": { min: 9.5, max: 11.5 },
-  "6": { min: 10.5, max: 12.5 },
-  "7": { min: 11.5, max: 13.5 },
-  "8": { min: 12.5, max: 14.5 },
-  "9": { min: 13.5, max: 15.5 },
-  "10": { min: 14.5, max: 16.5 },
-  "11": { min: 15.5, max: 18 },
-  "12": { min: 16.5, max: 19 },
+// Matches backend/apps/students/serializers.py::StudentSerializer.CLASS_AGE_RULES
+// exactly (grade -> [min age, max age] as of today) — kept as a single module-level
+// constant (not re-created per render) so every frontend consumer of this rule
+// (the live classAgeWarning check, the AI-assist "clearIf" nudge) uses the same
+// object and can never quietly drift from what the backend actually enforces.
+const CLASS_AGE_RULES: Record<number, [number, number]> = {
+  1: [5, 7],
+  2: [6, 8],
+  3: [7, 9],
+  4: [8, 10],
+  5: [9, 11],
+  6: [10, 12],
+  7: [11, 13],
+  8: [12, 14],
+  9: [13, 15],
+  10: [14, 16],
+  11: [15, 17],
+  12: [16, 18],
 };
 
 function toTitleCase(value: string): string {
@@ -451,6 +454,49 @@ function isProgressFieldFilled(value: unknown): boolean {
   return Boolean(value);
 }
 
+interface CompletionCheckFields {
+  firstName?: unknown;
+  lastName?: unknown;
+  dateOfBirth?: unknown;
+  gender?: unknown;
+  classId?: unknown;
+  sectionId?: unknown;
+  sectionLater?: unknown;
+  phone?: unknown;
+  addressLine?: unknown;
+  pincode?: unknown;
+  guardianFullName?: unknown;
+  guardianPhone?: unknown;
+  consentChecked?: unknown;
+}
+
+// Single definition of "% complete" for a student enrollment, used everywhere
+// a percentage is shown — the footer progress bar, the "AI Assist" modal, and
+// the Drafts panel card. Previously each of those three computed its own
+// percentage from a different field list (and the Drafts panel additionally
+// hard-capped at 99%), so the same record could show 100% / 60% / 99%
+// simultaneously (QA #8). Takes a plain field bag rather than reading
+// component state directly so it works both for live form state and for a
+// draft snapshot restored from localStorage.
+function computeCompletionPercent(f: CompletionCheckFields): number {
+  const str = (v: unknown) => (typeof v === "string" ? v : "").trim();
+  const checks = [
+    Boolean(str(f.firstName)),
+    Boolean(str(f.lastName)),
+    Boolean(str(f.dateOfBirth)),
+    Boolean(str(f.gender)),
+    Boolean(str(f.classId)),
+    Boolean(str(f.sectionId) || f.sectionLater),
+    Boolean(str(f.phone) && /^\d{10}$/.test(str(f.phone))),
+    Boolean(str(f.addressLine)),
+    Boolean(str(f.pincode) && /^\d{6}$/.test(str(f.pincode))),
+    Boolean(str(f.guardianFullName)),
+    Boolean(str(f.guardianPhone)),
+    Boolean(f.consentChecked),
+  ];
+  return Math.round((checks.filter(Boolean).length / checks.length) * 100);
+}
+
 function listData<T>(value: ApiList<T>): T[] {
   return Array.isArray(value) ? value : value.results || [];
 }
@@ -490,6 +536,14 @@ async function apiPutJson<T>(path: string, payload: unknown, silent401 = false):
     method: "PUT",
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify(payload),
+    silent401,
+  });
+}
+
+async function apiDeleteJson<T>(path: string, silent401 = true): Promise<T> {
+  return apiRequestWithRefresh<T>(path, {
+    method: "DELETE",
+    headers: { "Content-Type": "application/json" },
     silent401,
   });
 }
@@ -644,6 +698,46 @@ function sanitizeText(value: string): string {
   return value.replace(/<[^>]*>/g, "").replace(/[\u0000-\u001f\u007f]/g, "").trim();
 }
 
+// Scan & Fill / consent-form OCR extraction hands back whatever raw text sat near
+// the matched label — it has no idea the Gender <select>'s option values are the
+// lowercase enum "male"/"female"/"other" (their *labels* are Title Case: "Male"),
+// or that the backend rejects any date that isn't strict YYYY-MM-DD. Both of these
+// used to just get Title-cased / passed straight through, so a scanned "MALE" became
+// "Male" (not a valid choice) and a scanned "15/08/2015" was sent to the backend
+// verbatim (not a valid date) — exactly the two field_errors this kept producing.
+function normalizeExtractedGender(raw: string): string {
+  const v = raw.trim().toLowerCase();
+  if (!v) return "";
+  if (v.startsWith("m")) return "male";
+  if (v.startsWith("f")) return "female";
+  return "other";
+}
+
+const OCR_MONTH_NUMBERS: Record<string, string> = {
+  jan: "01", feb: "02", mar: "03", apr: "04", may: "05", jun: "06",
+  jul: "07", aug: "08", sep: "09", oct: "10", nov: "11", dec: "12",
+};
+
+function normalizeExtractedDob(raw: string): string {
+  const v = raw.trim();
+  if (!v) return "";
+  if (/^\d{4}-\d{2}-\d{2}$/.test(v)) return v; // already ISO
+  let m = v.match(/^(\d{1,2})[\/\-.](\d{1,2})[\/\-.](\d{4})$/); // DD/MM/YYYY, DD-MM-YYYY, DD.MM.YYYY
+  if (m) {
+    const [, d, mo, y] = m;
+    const dd = d.padStart(2, "0");
+    const mm = mo.padStart(2, "0");
+    if (Number(mm) >= 1 && Number(mm) <= 12 && Number(dd) >= 1 && Number(dd) <= 31) return `${y}-${mm}-${dd}`;
+  }
+  m = v.match(/^(\d{1,2})[\s-]+([A-Za-z]{3,})[\s-]+(\d{4})$/); // "15 Aug 2015" / "15-August-2015"
+  if (m) {
+    const [, d, monName, y] = m;
+    const mm = OCR_MONTH_NUMBERS[monName.slice(0, 3).toLowerCase()];
+    if (mm) return `${y}-${mm}-${d.padStart(2, "0")}`;
+  }
+  return ""; // couldn't confidently parse — leave the field untouched rather than send garbage
+}
+
 const isValidEmail = (v: string) => {
   if (!v.trim()) return true; // optional field — empty is OK
   if (!/^[^\s@]+@[^\s@]+\.[^\s@]{2,}$/.test(v)) return false;
@@ -730,6 +824,23 @@ function isValidAdmissionOrRoll(value: string): boolean {
   return /^[A-Za-z0-9]+$/.test(value.trim());
 }
 
+// The single definition of a valid admission number — previously the onBlur
+// handler enforced this but runAdmissionAvailabilityCheck only checked
+// isValidAdmissionOrRoll (any letters/numbers). Since the availability check
+// runs right after onBlur and unconditionally clears the field error once the
+// number is confirmed unique, a value like "ramu" that correctly failed the
+// format check a moment earlier ended up shown as "✓ Admission number is
+// available" anyway — the availability check silently overrode the format
+// rejection instead of respecting it.
+// Digit count: the backend's next-admission-no generator (views.py
+// next_admission_no) produces ADM<4-digit year><sequence, min 3 digits,
+// widening past 999> — i.e. 7 digits minimum for the normal case (e.g.
+// ADM2026001), not 8. The original onBlur-only regex required a minimum of 8,
+// which happened to go unnoticed because it only ever ran against a manually
+// *edited* value, never the untouched auto-generated one. Upper bound of 9
+// matches the input's own maxLength={12} (3 for "ADM" + 9 digits).
+const ADMISSION_NO_FORMAT_REGEX = /^ADM\d{7,9}$/;
+
 function isValidNumericRoll(value: string): boolean {
   return /^\d+$/.test(value.trim());
 }
@@ -782,21 +893,6 @@ export function StudentAddPanel() {
   const studentId = /^\d+$/.test(studentIdParam) ? Number(studentIdParam) : null;
   const isExistingStudentMode = Boolean(studentId && (isViewMode || isEditMode));
 
-  const CLASS_AGE_RULES: Record<number, [number, number]> = {
-    1: [5, 7],
-    2: [6, 8],
-    3: [7, 9],
-    4: [8, 10],
-    5: [9, 11],
-    6: [10, 12],
-    7: [11, 13],
-    8: [12, 14],
-    9: [13, 15],
-    10: [14, 16],
-    11: [15, 17],
-    12: [16, 18],
-  };
-
   const [academicYears, setAcademicYears] = useState<AcademicYear[]>([]);
   const [categories, setCategories] = useState<StudentCategory[]>([]);
   const [guardians, setGuardians] = useState<Guardian[]>([]);
@@ -829,6 +925,15 @@ export function StudentAddPanel() {
   const [photo, setPhoto] = useState("");
   const [photoName, setPhotoName] = useState("");
   const [photoUploading, setPhotoUploading] = useState(false);
+  // `photo` holds the backend's absolute /media/... URL, which is served by
+  // apps.core.media_views.serve_media — auth-gated by JWT bearer token. A plain
+  // <img src={photo}> can never carry that header (browsers don't let you attach
+  // custom headers to an <img> request), so the request always came back 403
+  // before the browser ever got to render anything, regardless of any ownership
+  // check on the backend side — the thumbnail was failing at authentication, not
+  // ownership. Fetch it the same authenticated way every other API call does,
+  // then hand the browser a local blob: URL to actually render.
+  const [photoDisplayUrl, setPhotoDisplayUrl] = useState("");
   const [photoCleared, setPhotoCleared] = useState(false);
   const [photoPreviewOpen, setPhotoPreviewOpen] = useState(false);
   const [capturedPhotoFile, setCapturedPhotoFile] = useState<File | null>(null);
@@ -866,6 +971,7 @@ export function StudentAddPanel() {
   const [currentMedications, setCurrentMedications] = useState("");
   const [treatingDoctor, setTreatingDoctor] = useState("");
   const [checkedVaccinations, setCheckedVaccinations] = useState<string[]>([]);
+  const [suggestedVaccinations, setSuggestedVaccinations] = useState<string[]>([]);
   const [sectionLater, setSectionLater] = useState(false);
   const [sectionsSummary, setSectionsSummary] = useState<Array<{ section_id: number; name: string; count: number; capacity: number }>>([]);
   const [reviewConfirmed, setReviewConfirmed] = useState(false);
@@ -986,6 +1092,13 @@ export function StudentAddPanel() {
   const admissionNoInitRequestedRef = useRef(false);
   // A1: prevents re-entrant submit from triggering an effect-state cycle.
   const isSubmittingRef = useRef(false);
+  // The real reason the last autoSaveStudentDraft() call failed (e.g. the backend's
+  // "Selected DOB does not match the required age range" rejection). Callers like
+  // uploadDocumentFile need this to show a self-contained, specific error on the
+  // document card — the toast autoSaveStudentDraft fires alongside it is transient
+  // and gone by the time anyone reads the card (see the generic "see the
+  // notification above" message this replaced).
+  const lastAutoSaveErrorRef = useRef<string>("");
 
   // Track newly created student ID so documents can be uploaded immediately after creation
   const [newlyCreatedStudentId, setNewlyCreatedStudentId] = useState<number | null>(null);
@@ -1206,21 +1319,6 @@ export function StudentAddPanel() {
     setPendingGuardianHydrationId("");
   }, [pendingGuardianHydrationId, guardians]);
 
-  // FIX 9: B-40 — pre-fill emergency contact from primary guardian when fields are empty
-  useEffect(() => {
-    const name = guardianDrafts[0]?.fullName?.trim() || "";
-    const ph = guardianDrafts[0]?.phone?.trim() || "";
-    if (name && (!emergencyName || emergencyName.length <= 1)) {
-      setEmergencyName(name);
-      setEmergencyCopiedFromGuardian(true);
-    }
-    if (ph && isValidPhone(ph) && (!emergencyPhone || emergencyPhone.length <= 1)) {
-      setEmergencyPhone(ph);
-      setEmergencyCopiedFromGuardian(true);
-    }
-  // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [guardianDrafts[0]?.fullName, guardianDrafts[0]?.phone]);
-
   // TODO 12: Detect form changes and set draft status to unsaved
   useEffect(() => {
     if (draftSaveStatus === 'saved') {
@@ -1284,15 +1382,15 @@ export function StudentAddPanel() {
   };
 
   const completedProgressFields = progressFields.filter(isProgressFieldFilled).length;
-  // Progress: same 12-field check used in requiredCompletionPct (so footer and modal agree)
-  const footerProgressPercent = Math.round(([
-    Boolean(firstName.trim()), Boolean(lastName.trim()), Boolean(dateOfBirth), Boolean(gender),
-    Boolean(classId), Boolean(sectionId || sectionLater),
-    Boolean(phone.trim() && /^\d{10}$/.test(phone.trim())),
-    Boolean(addressLine.trim()), Boolean(pincode.trim() && /^\d{6}$/.test(pincode.trim())),
-    Boolean(guardianDrafts?.[0]?.fullName?.trim()), Boolean(guardianDrafts?.[0]?.phone?.trim()),
-    Boolean(consentChecked),
-  ].filter(Boolean).length / 12) * 100);
+  // Single shared definition — see computeCompletionPercent — so the footer bar,
+  // the AI Assist modal, and the Drafts panel can never disagree on this record.
+  const footerProgressPercent = computeCompletionPercent({
+    firstName, lastName, dateOfBirth, gender, classId, sectionId, sectionLater,
+    phone, addressLine, pincode,
+    guardianFullName: guardianDrafts?.[0]?.fullName,
+    guardianPhone: guardianDrafts?.[0]?.phone,
+    consentChecked,
+  });
   const footerProgressBucket = Math.min(100, Math.floor(footerProgressPercent / 10) * 10);
   const footerProgressClass = `progress-fill-${footerProgressBucket}`;
 
@@ -1824,32 +1922,16 @@ export function StudentAddPanel() {
     }
   };
 
-  const lookupPincodeViaPostalApi = async (pin: string) => {
-    if (!/^\d{6}$/.test(pin)) return;
-    if (stateName) return; // backend already populated
-    try {
-      setPinLookupMessage("Looking up pincode…");
-      const res = await fetch(`https://api.postalpincode.in/pincode/${pin}`);
-      if (!res.ok) { setPinLookupMessage(""); return; }
-      const json = await res.json() as Array<{ PostOffice?: Array<{ State?: string; District?: string; Name?: string }> }>;
-      const po = json?.[0]?.PostOffice?.[0];
-      if (!po) { setPinLookupMessage(""); return; }
-      const s = String(po.State || "").trim();
-      const d = String(po.District || "").trim();
-      const c = String(po.Name || "").trim();
-      if (s) {
-        setStateName(s);
-        setDistrict(d);
-        setCity(c);
-        updateStateCityMap(s, [c]);
-        setCityOptions([c]);
-        setPinLookupMessage("Address auto-filled from PIN code.");
-      } else {
-        setPinLookupMessage("");
-      }
-    } catch {
-      setPinLookupMessage("");
-    }
+  // Previously this also fired a second, independent pincode lookup straight to
+  // api.postalpincode.in from the browser on blur, racing the debounced backend
+  // lookup below — whichever of the two resolved last silently overwrote the
+  // other's State/District/City, which is what QA saw as "City fills correctly
+  // but a previously-selected State resets to blank and District clears." The
+  // backend endpoint is the single source of truth (it already validates
+  // state+district are present, caches results, etc.), so blur now just asks
+  // it to run immediately instead of waiting out the debounce — no second path.
+  const lookupPincodeOnBlur = (pin: string) => {
+    void lookupAddressByPincode(pin);
   };
 
   const initializeAdmissionNo = async (force = false) => {
@@ -2035,25 +2117,37 @@ export function StudentAddPanel() {
       setClassAgeWarning("");
       return;
     }
+    // This used to look up CLASS_AGE_RULES_STRICT by the class's exact name
+    // ("1", "2", … "LKG") — but real class names in this app are always
+    // "Grade 1".."Grade 12" / "LKG" / "UKG" / "Nursery" (see Class.class_names,
+    // backend/apps/core/models.py), so that lookup was undefined for every
+    // real class, every time, and this warning silently never fired for
+    // anyone — which is why the backend's own age-vs-class rejection kept
+    // showing up on the Documents step no matter what DOB/class was picked;
+    // nothing upstream (step navigation, the pre-upload check) had a real
+    // warning to block on. Extract the grade number the same way the backend
+    // does (regex digits out of the name) and use the exact same integer
+    // CLASS_AGE_RULES table + "age as of today" calculation as the backend's
+    // _validate_dob_for_class, so the two can never disagree again.
     const selectedClass = orderedClasses.find((item) => String(item.id) === classId);
     const className = String(selectedClass?.name || "").trim();
-    const rule = CLASS_AGE_RULES_STRICT[className];
+    const classMatch = className.match(/\d+/);
+    const classNumber = classMatch ? Number(classMatch[0]) : null;
+    const rule = classNumber ? CLASS_AGE_RULES[classNumber] : null;
     if (!rule) {
       setClassAgeWarning("");
       return;
     }
     const dobDate = new Date(`${dateOfBirth}T00:00:00`);
     if (Number.isNaN(dobDate.getTime())) return;
-    const yearName = String(validAcademicYears.find((item) => String(item.id) === academicYearId)?.name || "");
-    const refYear = /^\d{4}/.test(yearName) ? Number(yearName.slice(0, 4)) : new Date().getFullYear();
-    const refDate = new Date(`${refYear}-06-01T00:00:00`);
-    const age = (refDate.getTime() - dobDate.getTime()) / (365.25 * 24 * 60 * 60 * 1000);
-    if (age < rule.min || age > rule.max) {
-      setClassAgeWarning(`Age-class mismatch: expected ${rule.min}-${rule.max} years for this grade.`);
+    const age = (Date.now() - dobDate.getTime()) / (365.25 * 24 * 60 * 60 * 1000);
+    const [minAge, maxAge] = rule;
+    if (age < minAge || age > maxAge) {
+      setClassAgeWarning(`Age-class mismatch: expected ${minAge}-${maxAge} years for this grade.`);
       return;
     }
     setClassAgeWarning("");
-  }, [dateOfBirth, classId, academicYearId, orderedClasses, validAcademicYears]);
+  }, [dateOfBirth, classId, orderedClasses]);
 
   useEffect(() => {
     let cancelled = false;
@@ -2169,15 +2263,22 @@ export function StudentAddPanel() {
     if (!primary) return;
     const name = primary.fullName?.trim() || "";
     const ph = primary.phone?.trim() || "";
-    if (!emergencyName && name) {
+    // Re-run on every keystroke of the guardian's name (guardianDrafts changes as the
+    // admin types), so `!emergencyName` alone only lets the very first character
+    // through — after that emergencyName is non-empty and the guard blocks every
+    // later keystroke, permanently stranding the field at 1-2 characters (QA: guardian
+    // "Ramesh Sharma" copied in as just "Ra"). Mirror the guardian's name/phone as long
+    // as the user hasn't manually overridden it (`emergencyCopiedFromGuardian` flips to
+    // false on manual edit — see the input's onChange below), not just while it's empty.
+    if (name && (!emergencyName || emergencyCopiedFromGuardian)) {
       setEmergencyName(name);
       setEmergencyCopiedFromGuardian(true);
     }
-    if (!emergencyPhone && ph && isValidPhone(ph)) {
+    if (ph && isValidPhone(ph) && (!emergencyPhone || emergencyCopiedFromGuardian)) {
       setEmergencyPhone(ph);
       setEmergencyCopiedFromGuardian(true);
     }
-  }, [guardianDrafts, emergencyName, emergencyPhone]);
+  }, [guardianDrafts, emergencyName, emergencyPhone, emergencyCopiedFromGuardian]);
 
   // Phase C — runInferences: derive helpful defaults from class number
   useEffect(() => {
@@ -2190,11 +2291,25 @@ export function StudentAddPanel() {
       if (n <= 5) suggested.push("bcg", "opv", "dpt", "mmr");
       if (n >= 5 && n <= 8) suggested.push("tdap");
       if (n >= 6) suggested.push("hpv");
-      setCheckedVaccinations((prev) => Array.from(new Set([...prev, ...suggested])));
+      // These are age-typical vaccines, not a confirmed medical record — silently
+      // ticking the checkbox (as this used to do) meant e.g. HPV showed as
+      // "completed" for any class 6+ student purely from their grade, with no
+      // way to tell it apart from an admin's own confirmed entry (QA flagged
+      // this as a real risk of submitting inaccurate medical records). Surface
+      // it only as an unchecked hint; the admin must still tick it themselves.
+      setSuggestedVaccinations(suggested);
+    } else {
+      setSuggestedVaccinations([]);
     }
   }, [classId, orderedClasses]);
 
-  // Phase D — APAAR formatting and mock verification
+  // Phase D — APAAR ID format check only. This never actually calls APAAR/UDISE+
+  // or any government registry — it's a plain 12-digit length check behind a
+  // fake 700ms "verifying" delay. Any 12-digit string, including an obviously
+  // made-up one, used to come back labeled "✓ APAAR verified." (QA flagged this
+  // as accepting a false APAAR ID as verified). Since there's no real
+  // verification backend to call, this only ever claims a format check now —
+  // never a genuine verification against a government source.
   useEffect(() => {
     if (apaarRaw.length !== 12) {
       setApaarStatus("idle");
@@ -2203,7 +2318,7 @@ export function StudentAddPanel() {
     setApaarStatus("verifying");
     const timer = window.setTimeout(() => {
       setApaarStatus("verified");
-    }, 700);
+    }, 300);
     return () => window.clearTimeout(timer);
   }, [apaarRaw]);
 
@@ -2525,6 +2640,9 @@ export function StudentAddPanel() {
           setActiveNavSection(currentId as NavItemId);
           return false;
         }
+        // Age-vs-class mismatch is informational only (see classAgeWarning's inline
+        // display below on this step) — product decision: late admissions, repeated
+        // grades etc. are legitimate, so this must never block navigation or submit.
         break;
       case 2: // contact
         if (!phone.trim()) {
@@ -2794,6 +2912,10 @@ export function StudentAddPanel() {
       setSingleFieldError("admission_no", "Admission number should contain only letters and numbers");
       return false;
     }
+    if (!ADMISSION_NO_FORMAT_REGEX.test(value)) {
+      setSingleFieldError("admission_no", "Admission number must be in format ADM followed by 7-9 digits (e.g. ADM2026001)");
+      return false;
+    }
 
     try {
       setCheckingAdmission(true);
@@ -2864,7 +2986,6 @@ export function StudentAddPanel() {
       } else {
         const age = (now.getTime() - dobDate.getTime()) / (365.25 * 24 * 60 * 60 * 1000);
         if (age < 2) nextErrors.dob = "Student must be at least 2 years old";
-        // Age-class mismatch is advisory only (shown as classAgeWarning inline, not a blocker)
       }
     }
 
@@ -2876,6 +2997,7 @@ export function StudentAddPanel() {
 
     if (!classId) nextErrors.class = "Class is required";
     else if (!validClasses.some((row) => String(row.id) === classId)) nextErrors.class = "Please select a valid class";
+    // classAgeWarning is intentionally NOT added here — informational only, never blocks submit.
     if (!sectionNotRequired) {
       if (!sectionId) nextErrors.section = "Section is required";
       else if (!sections.some((item) => String(item.id) === sectionId)) nextErrors.section = "Selected section is invalid";
@@ -2960,6 +3082,21 @@ export function StudentAddPanel() {
     return nextErrors;
   };
 
+  // validationErrorList (shown on the Review step) is only ever written by
+  // validateClient() above, which previously only ran when the user clicked
+  // "Enroll student". That meant the list was a snapshot of whatever failed on
+  // the *last* submit attempt — if the user then went back, fixed things (e.g.
+  // uploaded the missing documents) and returned to Review without
+  // resubmitting, the same old error list was still sitting there looking like
+  // nothing had changed. Refresh it every time Review is actually opened so it
+  // always reflects the form's current state, not a stale submit attempt.
+  useEffect(() => {
+    if (activeNavSection === 'review') {
+      validateClient();
+    }
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [activeNavSection]);
+
   const syncApiFieldErrors = (apiError: ApiError) => {
     let source: Record<string, string | string[]> = apiError.details?.field_errors || {};
     if (Object.keys(source).length === 0 && apiError.details && typeof apiError.details === "object" && !Array.isArray(apiError.details)) {
@@ -3002,11 +3139,12 @@ export function StudentAddPanel() {
    * Mutates state: updates draft cards with resolved `linkedExistingId` after a successful POST.
    */
   const persistGuardianDrafts = async (): Promise<
-    { ok: true; primaryId: number | null; allLinks: Array<{ id: number; isPrimary: boolean }>; updatedDrafts: GuardianDraft[] }
+    { ok: true; primaryId: number | null; allLinks: Array<{ id: number; isPrimary: boolean }>; updatedDrafts: GuardianDraft[]; newlyCreatedIds: number[] }
     | { ok: false; cardErrors: GuardianFieldErrors[] }
   > => {
     const cardErrors: GuardianFieldErrors[] = guardianDrafts.map(() => ({}));
     const resolvedIds: (number | null)[] = guardianDrafts.map(() => null);
+    const newlyCreatedIds: number[] = [];
 
     // Validate synchronously first so we can short-circuit before any POST
     guardianDrafts.forEach((draft, idx) => {
@@ -3133,6 +3271,7 @@ export function StudentAddPanel() {
           { full_name: fullName, relation, phone, email, occupation },
         );
         resolvedIds[idx] = created.id;
+        newlyCreatedIds.push(created.id);
         updatedDrafts[idx] = {
           ...draft,
           linkedExistingId: created.id,
@@ -3161,9 +3300,63 @@ export function StudentAddPanel() {
     resolvedIds.forEach((id, idx) => {
       if (id != null) allLinks.push({ id, isPrimary: updatedDrafts[idx].isPrimary });
     });
-    return { ok: true, primaryId: primaryId ?? null, allLinks, updatedDrafts };
+    return { ok: true, primaryId: primaryId ?? null, allLinks, updatedDrafts, newlyCreatedIds };
   };
 
+  // Compensating rollback for the guardian-then-student two-request save: if the
+  // guardian POST(s) succeeded but the student create/finalize that follows fails,
+  // the newly created guardians would otherwise be left permanently orphaned in
+  // the database (confirmed in QA: guardian 201, student 500, guardian row stuck).
+  // Only ever called with ids created in THIS submit attempt, never a
+  // pre-existing/linked guardian, so this can't delete something still in use.
+  const rollbackNewlyCreatedGuardians = async (ids: number[]) => {
+    if (ids.length === 0) return;
+    await Promise.all(
+      ids.map((id) =>
+        apiDeleteJson(`/api/v1/students/guardians/${id}/`).catch((rollbackError) => {
+          console.error("Failed to roll back orphaned guardian after student save failure", id, rollbackError);
+        }),
+      ),
+    );
+  };
+
+
+  // Fetches `photo` (the backend's auth-gated /media/ URL) with the same Bearer
+  // token every other request uses, then exposes it to <img> tags as a local
+  // blob: URL — see the note on photoDisplayUrl's declaration for why a plain
+  // <img src={photo}> can never work here.
+  useEffect(() => {
+    if (!photo) {
+      setPhotoDisplayUrl("");
+      return;
+    }
+    // Camera-capture / freshly-picked-file flows may briefly hold a local
+    // blob:/data: URL before the upload resolves — those are already directly
+    // renderable, no auth involved, so pass them through untouched.
+    if (photo.startsWith("blob:") || photo.startsWith("data:")) {
+      setPhotoDisplayUrl(photo);
+      return;
+    }
+    let cancelled = false;
+    let objectUrl = "";
+    (async () => {
+      try {
+        const parsed = new URL(photo);
+        const response = await apiRequestWithRefreshResponse(`${parsed.pathname}${parsed.search}`, { silent401: true });
+        if (!response.ok) throw new Error(`Failed to load photo (${response.status})`);
+        const blob = await response.blob();
+        objectUrl = URL.createObjectURL(blob);
+        if (!cancelled) setPhotoDisplayUrl(objectUrl);
+      } catch (err) {
+        console.error("Failed to load student photo", err);
+        if (!cancelled) setPhotoDisplayUrl("");
+      }
+    })();
+    return () => {
+      cancelled = true;
+      if (objectUrl) URL.revokeObjectURL(objectUrl);
+    };
+  }, [photo]);
 
   const uploadStudentPhoto = async (file: File): Promise<boolean> => {
     if (!["image/jpeg", "image/png"].includes(file.type)) {
@@ -3324,14 +3517,22 @@ export function StudentAddPanel() {
     if (!snapshot.section_id || Number.isNaN(sectionIdNum) || sectionIdNum <= 0) missingFields.push("Section");
 
     if (missingFields.length > 0) {
-      showToast(`⚠️ Please complete Identity and Academic details before uploading documents. Missing: ${missingFields.join(", ")}`, "error");
+      const msg = `Please complete Identity and Academic details before uploading documents. Missing: ${missingFields.join(", ")}`;
+      lastAutoSaveErrorRef.current = msg;
+      showToast(`⚠️ ${msg}`, "error");
       return null;
     }
+
+    // Age-vs-class mismatch (classAgeWarning) is intentionally NOT checked here —
+    // informational only, never blocks the draft save. See its inline display on
+    // the Academic step.
 
     const admissionAvailable = await runAdmissionAvailabilityCheck(snapshot.admission_no);
     if (!admissionAvailable) {
       jumpToSection("identity");
-      showToast("⚠️ Admission number already exists. Please enter a unique admission number before uploading documents.", "error");
+      const msg = "Admission number already exists. Please enter a unique admission number before uploading documents.";
+      lastAutoSaveErrorRef.current = msg;
+      showToast(`⚠️ ${msg}`, "error");
       return null;
     }
 
@@ -3385,7 +3586,8 @@ export function StudentAddPanel() {
         const specific = admissionError.split(":").slice(1).join(":").trim() || "Admission number already exists";
         setSingleFieldError("admission_no", specific);
         jumpToSection("identity");
-        showToast(`❌ ${specific}. Please use a unique admission number.`, "error");
+        lastAutoSaveErrorRef.current = `${specific}. Please use a unique admission number.`;
+        showToast(`❌ ${lastAutoSaveErrorRef.current}`, "error");
         console.error("❌ Auto-save duplicate admission number:", err);
         return null;
       }
@@ -3393,6 +3595,7 @@ export function StudentAddPanel() {
       const errorMsg = fieldErrors.length > 0
         ? `Unable to save student record. ${fieldErrors[0]}`
         : (parseError(err) || "Failed to save student draft.");
+      lastAutoSaveErrorRef.current = errorMsg;
       showToast(`❌ ${errorMsg}`, "error");
       console.error("❌ Auto-save error:", err);
       return null;
@@ -3484,14 +3687,19 @@ export function StudentAddPanel() {
             ? "Please complete Academic section and select Class before uploading documents."
             : `Please complete required Identity fields first: ${missingFields.join(", ")}`;
           console.warn("❌ Identity fields incomplete:", missingFields);
-          
-          // Keep document cards stable and show a toast-driven validation message.
+
+          // Previously reset to "idle" here — the card ends up looking exactly
+          // like it did before the file was ever picked, with only an
+          // auto-dismissing toast as evidence anything happened. Reported by QA
+          // as "upload never registers in the UI, badge stays REQUIRED." Use the
+          // card's own "error" state instead so the reason stays visible on the
+          // card itself, not just in a toast that's easy to miss.
           setDocuments((prev) => ({
             ...prev,
             [documentType]: {
               ...prev[documentType as keyof typeof prev],
-              status: "idle" as DocumentStatus,
-              error: null,
+              status: "error" as DocumentStatus,
+              error: errorMsg,
             },
           }));
 
@@ -3501,19 +3709,24 @@ export function StudentAddPanel() {
 
         // Identity fields are complete - attempt auto-save
         try {
+          lastAutoSaveErrorRef.current = "";
           effectiveStudentId = await autoSaveStudentDraft();
 
           if (!effectiveStudentId) {
-            // autoSaveStudentDraft has already surfaced the precise reason
-            // (missing field, duplicate admission no, server error, etc.)
-            // via showToast. Bail out silently so we don't overwrite that
-            // helpful message with a generic "no student ID" warning.
+            // Previously this always showed the same generic "see the notification
+            // above" text on every card — but the toast autoSaveStudentDraft fires
+            // is transient, so by the time anyone actually reads a card (especially
+            // after 3 cards all failed back-to-back) the toast is long gone and
+            // every card looks identically, unhelpfully broken. Show the actual
+            // reason (e.g. "dob: Selected DOB does not match the required age
+            // range...") directly on the card instead.
+            const reason = lastAutoSaveErrorRef.current || "Could not save the student record before upload.";
             setDocuments((prev) => ({
               ...prev,
               [documentType]: {
                 ...prev[documentType as keyof typeof prev],
-                status: "idle" as DocumentStatus,
-                error: null,
+                status: "error" as DocumentStatus,
+                error: reason,
               },
             }));
             return;
@@ -3531,8 +3744,8 @@ export function StudentAddPanel() {
             ...prev,
             [documentType]: {
               ...prev[documentType as keyof typeof prev],
-              status: "idle" as DocumentStatus,
-              error: null,
+              status: "error" as DocumentStatus,
+              error: errorMsg,
             },
           }));
 
@@ -3966,12 +4179,16 @@ export function StudentAddPanel() {
         // the uniqueness check. Finalize that draft via PUT and flip
         // is_draft → false so it becomes a real enrolled student.
         const finalizePayload: StudentCreatePayload = { ...payload, is_draft: false };
-        await apiPutJson<{ message?: string }>(
+        const finalizeResponse = await apiPutJson<StudentCreateResponse>(
           `/api/v1/students/students/${newlyCreatedStudentId}/`,
           finalizePayload,
         );
         await persistFeePlan(newlyCreatedStudentId);
-        finishSuccessAsEnrollment("Student enrolled successfully");
+        finishSuccessAsEnrollment(
+          finalizeResponse?.warning
+            ? `Student enrolled successfully. ${finalizeResponse.warning}`
+            : "Student enrolled successfully",
+        );
       } else {
         // Fresh POST — no auto-save happened (user submitted without
         // uploading any documents first). Create the student, then reset
@@ -4010,6 +4227,21 @@ export function StudentAddPanel() {
         }, 900);
       }
     } catch (submitError) {
+      // The student create/finalize call above failed. If this was a brand-new
+      // enrollment (no pre-existing student, no auto-saved draft) and guardians
+      // were freshly created earlier in this same submit, they're now orphaned —
+      // roll them back so retrying doesn't keep piling up guardian rows with no
+      // linked student (see Critical QA finding: guardian 201, student 500).
+      if (!isEditMode && !newlyCreatedStudentId && persistResult.newlyCreatedIds.length > 0) {
+        void rollbackNewlyCreatedGuardians(persistResult.newlyCreatedIds);
+        setGuardianDrafts((prev) =>
+          prev.map((draft) =>
+            persistResult.newlyCreatedIds.includes(draft.linkedExistingId ?? -1)
+              ? { ...draft, linkedExistingId: null, original: undefined }
+              : draft,
+          ),
+        );
+      }
       const mappedErrors = syncApiFieldErrors(submitError as ApiError);
       setError(parseEnrollmentSaveError(submitError));
       jumpToFirstErrorSection(mappedErrors);
@@ -4134,7 +4366,7 @@ export function StudentAddPanel() {
               </div>
             </div>
             <div className="scan-actions">
-              <button type="button" className="scan-now">Scan now</button>
+              <button type="button" className="scan-now" onClick={() => setScanFillOpen(true)}>Scan now</button>
               <button type="button" className="scan-dismiss" onClick={dismissScanBanner}>X</button>
             </div>
           </div>
@@ -4161,15 +4393,25 @@ export function StudentAddPanel() {
                           data-target={item.id}
                           aria-current={activeNavSection === item.id ? "step" : undefined}
                         >
-                          <button 
-                            type="button" 
-                            className="nav-item-inner" 
-                            onClick={() => { 
-                              if (!isLocked && validateNavigationStep(activeNavSection, item.id as NavItemId)) {
-                                jumpToSection(item.id as NavItemId);
+                          <button
+                            type="button"
+                            className="nav-item-inner"
+                            onClick={() => {
+                              // Previously `disabled={isLocked}` on this button meant a click on a
+                              // locked step did nothing at all — the native disabled attribute stops
+                              // onClick (and validateNavigationStep, which surfaces the real blocking
+                              // error like "consent required") from ever running. Now the button stays
+                              // clickable so the user always sees *why* they can't move: either the
+                              // actual validation error on the current step, or an explicit "locked" toast.
+                              if (!validateNavigationStep(activeNavSection, item.id as NavItemId)) {
+                                return;
                               }
-                            }} 
-                            disabled={isLocked}
+                              if (isLocked) {
+                                showToast("Complete the previous step to unlock this section.", "error", 4000);
+                                return;
+                              }
+                              jumpToSection(item.id as NavItemId);
+                            }}
                             aria-disabled={isLocked ? "true" : undefined}
                             title={isLocked ? "Complete the previous step to unlock" : undefined}
                           >
@@ -4213,7 +4455,7 @@ export function StudentAddPanel() {
 
               <div className="photo-upload-block">
                 <button type="button" className={photo ? "photo-circle has-photo" : "photo-circle"} onClick={openStudentFilePicker}>
-                  {photo ? <img src={photo} alt="Student" /> : <><span className="camera-icon">+</span><span className="photo-label">ADD PHOTO</span></>}
+                  {photo ? <img src={photoDisplayUrl} alt="Student" /> : <><span className="camera-icon">+</span><span className="photo-label">ADD PHOTO</span></>}
                 </button>
                 <div className="photo-meta">
                   <p className="photo-title">Student photo</p>
@@ -4268,7 +4510,7 @@ export function StudentAddPanel() {
                     className={fieldErrors.admission_no ? "field-input error" : "field-input"}
                     value={admissionNo}
                     title="Admission number"
-                    placeholder={firstName.trim() ? "e.g. ADM20240001" : "Enter first name to generate"}
+                    placeholder={firstName.trim() ? "e.g. ADM2026001" : "Enter first name to generate"}
                     maxLength={12}
                     aria-describedby="admission_no-error"
                     onChange={(e) => {
@@ -4282,8 +4524,9 @@ export function StudentAddPanel() {
                       const normalized = sanitizeText(admissionNo).replace(/[\s-]/g, "").slice(0, 12);
                       setAdmissionNo(normalized);
                       setIsManualEdit(true);
-                      if (normalized.trim() && !/^ADM\d{8,10}$/.test(normalized)) {
-                        setSingleFieldError('admission_no', 'Admission number must be in format ADM followed by 8-10 digits (e.g. ADM20240001)');
+                      if (normalized.trim() && !ADMISSION_NO_FORMAT_REGEX.test(normalized)) {
+                        setSingleFieldError('admission_no', 'Admission number must be in format ADM followed by 7-9 digits (e.g. ADM2026001)');
+                        return;
                       }
                       void runAdmissionAvailabilityCheck(normalized);
                     }}
@@ -4324,7 +4567,7 @@ export function StudentAddPanel() {
               </div>
 
               <div className="grid-3 mt-20">
-                <div className="field-wrapper"><label className="field-label">Date of birth <span className="req">*</span></label><div style={{display:'flex',gap:6,alignItems:'center'}}><input type="text" placeholder="DD / MM / YYYY" maxLength={14} aria-describedby="dob-error" className={fieldErrors.dob ? "field-input error" : "field-input"} style={{letterSpacing:1,flex:1}} value={dobDisplay} onChange={(e) => { const raw = e.target.value.replace(/[^0-9]/g,''); const masked = toDobMask(raw); setDobDisplay(masked); const iso = parseDobMaskedToISO(masked); if (iso) { setDateOfBirth(iso); setSingleFieldError("dob",""); } }} onBlur={() => { if (dateOfBirth) { const dob = new Date(dateOfBirth); const now = new Date(); const ageyrs = (now.getTime()-dob.getTime())/(365.25*24*60*60*1000); if (ageyrs < 2) setSingleFieldError('dob','Student must be at least 2 years old'); else if (ageyrs > 25) setSingleFieldError('dob','Date of birth seems too old — please verify'); else setSingleFieldError('dob',''); } }} /><input type="date" title="Pick date" tabIndex={-1} style={{width:32,padding:0,border:'none',background:'transparent',cursor:'pointer',opacity:0.7}} value={dateOfBirth} min={(() => { const d=new Date(); d.setFullYear(d.getFullYear()-25); return d.toISOString().slice(0,10); })()} max={maxDobIso} onChange={(e) => { setDateOfBirth(e.target.value); setSingleFieldError("dob",""); }} /></div>{fieldErrors.dob ? <span id="dob-error" role="alert" aria-live="polite" className="error-msg">{fieldErrors.dob}</span> : null}</div>
+                <div className="field-wrapper"><label className="field-label">Date of birth <span className="req">*</span></label><div style={{display:'flex',gap:6,alignItems:'center'}}><input type="text" placeholder="DD / MM / YYYY" maxLength={14} aria-describedby="dob-error" className={fieldErrors.dob ? "field-input error" : "field-input"} style={{letterSpacing:1,flex:1}} value={dobDisplay} onChange={(e) => { const raw = e.target.value.replace(/[^0-9]/g,''); const masked = toDobMask(raw); setDobDisplay(masked); const iso = parseDobMaskedToISO(masked); if (iso) { setDateOfBirth(iso); setSingleFieldError("dob",""); } }} onBlur={() => { if (dateOfBirth) { const dob = new Date(dateOfBirth); const now = new Date(); const ageyrs = (now.getTime()-dob.getTime())/(365.25*24*60*60*1000); if (ageyrs < 2) setSingleFieldError('dob','Student must be at least 2 years old'); else if (ageyrs > 25) setSingleFieldError('dob','Date of birth seems too old — please verify'); else setSingleFieldError('dob',''); } }} /><input type="date" title="Pick date" tabIndex={-1} className="dob-picker-trigger" value={dateOfBirth} min={(() => { const d=new Date(); d.setFullYear(d.getFullYear()-25); return d.toISOString().slice(0,10); })()} max={maxDobIso} onChange={(e) => { setDateOfBirth(e.target.value); if (e.target.value) { const parts = e.target.value.split('-'); setDobDisplay(parts[2] + ' / ' + parts[1] + ' / ' + parts[0]); } else { setDobDisplay(""); } setSingleFieldError("dob",""); }} /></div>{fieldErrors.dob ? <span id="dob-error" role="alert" aria-live="polite" className="error-msg">{fieldErrors.dob}</span> : null}</div>
                 <div className="field-wrapper"><label className="field-label">Gender <span className="req">*</span></label><select aria-describedby="gender-error" className={fieldErrors.gender ? "field-select error" : "field-select"} title="Gender" value={gender} onChange={(e) => { setGender(e.target.value); setSingleFieldError('gender', ''); }} onBlur={() => { if (!gender) setSingleFieldError('gender','Gender is required'); }}><option value="">Select</option><option value="male">Male</option><option value="female">Female</option><option value="other">Other</option></select>{fieldErrors.gender ? <span id="gender-error" role="alert" aria-live="polite" className="error-msg">{fieldErrors.gender}</span> : null}</div>
                 <div className="field-wrapper"><label className="field-label">Blood group <span className="badge badge-optional">OPTIONAL</span></label><select className="field-select" title="Blood group" value={bloodGroup} onChange={(e) => setBloodGroup(e.target.value)}><option value="">Select</option>{"A+,A-,B+,B-,AB+,AB-,O+,O-".split(",").map((bg) => <option key={bg} value={bg}>{bg}</option>)}</select></div>
               </div>
@@ -4459,7 +4702,7 @@ export function StudentAddPanel() {
                 <div className="field-wrapper"><label className="field-label">Email <span className="badge badge-recommended">RECOMMENDED</span></label><input aria-describedby="email-error" className={fieldErrors.email ? "field-input error" : "field-input"} title="Student email" value={email} onChange={(e) => { setEmail(e.target.value); setSingleFieldError('email', ''); }} onBlur={(e) => { const val = e.target.value.trim(); if (val && !isValidEmail(val)) { setSingleFieldError('email', 'Enter a valid email address (e.g. parent@gmail.com)'); } }} placeholder="student@example.com" />{fieldErrors.email ? <span id="email-error" role="alert" aria-live="polite" className="error-msg">{fieldErrors.email}</span> : null}</div>
               </div>
               <div className="grid-2 mt-20">
-                <div className="field-wrapper"><label className="field-label">Pincode <span className="req">*</span></label><input aria-describedby="pincode-error" className={fieldErrors.pincode ? "field-input error" : "field-input"} title="Pincode" value={pincode} required minLength={6} maxLength={6} onChange={(e) => { setPincode(e.target.value.replace(/\D/g, "").slice(0, 6)); setSingleFieldError('pincode', ''); }} onBlur={() => { const trimmed = pincode.trim(); if (!trimmed) { setSingleFieldError('pincode', 'Pincode is required'); } else if (!/^[1-9]\d{5}$/.test(trimmed)) { setSingleFieldError('pincode', 'Enter a valid 6-digit Indian pincode'); } else { void lookupPincodeViaPostalApi(trimmed); } }} />{pinLookupLoading ? <p className="status-info" style={{ color: '#6c3ce1' }}>⏳ Looking up address…</p> : (pinLookupMessage ? <p className="status-info">{pinLookupMessage}</p> : null)}{fieldErrors.pincode ? <span id="pincode-error" role="alert" aria-live="polite" className="error-msg">{fieldErrors.pincode}</span> : null}</div>
+                <div className="field-wrapper"><label className="field-label">Pincode <span className="req">*</span></label><input aria-describedby="pincode-error" className={fieldErrors.pincode ? "field-input error" : "field-input"} title="Pincode" value={pincode} required minLength={6} maxLength={6} onChange={(e) => { setPincode(e.target.value.replace(/\D/g, "").slice(0, 6)); setSingleFieldError('pincode', ''); }} onBlur={() => { const trimmed = pincode.trim(); if (!trimmed) { setSingleFieldError('pincode', 'Pincode is required'); } else if (!/^[1-9]\d{5}$/.test(trimmed)) { setSingleFieldError('pincode', 'Enter a valid 6-digit Indian pincode'); } else { lookupPincodeOnBlur(trimmed); } }} />{pinLookupLoading ? <p className="status-info" style={{ color: '#6c3ce1' }}>⏳ Looking up address…</p> : (pinLookupMessage ? <p className="status-info">{pinLookupMessage}</p> : null)}{fieldErrors.pincode ? <span id="pincode-error" role="alert" aria-live="polite" className="error-msg">{fieldErrors.pincode}</span> : null}</div>
                 <div className="field-wrapper"><label className="field-label">Address line <span className="req">*</span></label><input aria-describedby="address_line-error" className={fieldErrors.address_line ? "field-input error" : "field-input"} title="Address line" value={addressLine} onChange={(e) => { setAddressLine(e.target.value.slice(0, 200)); setSingleFieldError("address_line", ""); }} onBlur={() => { if (!addressLine.trim()) { setSingleFieldError('address_line', 'Address is required'); } else if (addressLine.trim().length < 10) { setSingleFieldError('address_line', 'Please enter a complete address (at least 10 characters)'); } else { setSingleFieldError('address_line', ''); } }} />{fieldErrors.address_line ? <span id="address_line-error" role="alert" aria-live="polite" className="error-msg">{fieldErrors.address_line}</span> : null}</div>
               </div>
               <div className="grid-3 mt-20">
@@ -4576,7 +4819,7 @@ export function StudentAddPanel() {
                 </div>
                 <span className="section-counter">{getSectionCounter('apaar')}</span>
               </div>
-              <div className="apaar-tip">📋 Entering a valid APAAR ID auto-fills all matching fields across the form. Try <code>1234 5678 9012</code> to see it in action.</div>
+              <div className="apaar-tip">📋 This only checks that the APAAR ID is 12 digits — it is not verified against APAAR/UDISE+. Confirm the physical APAAR card or UDISE+ portal before relying on this ID.</div>
               <div className="grid-2 mt-20">
                 <div className="field-wrapper">
                   <label className="field-label">APAAR ID <span className="badge badge-optional">OPTIONAL</span></label>
@@ -4592,8 +4835,8 @@ export function StudentAddPanel() {
                     placeholder="1234 5678 9012"
                     maxLength={14}
                   />
-                  {apaarStatus === "verifying" ? <p className="status-info">Verifying APAAR…</p> : null}
-                  {apaarStatus === "verified" ? <p className="status-info" style={{ color: "#047857" }}>✓ APAAR verified.</p> : null}
+                  {apaarStatus === "verifying" ? <p className="status-info">Checking format…</p> : null}
+                  {apaarStatus === "verified" ? <p className="status-info" style={{ color: "#047857" }}>✓ Valid 12-digit format (not verified against APAAR/UDISE+).</p> : null}
                   {fieldErrors.apaar_id ? <p className="error-msg">{fieldErrors.apaar_id}</p> : null}
                 </div>
                 <div style={{ display: 'flex', gap: 8, alignItems: 'flex-end' }}>
@@ -4602,24 +4845,24 @@ export function StudentAddPanel() {
                     className="btn-upload-file"
                     style={{ marginBottom: 0 }}
                     disabled={apaarStatus === 'verifying' || !apaarRaw.trim()}
+                    title="Checks the ID is 12 digits — does not contact APAAR/UDISE+"
                     onClick={() => {
                       if (!apaarRaw.trim()) {
-                        setSingleFieldError('apaar_id', 'Please enter an APAAR ID before verifying.');
+                        setSingleFieldError('apaar_id', 'Please enter an APAAR ID before checking.');
+                        return;
+                      }
+                      if (apaarRaw.length !== 12) {
+                        setSingleFieldError('apaar_id', 'APAAR ID must be exactly 12 digits.');
                         return;
                       }
                       setApaarStatus('verifying');
                       window.setTimeout(() => {
-                        try {
-                          setApaarStatus('verified');
-                          setSingleFieldError('apaar_id', '');
-                        } catch {
-                          setApaarStatus('idle');
-                          setSingleFieldError('apaar_id', 'Could not verify. Please try again.');
-                        }
-                      }, 700);
+                        setApaarStatus('verified');
+                        setSingleFieldError('apaar_id', '');
+                      }, 300);
                     }}
                   >
-                    {apaarStatus === 'verifying' ? '⟳ Verifying…' : '✓ Verify & Fetch'}
+                    {apaarStatus === 'verifying' ? '⟳ Checking…' : 'Check format'}
                   </button>
                   <button type="button" className="btn-upload-file" style={{ marginBottom: 0 }}>Generate new</button>
                 </div>
@@ -4776,9 +5019,12 @@ export function StudentAddPanel() {
                 <p className="field-label">Vaccinations completed</p>
                 <div style={{ display: "flex", flexWrap: "wrap", gap: 12, marginTop: 8 }}>
                   {COMMON_VACCINATIONS.map((v) => (
-                    <label key={v.id} style={{ display: "inline-flex", alignItems: "center", gap: 6, fontSize: 13 }}>
+                    <label key={v.id} style={{ display: "inline-flex", alignItems: "center", gap: 6, fontSize: 13 }} title={!checkedVaccinations.includes(v.id) && suggestedVaccinations.includes(v.id) ? "Typically given at this age — confirm with the parent before ticking" : undefined}>
                       <input type="checkbox" checked={checkedVaccinations.includes(v.id)} onChange={(e) => setCheckedVaccinations((prev) => e.target.checked ? Array.from(new Set([...prev, v.id])) : prev.filter((x) => x !== v.id))} />
                       {v.label}
+                      {!checkedVaccinations.includes(v.id) && suggestedVaccinations.includes(v.id) ? (
+                        <span style={{ color: "#9ca3af", fontSize: 11, fontStyle: "italic" }}>(suggested)</span>
+                      ) : null}
                     </label>
                   ))}
                 </div>
@@ -5285,6 +5531,12 @@ export function StudentAddPanel() {
                 type="button"
                 onClick={() => {
                   setDraftSavedModalOpen(false);
+                  // The draft was just saved, so there's nothing unsaved left to warn
+                  // about — without this, the beforeunload guard (isFormDirty is still
+                  // true here; nothing clears it before this navigation) throws up the
+                  // native "Leave site?" confirmation, which looks like the button does
+                  // nothing if it's dismissed or not noticed.
+                  bypassUnloadGuardRef.current = true;
                   if (typeof window !== 'undefined') window.location.href = '/students/list';
                 }}
                 style={{ padding: '13px 24px', background: '#f3f4f6', color: '#374151', border: '1px solid #e5e7eb', borderRadius: 10, cursor: 'pointer', fontSize: 14, fontWeight: 600 }}
@@ -5476,7 +5728,7 @@ export function StudentAddPanel() {
             <button type="button" onClick={() => setPhotoPreviewOpen(false)} aria-label="Close photo preview" className="photo-preview-close">
               X
             </button>
-            <img src={photo} alt="Student full preview" className="photo-preview-image" />
+            <img src={photoDisplayUrl} alt="Student full preview" className="photo-preview-image" />
           </div>
         </div>
       ) : null}
@@ -5895,8 +6147,11 @@ export function StudentAddPanel() {
           onOcrApply={(results) => {
             if (results.firstName) setFirstName(results.firstName.charAt(0).toUpperCase() + results.firstName.slice(1).toLowerCase());
             if (results.lastName) setLastName(results.lastName.charAt(0).toUpperCase() + results.lastName.slice(1).toLowerCase());
-            if (results.dateOfBirth) setDateOfBirth(results.dateOfBirth);
-            if (results.gender) setGender(results.gender.charAt(0).toUpperCase() + results.gender.slice(1).toLowerCase());
+            if (results.dateOfBirth) {
+              const normalizedDob = normalizeExtractedDob(results.dateOfBirth);
+              if (normalizedDob) setDateOfBirth(normalizedDob);
+            }
+            if (results.gender) setGender(normalizeExtractedGender(results.gender));
             if (results.bloodGroup) setBloodGroup(results.bloodGroup.toUpperCase());
             if (results.religion) setReligion(results.religion.charAt(0).toUpperCase() + results.religion.slice(1).toLowerCase());
             if (results.nationality) setNationality(results.nationality.charAt(0).toUpperCase() + results.nationality.slice(1).toLowerCase());
@@ -5938,8 +6193,11 @@ export function StudentAddPanel() {
           onApply={(results) => {
             if (results.firstName) setFirstName(results.firstName.charAt(0).toUpperCase() + results.firstName.slice(1).toLowerCase());
             if (results.lastName) setLastName(results.lastName.charAt(0).toUpperCase() + results.lastName.slice(1).toLowerCase());
-            if (results.dateOfBirth) setDateOfBirth(results.dateOfBirth);
-            if (results.gender) setGender(results.gender.charAt(0).toUpperCase() + results.gender.slice(1).toLowerCase());
+            if (results.dateOfBirth) {
+              const normalizedDob = normalizeExtractedDob(results.dateOfBirth);
+              if (normalizedDob) setDateOfBirth(normalizedDob);
+            }
+            if (results.gender) setGender(normalizeExtractedGender(results.gender));
             if (results.bloodGroup) setBloodGroup(results.bloodGroup.toUpperCase());
             if (results.religion) setReligion(results.religion.charAt(0).toUpperCase() + results.religion.slice(1).toLowerCase());
             if (results.nationality) setNationality(results.nationality.charAt(0).toUpperCase() + results.nationality.slice(1).toLowerCase());
@@ -6010,12 +6268,20 @@ export function StudentAddPanel() {
               }
 
               const computeDraftStats = (data: Record<string, unknown>) => {
-                // Use maxReachedIdx (same as form progress) so card % matches what user sees on resume
-                const savedMaxIdx = typeof data.maxReachedIdx === 'number' ? data.maxReachedIdx : -1;
-                const totalSteps = NAV_ITEMS.length - 1; // exclude review
-                const pct = savedMaxIdx >= 0
-                  ? Math.min(99, Math.round(((savedMaxIdx + 1) / totalSteps) * 100))
-                  : 0;
+                // Same computeCompletionPercent used by the footer bar and AI Assist
+                // modal — this used to derive % from how far the sidebar had been
+                // clicked through (and cap it at 99% "until finalized"), so a draft
+                // that was actually field-complete still showed 99% here while the
+                // footer showed 100% for the same data (QA #8).
+                const guardianDraftsArr = Array.isArray(data.guardianDrafts) ? data.guardianDrafts as Array<Record<string, unknown>> : [];
+                const pct = computeCompletionPercent({
+                  firstName: data.firstName, lastName: data.lastName, dateOfBirth: data.dateOfBirth,
+                  gender: data.gender, classId: data.classId, sectionId: data.sectionId,
+                  phone: data.phone, addressLine: data.addressLine, pincode: data.pincode,
+                  guardianFullName: guardianDraftsArr[0]?.fullName,
+                  guardianPhone: guardianDraftsArr[0]?.phone,
+                  consentChecked: data.consentChecked,
+                });
                 const missing: string[] = [];
                 if (!data.firstName || !data.lastName) missing.push('Name');
                 if (!data.dateOfBirth) missing.push('DOB');
@@ -6142,9 +6408,10 @@ export function StudentAddPanel() {
       )}
 
       {aiOpen && (() => {
-        const completedSteps = NAV_ITEMS.filter(i => i.id !== 'review' && isStepComplete(i.id)).length;
-        const totalSteps = NAV_ITEMS.length - 1;
-        const overallPct = Math.round((completedSteps / totalSteps) * 100);
+        // Reuses the exact same value as the footer progress bar (computeCompletionPercent)
+        // instead of the step-count formula this used to compute independently — the two
+        // disagreeing (e.g. 100% footer vs 60% here for the same record) was QA finding #8.
+        const overallPct = footerProgressPercent;
 
         const tips: Array<{ icon: string; title: string; body: string; tone: 'info' | 'warn' | 'success'; action?: { label: string; run: () => void } }> = [];
 
@@ -6195,7 +6462,6 @@ export function StudentAddPanel() {
                 <div className="ai-summary-left">
                   <p className="ai-summary-label">Overall completion</p>
                   <p className="ai-summary-pct">{overallPct}%</p>
-                  <p className="ai-summary-hint">{completedSteps} of {totalSteps} steps done</p>
                 </div>
                 <div className="ai-summary-ring" data-pct={overallPct} aria-hidden="true">
                   <svg width="76" height="76" viewBox="0 0 76 76">
@@ -6842,6 +7108,37 @@ export function StudentAddPanel() {
           box-sizing: border-box;
           appearance: auto;
           -webkit-appearance: menulist;
+        }
+
+        /* Icon-only calendar trigger next to the masked DOB text input. Squeezing
+           a native <input type="date"> down to 32px doesn't shrink its internal
+           "mm/dd/yyyy" placeholder sub-fields below their natural width — with a
+           transparent background and no border, that overflowing placeholder text
+           had no opaque backing and rendered as ghosted letters bleeding through
+           (QA: "DOB calendar background issue showing alphabets"). Hiding the
+           text sub-fields entirely and keeping only the picker icon fixes this
+           without needing the box to be wide enough to fit real date text.
+        */
+        .dob-picker-trigger {
+          width: 32px;
+          height: 100%;
+          padding: 0;
+          border: none;
+          background: #fff;
+          cursor: pointer;
+          color: transparent;
+        }
+        .dob-picker-trigger::-webkit-datetime-edit,
+        .dob-picker-trigger::-webkit-datetime-edit-fields-wrapper,
+        .dob-picker-trigger::-webkit-datetime-edit-text,
+        .dob-picker-trigger::-webkit-datetime-edit-month-field,
+        .dob-picker-trigger::-webkit-datetime-edit-day-field,
+        .dob-picker-trigger::-webkit-datetime-edit-year-field {
+          display: none;
+        }
+        .dob-picker-trigger::-webkit-calendar-picker-indicator {
+          opacity: 0.7;
+          cursor: pointer;
         }
 
         .field-input:focus,

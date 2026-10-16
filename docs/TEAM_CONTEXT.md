@@ -1,5 +1,48 @@
 ﻿# TEAM_CONTEXT — Eskoolia ERP (Combined)
 
+## Update: Claude (08/10/2026): Library module, build complete (branch `library-r`)
+
+**Area:** Library (admin console, teacher portal, parent portal). 13 build prompts, one commit each, never pushed. Full detail: `docs/LIBRARY_PROGRESS.md` (decisions 1 to 123, release steps), `docs/LIBRARY_AUDIT.md` (security and quality audit, every row tied to a test), `docs/LIBRARY_MODULE_BLUEPRINT.md` (the design).
+
+### What was built
+
+**Backend (`backend/apps/library/`, plus `teacher_portal/library_views.py`, `parent_portal/library_views.py`)**
+- Catalogue: categories, titles, copies, accession codes (`LIB-<CAT>-<NNNN>`, copies `/C<n>`), bulk import, withdraw, labels. Legacy rows are backfilled by migrations 0004 and 0010.
+- Members and money: members (student, teacher, staff), registration fee, overdue fines, replacement fees, waive and collect, dues and suspension rules, per-school settings (D1 to D6, D17).
+- Circulation: issue (bulk to a class too), return with fine, renew, undo, holds, lost and damaged reports. Row locks on copy, member and loan; one open loan per copy is a database index.
+- Acquisitions: purchase orders and donations (auto-numbered), annual budget and summary, teacher book-request queue. Donor contact is returned only with `library.donations.view` and is never logged.
+- Periods and occupancy: library period slots with conflict detection, week grid, live occupancy, check-in, footfall, prep briefing; Celery task that flags unscanned students to the class teacher once per slot per day.
+- Stock check: snapshot of on-shelf copies, tick, finish (frozen counts and value at risk), cancel, mark missing copies lost.
+- Oversight: activity feed, capped and sanitised CSV export (logged), four reports.
+- Notifications: `hold_ready`, `overdue_reminder`, `replacement_fee`, `request_reviewed`, `unscanned_flag` through Celery to `CommunicationNotification` rows plus a WebSocket push of kind `library`.
+- 54 library permission codes (including the four legacy view codes) seeded in `seed_permissions.py`, an explicit library tier map in `seed_module_tiers.py`.
+
+**Frontend**
+- Librarian: `/library/console`, `catalogue`, `acquisitions`, `periods`, `issue-desk`, `lost-damaged`, `members`, `transactions`, `reports`, `stock-check`, `settings` (components in `frontend/components/library/`, one hook file `hooks/useLibraryApi.ts`).
+- Teacher: Library module (My Class, My Books, Recommend) in `lib/teacher-routes.ts`, pages under `app/(teacher-portal)/teacher/library/`.
+- Parent: `/parent/library` (Current and Due) and `/parent/library/history`, replacing the placeholder item that pointed at `/parent/home`.
+
+### What was NOT built or not finished
+- **No tightening migration** (category and loan copy required): a loan with no copy is normal for returned loans that predate copies, and the real data was never read. `library_reconcile` now reports what blocks it.
+- **Migration 0014 (drops the old `quantity` columns) is written but must be applied after a backup.**
+- **Role templates (D12)** were not rewritten: `seed_role_templates.py` still gives Teaching Staff and Class Teacher `library: view`. `library_role_report` lists roles that lost write access.
+- **`TENANT_FEATURE_GATES` does not exist**, so the library paths are not feature-gated.
+- **Check-ins are not in the activity feed**; no email or SMS to donors; the parent portal is read only; the period slot form cannot set a supervisor; the teacher's several class sections are not distinguished on a request.
+- Four Postgres-only race tests are skipped on SQLite and unverified. Nothing was checked in a browser, with a real login, a Celery worker, beat, Redis or a WebSocket.
+
+### Known issues and things to watch
+- **Running pytest without `DATABASE_URL_TEST` set to a SQLite URL makes the suite connect to the Postgres URL in `backend/.env`** and try to create `neondb_test_local` on that server. Always set `DATABASE_URL_TEST=sqlite:///test_library.sqlite3` and use `--nomigrations --create-db`.
+- **Celery beat:** `django_celery_beat` is in `requirements/base.txt` and `docker-compose.yml` starts beat with its `DatabaseScheduler`, but the app is not in `INSTALLED_APPS` in any settings file, so that scheduler cannot work as configured. The library's every-minute task is declared in `config/celery.py`; start beat without the `--scheduler` flag, or install and migrate `django_celery_beat` and run `python manage.py library_register_periodic_tasks`.
+- `frontend/components/layout/sidebar-menu.data.ts` still lists the old Library entries (Book Categories, Books, Library Members, Book Issues). The routes redirect for one release; remove the redirect pages and these entries next release.
+- The books list API no longer returns `quantity` or `available_quantity`; use `copies_total` and `copies_available`.
+- Pre-existing, not caused by the library work: 40 failing and 23 erroring tests in `backend/tests/` (stale fixtures such as `Student(admission_number=...)`), 13 `tsc` errors under `frontend/app/(dashboard)/exams/`, 7 ESLint errors in `hr/leave` and `academics/timetable`. The same failures occur on the base commit.
+
+### Shared tier-seeding problem (affects other modules, not fixed)
+`seed_module_tiers.classify()` decides a code's tier from patterns such as `.view_` and `_create$`. Dot-style codes like `library.books.view` and `library.books.create` match none of them, so **every dot-style code lands in the FULL tier**, and a role given the view, operate or manage tier for such a module ends up with an empty set. This is true for any module that uses dot-style codes, not only the library. The library avoids it with its own explicit map (`classify_library`, blueprint 3.7); `classify()` was left alone for the other modules (a test, `test_tiers.py::test_other_modules_keep_the_old_classifier`, pins that). The owner of each other module should check which of their codes are affected before relying on tiers.
+
+### How to apply it
+See "Release steps" in `docs/LIBRARY_PROGRESS.md`: back up, `migrate library 0013_periods_stock`, `library_reconcile`, back up again, `migrate library`, `seed_permissions`, `seed_module_tiers`, `seed_role_templates`, `library_role_report`, `library_register_periodic_tasks` (if beat is installed), then run the Celery worker, beat and Redis.
+
 ## Update — GitHub Copilot (31/07/2026 — Session 2)
 
 **Area:** Document Branding settings — full feature build, advanced UI, and live preview

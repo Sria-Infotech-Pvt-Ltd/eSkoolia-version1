@@ -1,5 +1,6 @@
-import { LibraryIssuesPanel } from "@/components/library/LibraryPanels";
+import { redirect } from "next/navigation";
 
-export default function LibraryIssuesPage() {
-  return <LibraryIssuesPanel />;
+// Replaced by /library/issue-desk. Kept for one release so bookmarks and the old menu entries still work.
+export default function LibraryIssuesRedirect() {
+  redirect("/library/issue-desk");
 }

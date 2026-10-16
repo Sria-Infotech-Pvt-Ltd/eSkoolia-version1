@@ -615,6 +615,16 @@ class VehicleSerializer(serializers.ModelSerializer):
         ]
         read_only_fields = ["id", "school", "academic_year", "created_at", "updated_at"]
 
+    def validate(self, attrs):
+        request = self.context.get("request")
+        user = getattr(request, "user", None)
+        if user is not None:
+            school_id = getattr(user, "school_id", None)
+            driver = attrs.get("driver") or getattr(self.instance, "driver", None)
+            if driver is not None and driver.school_id != school_id:
+                raise serializers.ValidationError({"driver": "Invalid driver."})
+        return attrs
+
 
 class TransportRouteSerializer(serializers.ModelSerializer):
     class Meta:
@@ -925,6 +935,8 @@ class HolidaySerializer(serializers.ModelSerializer):
             raise serializers.ValidationError("Holiday name must be at least 2 characters.")
         if len(cleaned) > 120:
             raise serializers.ValidationError("Holiday name must be 120 characters or less.")
+        if not re.fullmatch(r"[A-Za-z\s'.-]+", cleaned):
+            raise serializers.ValidationError("Holiday name can only contain letters, spaces, and '.- characters.")
         if len(set(cleaned.replace(" ", "").lower())) == 1 and len(cleaned.replace(" ", "")) >= 2:
             raise serializers.ValidationError("Please enter a real holiday name.")
         return cleaned

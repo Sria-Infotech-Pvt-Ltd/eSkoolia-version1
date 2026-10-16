@@ -1,6 +1,7 @@
 "use client";
 
 import { useEffect, useMemo, useRef, useState } from "react";
+import { useRouter } from "next/navigation";
 import {
   AlertTriangle,
   Calendar,
@@ -165,7 +166,7 @@ export default function TimetableWorkspace() {
       </div>
 
       {tab === "config"  && <ConfigureHoursTab  academicYearId={currentYear?.id ?? null} showToast={showToast} />}
-      {tab === "class"   && <ClassTimetableTab  sections={allSections} subjects={subjects} academicYearId={currentYear?.id ?? null} showToast={showToast} />}
+      {tab === "class"   && <ClassTimetableTab  sections={allSections} subjects={subjects} academicYearId={currentYear?.id ?? null} showToast={showToast} onSwitchToConfigureHours={() => setTab("config")} />}
       {tab === "teacher" && <TeacherScheduleTab subjects={subjects} allSections={allSections} />}
       {tab === "clash"   && <ClashReportTab     sections={allSections} subjects={subjects} academicYearId={currentYear?.id ?? null} showToast={showToast} />}
 
@@ -338,13 +339,15 @@ function Field({ label, children }: { label: string; children: React.ReactNode }
 // Class Timetable tab  ★ fully redesigned with dynamic breaks
 // ─────────────────────────────────────────────────────────────────────────────
 function ClassTimetableTab({
-  sections, subjects, academicYearId, showToast,
+  sections, subjects, academicYearId, showToast, onSwitchToConfigureHours,
 }: {
   sections: (Section & { className: string; level?: string | null })[];
   subjects: Subject[];
   academicYearId: number | null;
   showToast: (m: string, t?: "success" | "error") => void;
+  onSwitchToConfigureHours: () => void;
 }) {
+  const router = useRouter();
   const [sectionId,    setSectionId]   = useState<number | null>(null);
   const [levelFilter,  setLevelFilter] = useState<string>("all");
   const { periods }  = useClassPeriods();
@@ -510,7 +513,27 @@ function ClassTimetableTab({
         </div>
       ) : columns.filter((col) => col.kind === "period").length === 0 ? (
         <div className="rounded-xl border border-[#FEF3C7] bg-[#FFFBEB] px-4 py-4 text-[13px] text-[#B45309]">
-          No class periods configured yet — add them under Configure Hours first.
+          <p className="mb-2">
+            No class periods configured yet. &quot;Configure Hours&quot; sets each level&apos;s working
+            hours, but the actual class-period slots this grid reads are defined
+            separately, under Setup.
+          </p>
+          <div className="flex gap-2 flex-wrap">
+            <button
+              type="button"
+              className="rounded-lg border border-[#B45309] px-3 py-1.5 text-[12px] font-semibold text-[#B45309] hover:bg-[#FEF3C7]"
+              onClick={() => router.push("/setup/class-periods")}
+            >
+              Go to Class Periods setup →
+            </button>
+            <button
+              type="button"
+              className="rounded-lg px-3 py-1.5 text-[12px] font-semibold text-[#B45309] underline"
+              onClick={onSwitchToConfigureHours}
+            >
+              Review Configure Hours
+            </button>
+          </div>
         </div>
       ) : (
         /* ══ TIMETABLE GRID ══ */

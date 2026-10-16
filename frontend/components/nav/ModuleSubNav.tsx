@@ -5,6 +5,7 @@ import { useRef, useState, useEffect, useCallback } from 'react';
 import { ChevronLeft, ChevronRight } from 'lucide-react';
 import { MODULES } from '@/lib/routes';
 import { usePermissions } from '@/hooks/usePermissions';
+import { useLostDamagedPending } from '@/hooks/useLostDamagedPending';
 
 const COMING_SOON_PATHS = new Set<string>([]);
 
@@ -26,6 +27,8 @@ export function ModuleSubNav() {
   const pathname = usePathname();
   const mod = findOwnerModule(pathname);
   const { can, canAnyPrefix } = usePermissions();
+  // Pending lost and damaged reports, shown as a count on the Library nav item. No request outside the Library module.
+  const lostPending = useLostDamagedPending(mod?.id === 'library' && can('library.lost_damaged.view'));
   const scrollRef = useRef<HTMLDivElement>(null);
   const [canScrollLeft, setCanScrollLeft] = useState(false);
   const [canScrollRight, setCanScrollRight] = useState(false);
@@ -184,6 +187,15 @@ export function ModuleSubNav() {
               >
                 {!mod.cleanTabs && <SubIcon size={12} strokeWidth={1.8} />}
                 {s.label}
+                {s.path === '/library/lost-damaged' && lostPending > 0 && (
+                  <span
+                    aria-label={`${lostPending} pending`}
+                    style={{
+                      fontSize: 10, fontWeight: 700, color: 'var(--bg-1)', background: 'var(--danger)',
+                      borderRadius: 999, padding: '1px 6px', marginLeft: 4, flexShrink: 0,
+                    }}
+                  >{lostPending > 99 ? '99+' : lostPending}</span>
+                )}
                 {showSoonBadge && (
                   <span style={{
                     fontSize: 10, fontWeight: 700, letterSpacing: '0.02em',

@@ -42,7 +42,8 @@ export const PARENT_MODULES: ModuleRoute[] = [
       { label: "Syllabus",   path: "/parent/syllabus",  icon: BookOpen     },
       { label: "Homework",   path: "/parent/homework",  icon: FileText     },
       { label: "Grades",     path: "/parent/results",   icon: Star         },
-      { label: "Library",    path: "/parent/home",      icon: BookOpen     },
+      { label: "Library",    path: "/parent/library",   icon: BookOpen     },
+      { label: "Library History", path: "/parent/library/history", icon: FileText },
     ],
   },
   {

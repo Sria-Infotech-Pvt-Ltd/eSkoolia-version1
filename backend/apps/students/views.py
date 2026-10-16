@@ -1478,6 +1478,10 @@ class StudentViewSet(TenantScopedModelViewSet):
             return None
         return self._validation_response(form.errors)
 
+    def _combine_warnings(self, *parts):
+        joined = "; ".join(p for p in parts if p)
+        return joined or None
+
     def create(self, request, *args, **kwargs):
         form_error_response = self._validate_with_model_form(request.data)
         if form_error_response:
@@ -1487,7 +1491,10 @@ class StudentViewSet(TenantScopedModelViewSet):
         if not serializer.is_valid():
             return self._validation_response(serializer.errors)
 
-        warning = self._duplicate_warning(serializer.validated_data)
+        warning = self._combine_warnings(
+            self._duplicate_warning(serializer.validated_data),
+            getattr(serializer, "_age_class_warning", None),
+        )
 
         try:
             self.perform_create(serializer)
@@ -1519,6 +1526,8 @@ class StudentViewSet(TenantScopedModelViewSet):
         if not serializer.is_valid():
             return self._validation_response(serializer.errors)
 
+        warning = getattr(serializer, "_age_class_warning", None)
+
         try:
             self.perform_update(serializer)
         except IntegrityError:
@@ -1528,6 +1537,7 @@ class StudentViewSet(TenantScopedModelViewSet):
             {
                 "success": True,
                 "message": "Student updated successfully",
+                "warning": warning,
                 "data": serializer.data,
             },
             status=status.HTTP_200_OK,
@@ -1923,6 +1933,10 @@ class StudentViewSet(TenantScopedModelViewSet):
 
     @action(detail=False, methods=["post"], url_path="upload-photo", parser_classes=[MultiPartParser, FormParser])
     def upload_photo(self, request):
+        school_id = request.user.school_id
+        if not school_id:
+            raise ValidationError("User school context is required.")
+
         image = request.FILES.get("photo")
         if not image:
             return Response(
@@ -1960,7 +1974,7 @@ class StudentViewSet(TenantScopedModelViewSet):
         if ext not in {".jpg", ".jpeg", ".png"}:
             ext = ".jpg" if image.content_type == "image/jpeg" else ".png"
 
-        relative_path = f"student_photos/{uuid4().hex}{ext}"
+        relative_path = f"student_photos/{school_id}/{uuid4().hex}{ext}"
         saved_path = default_storage.save(relative_path, image)
         normalized = str(saved_path).replace("\\", "/")
         media_prefix = settings.MEDIA_URL if settings.MEDIA_URL.endswith("/") else f"{settings.MEDIA_URL}/"

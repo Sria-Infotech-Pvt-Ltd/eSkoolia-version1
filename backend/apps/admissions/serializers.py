@@ -1725,3 +1725,26 @@ class AIGenerateResponseSerializer(serializers.Serializer):
     variant_b = serializers.CharField()
     prompt_used = serializers.CharField()
 
+
+# ──────────────────────────────────────────────────────────────────────────────
+# Campaign (Admissions -> Communication -> Campaigns)
+# ──────────────────────────────────────────────────────────────────────────────
+from .models import Campaign  # noqa: E402 – placed here to avoid circular import concerns
+
+
+class CampaignSerializer(serializers.ModelSerializer):
+    class Meta:
+        model = Campaign
+        fields = [
+            "id", "school", "name", "channel", "audience", "status",
+            "scheduled_for", "sent_at", "sent_count", "delivered_pct", "replies",
+            "created_by", "created_at", "updated_at",
+        ]
+        read_only_fields = ["id", "school", "sent_at", "sent_count", "delivered_pct", "replies", "created_by", "created_at", "updated_at"]
+
+    def validate_name(self, value):
+        cleaned = (value or "").strip()
+        if not cleaned:
+            raise serializers.ValidationError("Campaign name is required.")
+        return cleaned
+

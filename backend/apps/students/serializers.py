@@ -1,4 +1,5 @@
 from django.utils.html import strip_tags
+from django.db import transaction
 import re
 from datetime import date
 from rest_framework import serializers
@@ -839,9 +840,6 @@ class StudentSerializer(serializers.ModelSerializer):
     def validate_dob(self, value, selected_class=None):
         if value and value > date.today():
             raise serializers.ValidationError("Date of birth cannot be in the future")
-        dob_error = self._validate_dob_for_class(value, selected_class)
-        if dob_error:
-            raise serializers.ValidationError(dob_error)
         return value
 
     def validate(self, attrs):
@@ -857,12 +855,21 @@ class StudentSerializer(serializers.ModelSerializer):
                     errors[field] = message
 
         dob = attrs.get("date_of_birth") or getattr(self.instance, "date_of_birth", None)
+        # Age-vs-class mismatch: informational only, never blocks (product decision —
+        # late admissions, repeated grades, etc. are legitimate real cases). Was a
+        # hard reject here via validate_dob()/_validate_dob_for_class raising
+        # ValidationError; now just recorded on the instance so the view can surface
+        # it as a non-blocking "warning" in the success response (same pattern as
+        # _duplicate_warning), instead of rejecting the request outright.
+        self._age_class_warning = None
         if dob:
-            selected_class = attrs.get("current_class") or getattr(self.instance, "current_class", None)
             try:
-                self.validate_dob(dob, selected_class=selected_class)
+                self.validate_dob(dob)
             except serializers.ValidationError as exc:
                 errors["dob"] = str(exc.detail[0]) if isinstance(exc.detail, list) else str(exc.detail)
+            else:
+                selected_class = attrs.get("current_class") or getattr(self.instance, "current_class", None)
+                self._age_class_warning = self._validate_dob_for_class(dob, selected_class)
 
         selected_class = attrs.get("current_class") or getattr(self.instance, "current_class", None)
         selected_section = attrs.get("current_section") or getattr(self.instance, "current_section", None)
@@ -1001,8 +1008,16 @@ class StudentSerializer(serializers.ModelSerializer):
         validated_data["is_disabled"] = status_value in {"transferred", "dropped", "deleted"}
         validated_data["is_deleted"] = status_value == "deleted"
 
-        instance = super().create(validated_data)
-        self._sync_guardian_links(instance, self.initial_data.get("guardians"))
+        # Student row + guardian-link sync must land together: if the link sync
+        # fails partway (e.g. a bad guardian id, a DB error), a half-written
+        # student with no guardians attached is worse than no student at all.
+        # This does NOT cover the separate guardian-creation POST the frontend
+        # sends before this request — that remains its own transaction (see
+        # StudentAddPanel.tsx submit()'s compensating delete on student-create
+        # failure), but it does stop *this* endpoint from ever partially committing.
+        with transaction.atomic():
+            instance = super().create(validated_data)
+            self._sync_guardian_links(instance, self.initial_data.get("guardians"))
         return instance
 
     def update(self, instance, validated_data):
@@ -1010,8 +1025,9 @@ class StudentSerializer(serializers.ModelSerializer):
         validated_data["is_active"] = status_value == "active"
         validated_data["is_disabled"] = status_value in {"transferred", "dropped", "deleted"}
         validated_data["is_deleted"] = status_value == "deleted"
-        instance = super().update(instance, validated_data)
-        self._sync_guardian_links(instance, self.initial_data.get("guardians"))
+        with transaction.atomic():
+            instance = super().update(instance, validated_data)
+            self._sync_guardian_links(instance, self.initial_data.get("guardians"))
         return instance
 
     class Meta:

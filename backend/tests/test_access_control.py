@@ -15,7 +15,6 @@ class TestRoleModel:
         role = Role.objects.create(
             school=school,
             name="Class Teacher",
-            description="Manages a single class",
         )
         assert role.pk is not None
         assert role.name == "Class Teacher"

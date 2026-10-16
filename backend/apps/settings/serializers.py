@@ -1,3 +1,5 @@
+import re
+
 from rest_framework import serializers
 
 from apps.access_control.models import Role
@@ -206,6 +208,8 @@ class SchoolAttendancePolicySerializer(serializers.ModelSerializer):
         normalized = (value or "").strip()
         if not normalized:
             raise serializers.ValidationError("Policy name is required.")
+        if not re.fullmatch(r"[A-Za-z\s'.-]+", normalized):
+            raise serializers.ValidationError("Policy name can only contain letters, spaces, and '.- characters.")
         return normalized
 
     def validate_applies_to_roles(self, roles):

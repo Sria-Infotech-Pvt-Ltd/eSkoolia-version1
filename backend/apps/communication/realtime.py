@@ -42,3 +42,32 @@ def push_new_message(message) -> None:
         )
     except Exception:
         pass
+
+
+def push_portal_event(user_id, notification: dict) -> bool:
+    """
+    Pushes a portal notification payload (for example the library's
+    {kind: "library", event, id, title, body, link_url, created_at}) to
+    user `user_id` over the same per-user group and the same
+    ChatConsumer.portal_notification event as push_new_message.
+
+    Best-effort in the same way: a missing or broken channel layer must never
+    break the action that triggered it (a return, a lost-book report), so every
+    failure is swallowed. Returns True when the message was handed to the
+    channel layer, False otherwise (no layer, or any error).
+    """
+    try:
+        from asgiref.sync import async_to_sync
+        from channels.layers import get_channel_layer
+
+        layer = get_channel_layer()
+        if layer is None:
+            return False
+
+        async_to_sync(layer.group_send)(
+            f"user_{user_id}",
+            {"type": "portal_notification", "notification": notification},
+        )
+        return True
+    except Exception:
+        return False

@@ -60,7 +60,19 @@ def _school_owns_path(user, rel_path: str) -> bool:
 
     if rel_path.startswith("student_photos/"):
         from apps.students.models import Student
-        return Student.objects.filter(photo__icontains=rel_path, school_id=school_id).exists()
+        owner_qs = Student.objects.filter(photo__icontains=rel_path)
+        if owner_qs.exists():
+            return owner_qs.filter(school_id=school_id).exists()
+        # Not linked to any Student yet — the enrollment wizard uploads the photo
+        # immediately on file pick, well before a student row (draft or final)
+        # exists to attach it to. Requiring a Student match here made the
+        # thumbnail 404 until autosave/submit later wrote this path onto a
+        # student (QA: upload toast succeeds, thumbnail stays blank). Uploads
+        # are saved under student_photos/<school_id>/..., so allow it pre-link
+        # only when the path's school segment matches the requester's own
+        # school; still enforce the strict same-school check above the moment
+        # it's actually attached to a Student.
+        return rel_path.startswith(f"student_photos/{school_id}/")
 
     if rel_path.startswith("admissions/visitor_book/"):
         from apps.admissions.models import VisitorBookEntry

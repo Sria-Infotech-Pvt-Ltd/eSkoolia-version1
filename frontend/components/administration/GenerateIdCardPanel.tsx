@@ -355,6 +355,13 @@ export function GenerateIdCardPanel() {
       </head>
       <body>
         <div class="grid">${cardsHtml}</div>
+        <script>
+          window.onload = function() {
+            setTimeout(function() {
+              window.print();
+            }, 500);
+          };
+        </script>
       </body>
       </html>
     `;
@@ -368,8 +375,7 @@ export function GenerateIdCardPanel() {
     popup.document.open();
     popup.document.write(html);
     popup.document.close();
-    popup.focus();
-    popup.print();
+    
     setError("");
     setSuccess("Print view opened for selected ID cards.");
   };

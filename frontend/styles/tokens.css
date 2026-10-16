@@ -35,6 +35,21 @@
   /* legacy alias */
   --err: #E0463A;
 
+  /* Library: category colours. The API stores only the key (color_key), e.g. "rose". */
+  --cat-rose:    #E0467C;
+  --cat-orange:  #E8742A;
+  --cat-amber:   #D9A21B;
+  --cat-lime:    #7DB82E;
+  --cat-emerald: #0E9F6E;
+  --cat-teal:    #12A3A3;
+  --cat-sky:     #2E90E8;
+  --cat-indigo:  #4457D6;
+  --cat-violet:  #7A4AE0;
+  --cat-slate:   #6B7288;
+
+  /* Modal backdrop */
+  --overlay: rgba(15, 18, 34, 0.45);
+
   /* Shadows */
   --sh-1:   0 1px 2px rgba(15,18,34,0.04);
   --sh-2:   0 4px 12px -4px rgba(15,18,34,0.08);

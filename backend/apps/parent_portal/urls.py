@@ -1,5 +1,6 @@
 from django.urls import path
 
+from .library_views import ParentLibraryCurrentView, ParentLibraryHistoryView
 from .views import (
     ChildAttendanceCalendarView,
     ChildDetailView,
@@ -39,4 +40,7 @@ urlpatterns = [
     path("behaviour/", ParentBehaviourView.as_view(), name="parent-behaviour"),
     # Item 9 — Health Log
     path("health/", ParentHealthView.as_view(), name="parent-health"),
+    # Library
+    path("library/current/", ParentLibraryCurrentView.as_view(), name="parent-library-current"),
+    path("library/history/", ParentLibraryHistoryView.as_view(), name="parent-library-history"),
 ]

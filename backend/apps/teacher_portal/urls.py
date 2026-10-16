@@ -1,4 +1,13 @@
 from django.urls import path
+from .library_views import (
+    LibraryBookRequestsView,
+    LibraryBookSearchView,
+    LibraryMyBooksView,
+    LibraryMyClassView,
+    LibraryOverviewView,
+    LibraryRemindView,
+    LibraryRenewView,
+)
 from .views import (
     TeacherMeView,
     TeacherTimetableView,
@@ -67,5 +76,13 @@ urlpatterns = [
     # Sprint 8 — Notification Bell
     path("notifications/",               TeacherNotificationListView.as_view(),         name="teacher-notifications"),
     path("notifications/<int:pk>/read/", TeacherNotificationMarkReadView.as_view(),     name="teacher-notification-read"),
+    # Library
+    path("library/overview/",                                   LibraryOverviewView.as_view(),     name="teacher-library-overview"),
+    path("library/my-class/",                                   LibraryMyClassView.as_view(),      name="teacher-library-my-class"),
+    path("library/my-class/loans/<int:issue_id>/remind/",       LibraryRemindView.as_view(),       name="teacher-library-remind"),
+    path("library/my-books/",                                   LibraryMyBooksView.as_view(),      name="teacher-library-my-books"),
+    path("library/my-books/loans/<int:issue_id>/renew/",        LibraryRenewView.as_view(),        name="teacher-library-renew"),
+    path("library/book-requests/",                              LibraryBookRequestsView.as_view(), name="teacher-library-book-requests"),
+    path("library/books/search/",                               LibraryBookSearchView.as_view(),   name="teacher-library-book-search"),
 ]
 

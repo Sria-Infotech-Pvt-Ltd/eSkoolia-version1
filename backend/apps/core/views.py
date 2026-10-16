@@ -1231,10 +1231,14 @@ class BusLocationViewSet(TenantQueryMixin, PermissionScopedViewSet):
         if not (-180 <= longitude_value <= 180):
             return Response({"error": "longitude must be between -180 and 180"}, status=status.HTTP_400_BAD_REQUEST)
 
-        vehicle = Vehicle.objects.filter(id=vehicle_id).first()
+        user = request.user
+        if not user.school_id:
+            return Response({"error": "No school access."}, status=status.HTTP_403_FORBIDDEN)
+
+        vehicle = Vehicle.objects.filter(id=vehicle_id, school_id=user.school_id).first()
         if not vehicle:
             return Response({"error": "vehicle not found"}, status=status.HTTP_404_NOT_FOUND)
-        
+
         # Get or create - update existing location
         location, _created = BusLocation.objects.update_or_create(
             vehicle_id=vehicle_id,

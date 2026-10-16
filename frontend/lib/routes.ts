@@ -280,22 +280,28 @@ export const MODULES: ModuleRoute[] = [
       { label: 'Year-End',          path: '/fees/year-end',       icon: Calendar,      permission: 'fees' },
     ],
   },
-  // HIDDEN - no backend yet
-  /* {
+  {
     id: 'library',
     name: 'Library',
-    path: '/library/books',
+    path: '/library/console',
     icon: BookMarked,
     bg: '#FDF2F8',
     ic: '#BE185D',
     permission: 'library',
     sub: [
-      { label: 'Book Categories', path: '/library/categories', icon: BookMarked },
-      { label: 'Books', path: '/library/books', icon: BookOpen },
-      { label: 'Library Members', path: '/library/members', icon: Users },
-      { label: 'Book Issues', path: '/library/issues', icon: BookmarkCheck },
+      { label: 'Console', path: '/library/console', icon: LayoutGrid, permission: 'library.console.view' },
+      { label: 'Catalogue', path: '/library/catalogue', icon: BookOpen },
+      { label: 'Acquisitions', path: '/library/acquisitions', icon: Package },
+      { label: 'Periods and Occupancy', path: '/library/periods', icon: Calendar, permission: 'library.periods.view' },
+      { label: 'Issue Desk', path: '/library/issue-desk', icon: BookmarkCheck, permission: 'library.book_issues.view' },
+      { label: 'Lost and Damaged', path: '/library/lost-damaged', icon: AlertTriangle, permission: 'library.lost_damaged.view' },
+      { label: 'Members', path: '/library/members', icon: Users },
+      { label: 'Transactions and Logs', path: '/library/transactions', icon: FileText, permission: 'library.activity_logs.view' },
+      { label: 'Reports', path: '/library/reports', icon: BarChart2, permission: 'library.reports.view' },
+      { label: 'Stock Check', path: '/library/stock-check', icon: ClipboardList, permission: 'library.stock_audits.view' },
+      { label: 'Settings', path: '/library/settings', icon: Settings, permission: 'library.settings.view' },
     ],
-  }, */
+  },
   // HIDDEN - no backend yet
   /* {
     id: 'transport',

@@ -1,10 +1,13 @@
+import uuid
+
 from rest_framework import permissions, viewsets
 from rest_framework.decorators import api_view, permission_classes
 from rest_framework.exceptions import PermissionDenied
 from rest_framework.permissions import AllowAny, IsAuthenticated
 from rest_framework.response import Response
 
-from .models import School
+from .models import School, SchoolTenant
+from .provisioning import sanitize_subdomain
 from .serializers import SchoolSerializer
 
 
@@ -31,7 +34,36 @@ class SchoolViewSet(viewsets.ModelViewSet):
         user = self.request.user
         if not user.is_superuser:
             raise PermissionDenied("Only superusers can add schools.")
-        serializer.save()
+        school = serializer.save()
+        self._ensure_school_tenant(school)
+
+    def _ensure_school_tenant(self, school):
+        """Every school added here needs a SchoolTenant row — Settings > School
+        Info (apps.settings.views.SchoolInfoView.get_object) hard-fails with "No
+        tenant record exists for this school yet" otherwise, and there was no
+        code path creating one for a school added through this endpoint (the
+        only other place SchoolTenant rows get created is provisioning.py's
+        provision_tenant(), which is gated behind MULTI_TENANCY_ENABLED and
+        raises immediately since that flag is unset in this deployment — see
+        CLAUDE.md's tenancy policy). This mirrors none of that heavier
+        schema-provisioning logic (intentionally inactive); it just creates the
+        lightweight metadata row School Info actually reads and writes.
+        """
+        if getattr(school, "tenant_record", None):
+            return
+        base = sanitize_subdomain(school.subdomain or school.code or f"school{school.id}")
+        schema_name = base
+        suffix = 1
+        while SchoolTenant.objects.filter(schema_name=schema_name).exists():
+            suffix += 1
+            schema_name = f"{base[:58]}_{suffix}"
+        SchoolTenant.objects.create(
+            tenant_id=f"TNT{uuid.uuid4().hex[:12].upper()}",
+            schema_name=schema_name,
+            school=school,
+            name=school.name,
+            status="active",
+        )
 
     def perform_destroy(self, instance):
         user = self.request.user

@@ -1,0 +1,156 @@
+%%{init: {"flowchart": {"nodeSpacing": 24, "rankSpacing": 22, "padding": 6, "curve": "basis", "wrappingWidth": 340}, "themeVariables": {"fontSize": "13px"}}}%%
+flowchart TD
+  classDef fe fill:#FFE8CC,stroke:#E8590C,color:#3B1F00,stroke-width:1.5px
+  classDef be fill:#D0EBFF,stroke:#1971C2,color:#0B2540,stroke-width:1.5px
+  classDef sec fill:#FFC9C9,stroke:#C92A2A,color:#4A0000,stroke-width:2px
+  classDef db fill:#D3F9D8,stroke:#2F9E44,color:#0B3D1A,stroke-width:1.5px
+  classDef async fill:#E5DBFF,stroke:#6741D9,color:#24104F,stroke-width:1.5px
+  classDef err fill:#FFF3BF,stroke:#F08C00,color:#4A3500,stroke-width:1.5px
+
+  START(("[Librarian] scans or types the copy code<br/>Issue Desk, Return tab"))
+
+  subgraph L1["1. User and portal layer"]
+    P1["Portal detection<br/>GET /api/v1/auth/me/ gives me.portal_type<br/>admin or custom, routed to /library/issue-desk"]
+    P2{"usePermissions cache<br/>fresh within 5 min TTL?"}
+    P2a["Refetch /auth/me/ with silent401<br/>also on visibilitychange"]
+    P3["useVisibleModules + hasFeature library flag<br/>Library module is visible"]
+    P4{"UI gate: can library.book_issues.return?<br/>server still enforces it"}
+    P4n["No-access state<br/>loading state while can is false"]
+  end
+
+  subgraph L2["2. Frontend state and API client layer"]
+    F1["Search box, debounced<br/>GET books/lookup and issues/open/lookup<br/>silent401"]
+    F2["Open loan card<br/>borrower, due date, accrued fine Rs 10,<br/>1 member waiting on hold"]
+    F3["Librarian clicks Collect and return"]
+    F4{"Client validation<br/>fine_action chosen when a fine is due?<br/>waive reason when waiving?"}
+    F4e["Inline field error<br/>no network call"]
+    F5["useLibraryApi.returnIssue<br/>no optimistic update for a money action"]
+    F6["apiRequestWithRefresh<br/>attaches Bearer access token"]
+    F7a["401 handling<br/>POST /api/v1/auth/refresh/"]
+    F7b["Refresh failed<br/>clearAuthTokens, redirect to /login"]
+    ER["useLibraryApi error class<br/>field_errors go to the form<br/>error.code goes to a toast<br/>503 shows try again later"]
+  end
+
+  subgraph L3["3. Network and security middleware"]
+    N1["POST /api/v1/library/issues/ID/return/<br/>Django ASGI server"]
+    N2["Middleware stack<br/>Security, CORS, CSRF, Auth, TenantContext"]
+    N3["TenantAwareJWTAuthentication<br/>acts as plain JWT while multi-tenancy is off<br/>loads user and school_id"]
+    N4{"JWT signature valid<br/>and not expired?"}
+    N4e["401 unauthorized<br/>error envelope"]
+  end
+
+  subgraph L4["4. Routing and authorization"]
+    R1["config/urls.py to api/v1/library/<br/>DefaultRouter matches IssueViewSet return action"]
+    R2{"permission_classes<br/>IsAuthenticated + has_permission_code<br/>library.book_issues.return"}
+    R2e["403 permission_denied"]
+    R3["LibraryViewSet.get_queryset<br/>scope_to_school with user.school_id<br/>no is_superuser bypass"]
+    R5["PortalScopeFilterBackend<br/>admin and custom portals pass through"]
+    R4{"Loan id exists<br/>inside the user's school?"}
+    R4e["404 not_found<br/>other schools look identical to missing"]
+  end
+
+  subgraph L5["5. Business logic and validation"]
+    B1["Input serializer<br/>money, dates, statuses read-only<br/>unknown fields rejected"]
+    B2{"serializer.validate<br/>fine_action rules<br/>cross-school FK check on optional<br/>lost or damaged report copy"}
+    B3["400 validation_error<br/>with field_errors"]
+    B4["services.circulation.return_loan<br/>transaction.atomic"]
+    B5["select_for_update<br/>on the copy row and the loan row"]
+    B6{"Loan still status issued?"}
+    B6e["409 library_already_returned<br/>safe to retry"]
+    B7["Server computes fine from library_settings<br/>days overdue minus grace, times rate, capped<br/>client never sends an amount"]
+    B8{"fine_action"}
+    B8a["Waive needs library.book_issues.waive_fine<br/>plus a written reason"]
+  end
+
+  subgraph L6["6. Persistence and data integrity"]
+    D1["INSERT library_charges<br/>overdue_fine, paid or waived<br/>one fine charge per loan"]
+    D2["UPDATE library_book_issues<br/>status returned, return_date, returned_at,<br/>returned_by, fine_amount"]
+    D3["UPDATE library_book_copies<br/>status available"]
+    D4["INSERT library_activity_logs<br/>return event, same transaction"]
+    D5{"model.clean, CheckConstraints<br/>and UniqueConstraints pass?"}
+    D5e["IntegrityError to central exception handler<br/>409 already_exists or 400 missing_required_field<br/>whole transaction rolls back, nothing queued"]
+    D6["PostgreSQL COMMIT"]
+    D7["Redis cache: no library data cached in V1<br/>nothing to invalidate<br/>Redis is the Celery broker and the WebSocket channel layer"]
+  end
+
+  subgraph L7["7. Asynchronous and event layer"]
+    E1["transaction.on_commit hook<br/>runs only after a successful commit"]
+    E2{"Any waiting holds<br/>on this title?"}
+    E3["notify_hold_ready.delay<br/>school_id and hold_id only<br/>no phone or email in arguments"]
+    E4["Redis broker<br/>queue default"]
+    E5["Celery worker picks the task<br/>re-reads hold and member inside the task"]
+    E6["Resolve the recipient<br/>student: primary guardian user<br/>teacher or staff: their own user"]
+    E7{"Recipient has a portal user?"}
+    E7e["Skip and write a reminder log row<br/>circulation is already committed<br/>never rolled back"]
+    E8["INSERT CommunicationNotification<br/>plus activity log hold event<br/>the log row blocks duplicate sends"]
+    E9["push_portal_event<br/>group_send to user_ID<br/>kind library, best effort"]
+    E9e["Channel layer down<br/>failure swallowed, the saved row stays"]
+    E10["Browser WebSocket receives portal_notification<br/>usePortalNotifications refetches the page<br/>with silent401"]
+    E11["SMS or email through existing helpers<br/>off by default, setting notify_sms_email_enabled"]
+  end
+
+  subgraph L8["8. Return trip"]
+    X1["Standard envelope<br/>success true, message, data with issue, fine,<br/>report_id, hold_queue_count, undo_expires_at"]
+    X2["HTTP 200 JSON response"]
+    X3["apiRequestWithRefresh resolves<br/>typed result"]
+    X4["Hook updates state<br/>loan leaves the open list<br/>desk log refreshes, hold banner shows"]
+    X5["Success toast: Returned, Rs 10 collected<br/>plus undo toast"]
+    X6["Optional undo click<br/>POST issues/ID/undo-return/<br/>same user, inside undo window, copy unchanged"]
+  end
+
+  START --> P1 --> P2
+  P2 -->|"stale"| P2a --> P3
+  P2 -->|"fresh"| P3
+  P3 --> P4
+  P4 -->|"no"| P4n
+  P4 -->|"yes"| F1
+  F1 --> F2 --> F3 --> F4
+  F4 -->|"invalid"| F4e
+  F4 -->|"valid"| F5 --> F6 --> N1
+  N1 --> N2 --> N3 --> N4
+  N4 -->|"no"| N4e --> F7a
+  F7a -->|"ok: retry once"| F6
+  F7a -->|"fails"| F7b
+  N4 -->|"yes: user and school_id set"| R1
+  R1 --> R2
+  R2 -->|"no"| R2e
+  R2 -->|"yes"| R3 --> R5 --> R4
+  R4 -->|"no"| R4e
+  R4 -->|"yes"| B1 --> B2
+  B2 -->|"invalid"| B3
+  B2 -->|"valid"| B4 --> B5 --> B6
+  B6 -->|"no"| B6e
+  B6 -->|"yes"| B7 --> B8
+  B8 -->|"collect"| D1
+  B8 -->|"waive"| B8a
+  B8a -->|"code present"| D1
+  B8a -->|"code missing"| R2e
+  D1 --> D2 --> D3 --> D4 --> D5
+  D5 -->|"violation"| D5e
+  D5 -->|"ok"| D6
+  D6 -.-> D7
+  D6 --> E1 --> E2
+  E2 -->|"no hold"| X1
+  E2 -->|"hold exists"| E3
+  E3 -->|"enqueue returns at once"| X1
+  E3 --> E4 --> E5 --> E6 --> E7
+  E7 -->|"yes"| E8 --> E9
+  E7 -->|"no"| E7e
+  E9 --> E10
+  E9 -->|"channel down"| E9e
+  E8 -.->|"only if enabled"| E11
+  X1 --> X2 --> X3 --> X4 --> X5 --> X6
+
+  B3 --> ER
+  B6e --> ER
+  D5e --> ER
+  R2e --> ER
+  R4e --> ER
+  ER -->|"form stays open, nothing is lost"| F3
+
+  class START,P1,P2,P2a,P3,P4,F1,F2,F3,F4,F5,F6,F7a,X3,X4,X5,X6,E10 fe
+  class N1,N2,R1,B1,B4,B5,B6,B7,B8,X1,X2 be
+  class N3,N4,R2,R3,R5,R4,B2,B8a sec
+  class D1,D2,D3,D4,D5,D6,D7,E8 db
+  class E1,E2,E3,E4,E5,E6,E7,E9,E11 async
+  class P4n,F4e,F7b,ER,N4e,R2e,R4e,B3,B6e,D5e,E7e,E9e err

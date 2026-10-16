@@ -99,6 +99,12 @@ class CommunicationNotificationSerializer(serializers.ModelSerializer):
         ]
         read_only_fields = ["id", "created_by", "is_read", "read_at", "created_at", "updated_at"]
 
+    def validate_recipient(self, recipient):
+        request = self.context.get("request")
+        if request and request.user.school_id and recipient.school_id != request.user.school_id:
+            raise serializers.ValidationError("You can only notify users in your own school.")
+        return recipient
+
 
 class InAppMessageSerializer(serializers.ModelSerializer):
     sender = UserBasicSerializer(read_only=True)
@@ -128,6 +134,8 @@ class InAppMessageSerializer(serializers.ModelSerializer):
         request = self.context.get("request")
         if request and request.user == recipient:
             raise serializers.ValidationError("You cannot send an in-app message to yourself.")
+        if request and request.user.school_id and recipient.school_id != request.user.school_id:
+            raise serializers.ValidationError("You can only message users in your own school.")
         return recipient
 
 
@@ -171,6 +179,10 @@ class EmailMessageLogSerializer(serializers.ModelSerializer):
 
         if not recipient and not to_email:
             raise serializers.ValidationError("Either recipient_id or to_email must be provided.")
+
+        request = self.context.get("request")
+        if recipient and request and request.user.school_id and recipient.school_id != request.user.school_id:
+            raise serializers.ValidationError({"recipient_id": "You can only log email to users in your own school."})
 
         if recipient and not to_email:
             if not recipient.email:

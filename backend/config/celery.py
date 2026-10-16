@@ -22,4 +22,10 @@ app.conf.beat_schedule = {
         "task": "admissions.compute_lead_scores",
         "schedule": crontab(hour=7, minute=45),
     },
+    # Library: flag students who have not checked in to a library period (every minute).
+    # `manage.py library_register_periodic_tasks` writes the same entry for a DatabaseScheduler.
+    "library-flag-unscanned-students": {
+        "task": "library.flag_unscanned_students",
+        "schedule": 60.0,
+    },
 }

@@ -21,12 +21,32 @@ import { useEffect, useRef } from 'react';
 import { getAccessToken } from '@/lib/auth';
 import { API_BASE_URL } from '@/lib/api';
 
-export interface PortalNotification {
+export interface PortalMessageNotification {
   kind: 'message';
   id: number;
   subject: string;
   sender_id: number;
   created_at: string;
+}
+
+/**
+ * A library event (backend apps/library/services/notifications.py). `id` is the
+ * CommunicationNotification row id, so a page can refetch and find it in the bell list.
+ */
+export interface PortalLibraryNotification {
+  kind: 'library';
+  event: 'hold_ready' | 'overdue_reminder' | 'replacement_fee' | 'unscanned_flag' | 'request_reviewed';
+  id: number;
+  title: string;
+  body: string;
+  link_url: string;
+  created_at: string;
+}
+
+export type PortalNotification = PortalMessageNotification | PortalLibraryNotification;
+
+export function isLibraryNotification(n: PortalNotification): n is PortalLibraryNotification {
+  return n.kind === 'library';
 }
 
 export function usePortalNotifications(onNotification: (n: PortalNotification) => void) {
